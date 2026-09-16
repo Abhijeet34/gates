@@ -23,7 +23,11 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 WORKFLOW=.github/workflows/shared-no-mistakes-required.yml
 STEP='name: Verify no-mistakes signature in PR body'
 
-MARKER='Updates from [git push no-mistakes](https://github.com/kunchenguid/no-mistakes)'
+UPSTREAM_MARKER='Updates from [git push no-mistakes](https://github.com/kunchenguid/no-mistakes)'
+MIRROR_MARKER='Updates from [git push no-mistakes](https://github.com/Abhijeet34/no-mistakes)'
+# The build this fleet runs writes the mirror's URL; an upstream build writes
+# the upstream one. Both are signatures, so the unqualified marker is ours.
+MARKER=$MIRROR_MARKER
 
 workdir=$(mktemp -d)
 trap 'rm -rf "$workdir"' EXIT
@@ -142,6 +146,20 @@ respond default 0 "## Pipeline
 $MARKER"
 expect 'a body that already carries the marker passes on the first read' 0 1 \
     'Found no-mistakes signature' -
+
+# --- which build wrote it: either no-mistakes URL is a signature -------------
+
+reset_stub
+respond default 0 "## Pipeline
+
+$MIRROR_MARKER"
+expect 'a marker written by our mirror build passes' 0 1 'Found no-mistakes signature' -
+
+reset_stub
+respond default 0 "## Pipeline
+
+$UPSTREAM_MARKER"
+expect 'a marker written by an upstream build passes' 0 1 'Found no-mistakes signature' -
 
 # --- the negative: the gate is not a formality -------------------------------
 
