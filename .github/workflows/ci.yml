@@ -1,0 +1,103 @@
+name: CI
+
+# Every job that gates a merge lives in this one workflow, because the
+# `checks` aggregate at the bottom can only `needs:` jobs in its own file.
+# The branch ruleset (.github/ruleset-main.json) requires exactly one status,
+# `checks`, so jobs here can be added or renamed without touching branch
+# protection.
+#
+# Triggers are push, pull_request, schedule and workflow_dispatch only;
+# .ci/test-workflow-policy.sh refuses the triggers that would run a fork's code
+# with this repository's token, and any runner that is not GitHub-hosted.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # The full-history secret scan also runs weekly, so a gitleaks rule that
+  # starts firing on old history is seen without waiting for a commit.
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+# A superseded pull request run is noise. A superseded push run on main is
+# not: it is the only record that a given merged commit was green.
+concurrency:
+  group: ci-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+# Third-party actions are pinned to a commit SHA, not a tag: a tag can be
+# repointed at new code by whoever owns the action.
+jobs:
+  shell:
+    name: shell
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # exiftool because .ci/test-watermark-scan-workflow.sh drives the real
+      # scanner, which refuses without an inspector.
+      - name: Install the watermark gate's inspector
+        run: sudo apt-get update && sudo apt-get install -y libimage-exiftool-perl
+      - run: .ci/check.sh shell
+
+  python:
+    name: python
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+      - run: .ci/check.sh python
+
+  secrets:
+    name: secret scan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      GITLEAKS_VERSION: "8.30.1"
+      GITLEAKS_SHA256: "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Full history: a credential committed and later deleted still fails.
+          fetch-depth: 0
+
+      - name: Install gitleaks
+        run: |
+          set -euo pipefail
+          url="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -fsSL "$url" -o gitleaks.tar.gz
+          echo "${GITLEAKS_SHA256}  gitleaks.tar.gz" | sha256sum --check --strict
+          tar -xzf gitleaks.tar.gz gitleaks
+          sudo install -m 0755 gitleaks /usr/local/bin/gitleaks
+          rm -f gitleaks gitleaks.tar.gz
+
+      # exiftool inspects; qpdf, ffmpeg and ImageMagick are the writers `clean`
+      # uses for the formats exiftool cannot rewrite.
+      - name: Install the watermark gate's inspector and writers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libimage-exiftool-perl qpdf ffmpeg imagemagick
+
+      - run: .ci/check.sh secrets
+
+  # The one status the branch ruleset requires. It always runs, and it passes
+  # only when every job above succeeded. Every job in this workflow must be
+  # listed in `needs`; .ci/test-checks-verdict.sh fails when one is not.
+  checks:
+    name: checks
+    needs: [shell, python, secrets]
+    if: ${{ always() && github.event_name != 'schedule' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Fail unless every gate ran and passed
+        run: printf '%s' "$RESULTS" | .ci/checks-verdict.sh
+        env:
+          RESULTS: ${{ toJSON(needs) }}

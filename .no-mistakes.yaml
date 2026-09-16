@@ -1,0 +1,9 @@
+# Read from the default branch, never the pushed branch: a change here takes
+# effect only once it is merged to main.
+#
+# `.ci/check.sh` declares three suites and all three run here, then again in
+# .github/workflows/ci.yml, which is the tier that gates the merge.
+# `.ci/test-suite-coverage.sh` fails if a declared suite runs in neither, or if
+# a suite dropped from `lint` below is not named in this comment.
+commands:
+  lint: ".ci/check.sh shell python secrets"

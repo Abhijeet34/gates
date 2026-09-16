@@ -1,0 +1,226 @@
+# Fleet secret-scan configuration. CANONICAL COPY - edit here, never in a
+# sibling repository.
+#
+# `automation`, `firstmate`, `blurt`, `papertrace`, `graphify` and `no-mistakes`
+# all carry this file byte-identical at their root, so one review changes what
+# six repositories detect. `.ci/gitleaks/sync.sh` copies it out and reports
+# drift; `.ci/gitleaks/test-rules.sh` fails if any rule below stops firing.
+#
+# One config, not a base plus per-repo overlays: `[extend] path` inherits rules
+# but NOT allowlists, so an overlay would have to duplicate every allowlist
+# here, and two copies of a secret-scanning allowlist drift. The cost is that
+# each repository carries a handful of allowlist paths that only exist in a
+# sibling; every one is anchored with `^` so it cannot match somewhere else.
+#
+# GitHub's own secret scanning is a paid add-on on private repositories and
+# `security_and_analysis` is empty on all six, so gitleaks is not one layer
+# among several - it is the only one.
+
+[extend]
+useDefault = true
+
+# --- rules the defaults miss -------------------------------------------------
+#
+# Measured against gitleaks 8.30.1 defaults with realistic high-entropy values
+# in a keyword-free context (a bare hardcoded constant, which is the shape a
+# real leak takes). In a context that supplies a keyword - `FOO_API_KEY = ...` -
+# `generic-api-key` already catches most of these; these rules are what stands
+# between a keyless hardcoded constant and the remote.
+#
+# Provider format confirmation, stated plainly because the brief asked:
+#   xAI        CONFIRMED - docs.x.ai publishes a full example key, `xai-` + 80.
+#   OpenRouter CONFIRMED - openrouter.ai publishes a full example key.
+#   Groq       PREFIX confirmed (console.groq.com shows `gsk_...`); the length
+#              is not documented anywhere by Groq.
+#   Moonshot/Kimi, DeepSeek, Hugging Face: NOT CONFIRMABLE. None of the three
+#              publishes a key format. This is exactly why the `sk-` rule below
+#              is written as a family shape rather than a per-vendor length
+#              guess: it catches Kimi without needing Kimi to document itself.
+
+[[rules]]
+id = "openai-compatible-api-key"
+# The one credential type with a proven leak record here: two hardcoded Kimi
+# keys reached public history in graphify, and gitleaks has no Moonshot rule.
+# Moonshot publishes no format, so this matches the family instead - an
+# unbroken alphanumeric run after `sk-`, which is what Kimi, DeepSeek and
+# legacy OpenAI keys all are. Vendors whose keys contain a hyphen inside the
+# prefix (`sk-ant-`, `sk-proj-`, `sk-or-v1-`) never reach 20 characters before
+# the hyphen ends the run, so they fall to their own rules rather than here.
+description = "OpenAI-compatible API key (Moonshot/Kimi, DeepSeek, legacy OpenAI, and other sk- vendors)"
+regex = '''\b(sk-[A-Za-z0-9]{20,64})\b'''
+entropy = 3.5
+keywords = ["sk-"]
+
+[[rules]]
+id = "xai-api-key"
+description = "xAI (Grok) API key"
+regex = '''\b(xai-[A-Za-z0-9_]{80})\b'''
+entropy = 3.5
+keywords = ["xai-"]
+
+[[rules]]
+id = "groq-api-key"
+description = "Groq API key"
+regex = '''\b(gsk_[A-Za-z0-9]{52})\b'''
+entropy = 3.5
+keywords = ["gsk_"]
+
+[[rules]]
+id = "openrouter-api-key"
+description = "OpenRouter API key"
+regex = '''\b(sk-or-v1-[0-9a-f]{64})\b'''
+entropy = 3
+keywords = ["sk-or-v1-"]
+
+[[rules]]
+id = "huggingface-access-token-alnum"
+# The default `huggingface-access-token` rule is `hf_(?i:[a-z]{34})` - letters
+# only - so any issued token containing a digit walks straight past it. Hugging
+# Face does not document the charset, so this widens rather than replaces:
+# a superset fails safe, a subset fails open.
+description = "Hugging Face access token, including the digit-bearing tokens the default rule misses"
+regex = '''\b(hf_[A-Za-z0-9]{34})\b'''
+entropy = 3
+keywords = ["hf_"]
+
+[[rules]]
+id = "minisign-secret-key"
+# blurt signs its updater artifacts with a Tauri (rsign2/minisign) keypair, so
+# this key is the product's supply chain: whoever holds it signs updates that
+# every installed copy trusts. Two shapes, because Tauri accepts both - the raw
+# key file, whose base64 body always starts `RWRTY0Iy` (the fixed `EdScB2`
+# header of a minisign SECRET key; a public key's third byte is a random key-id
+# byte, so it cannot collide), and the whole file base64-encoded again, which is
+# the form a CI secret takes. The second alternative pins the encrypted-secret
+# comment text specifically, so a committed PUBLIC key file does not trip it.
+description = "minisign/rsign secret key (Tauri updater signing key)"
+regex = '''(?:\bRWRTY0Iy[A-Za-z0-9+/]{40,}|dW50cnVzdGVkIGNvbW1lbnQ6I(?:HJzaWduIGVuY3J5|G1pbmlzaWduIGVu)[A-Za-z0-9+/=]{40,})'''
+keywords = ["rwrty0iy", "dw50cnvzdgvkignvbw1lbnq6"]
+
+# --- allowlists --------------------------------------------------------------
+#
+# Path-scoped, never pattern-scoped: a regex allowlist excuses a shape wherever
+# it appears, while a path excuses one named place someone had to choose. Every
+# entry names the repository it exists for and why it is not repository content.
+#
+# Scope caveat, carried from automation's previous config: a global allowlist
+# has no scan-mode switch, so these paths are excused in `gitleaks git`
+# (history) as well as the working-tree scan. Every entry below is either
+# gitignored or upstream-owned, so putting a credential under one would take a
+# deliberate `git add -f`.
+
+[[allowlists]]
+description = "Tool-managed trees and build output. No repository content, in any of the six."
+paths = [
+    '''(^|/)node_modules/''',
+    '''(^|/)target/''',
+    '''(^|/)dist/''',
+    '''(^|/)vendor/''',
+    '''(^|/)\.next/''',
+    '''(^|/)\.venv/''',
+    '''(^|/)__pycache__/''',
+    '''(^|/)\.ruff_cache/''',
+    '''(^|/)\.mypy_cache/''',
+    '''(^|/)\.pytest_cache/''',
+    '''(^|/)graphify-out/''',
+    # automation: a second checkout of automation itself. gitleaks does not read
+    # .gitignore, so the entry there does not cover it, and the real tree is
+    # still scanned for everything this skips.
+    '''(^|/)\.claude/worktrees/''',
+    # automation: curl snapshots of third-party pages, pulled by
+    # evals/scrape-baseline/harness/snapshot.py and gitignored because they are
+    # not ours to vendor. Measured 2026-08-17: a fresh snapshot puts 11
+    # generic-api-key findings in the working tree - Wikipedia, Reddit and
+    # GitHub markup, none of them a credential - and CLAUDE.md tells every agent
+    # touching skills/scrape/ to regenerate them, so the red was recurring.
+    '''(^|/)evals/scrape-baseline/fixtures/''',
+]
+
+[[allowlists]]
+description = "This config's own rule fixtures. Synthetic, non-functional values that exist to be detected - see .ci/gitleaks/test-rules.sh, which scans them from outside the repository so the rules are still exercised."
+paths = [
+    '''^\.ci/gitleaks/fixtures/''',
+]
+
+[[allowlists]]
+description = "automation: gitignored local state that has never been tracked. Session cookies and an OAuth token cache, both regenerated on demand."
+paths = [
+    '''^documents/GoodnotesWebExporter/\.sessions/''',
+    '''^email-management/config/(credentials|token)\.json$''',
+]
+
+[[allowlists]]
+description = "papertrace: binary golden fixtures. A DOCX/PDF is a zip of compressed XML, and compressed bytes are entropy - which is what a secret scanner reacts to. Written by fixtures/make_golden.py from one source of truth, so nothing here is hand-authored."
+paths = [
+    '''^fixtures/golden\.(docx|pdf)$''',
+]
+
+# targetRules attaches this to the one rule these constants trip, so it is
+# evaluated per finding and AND holds. As a global allowlist the paths match
+# alone would skip both files entirely, shielding any other secret in them.
+# The key is `condition`; gitleaks silently ignores unknown keys, and without
+# it the default OR lets the paths match alone excuse the whole file.
+[[allowlists]]
+description = "automation: allanime anti-scrape constants (SRC_HASH/SRC_KEY). Public values the site serves to every browser; they rotate, and anix prints the new ones. Not credentials."
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = [
+    '''^media/streaming-anix-rs/src/config\.rs$''',
+    # (reference/)? covers the file's pre-monorepo path, still in history.
+    '''^media/streaming-anix-rs/(reference/)?config\.example\.conf$''',
+]
+regexes = ['''(?i)src_(hash|key)''']
+regexTarget = "line"
+
+# Redaction tests are the one file type that MUST contain secret-shaped strings:
+# a test that its redactor blanks `sk-...` cannot be written without an `sk-...`.
+# Scoped by targetRules as well as path, so these files are excused for the two
+# rules their fixtures trip and nothing else - a real Anthropic key or signing
+# key committed into one of them still fails the scan.
+[[allowlists]]
+description = "blurt (and automation's vendored copy of it): the secret-redactor's own test vectors in redactor.rs and selftest.rs, which are `sk-` followed by the lowercase alphabet. Sequential-alphabet strings carry maximal Shannon entropy, which is why they pass the entropy gate."
+targetRules = ["openai-compatible-api-key", "generic-api-key"]
+condition = "AND"
+paths = [
+    '''^apps/desktop/src-tauri/src/pipeline/(redactor|selftest)\.rs$''',
+    '''^ai/local-dictation/apps/desktop/src-tauri/src/pipeline/(redactor|selftest)\.rs$''',
+]
+
+[[allowlists]]
+description = "no-mistakes: upstream's own test files. redact_test.go asserts that redactSecrets() blanks an `sk-` key built from the alphabet plus digits, and an `api_key =` assignment; status_test.go used a hex literal as a fake commit SHA, which reads as an api-key assignment. status_test.go no longer exists at HEAD - the entry is for the history scan only, and nothing can hide behind a path that is gone."
+targetRules = ["openai-compatible-api-key", "generic-api-key"]
+condition = "AND"
+paths = [
+    '''^internal/intent/redact_test\.go$''',
+    '''^internal/cli/status_test\.go$''',
+]
+
+[[allowlists]]
+description = "automation: tools.md skill-reference line 'zero-API: crawl/map/render/PDF' trips generic-api-key on entropy alone. Static doc text, not a credential."
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = [
+    '''^system-maintenance/claude-code/config/commands/tools\.md$''',
+]
+regexes = ['''zero-API: crawl/map/render/PDF''']
+regexTarget = "line"
+
+# lavish-axi's session keys in tests are a fixed 16 hex characters, which is the
+# shape `generic-api-key` reacts to, with the `KEY = ` on their left supplying
+# the keyword it needs. Scoped three ways rather than by path alone - the five
+# files that carry them, the one rule they trip, and the two literal values
+# themselves - so a real credential committed into any of these same files, on
+# any line, still fails the scan. .ci/gitleaks/test-allowlists.py pins both
+# directions; widening the value list is what would quietly open this up.
+[[allowlists]]
+description = "lavish-axi: 16-hex session-key constants in five test files. Fixed non-secret values (0123456789abcdef and its reverse) standing in for a session id and a channel-token key."
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = [
+    '''^test/attachment-disk-admission\.test\.js$''',
+    '''^test/attachment-store\.test\.js$''',
+    '''^test/server-attachments\.test\.js$''',
+    '''^test/server-whiteboard\.test\.js$''',
+    '''^test/whiteboard-store\.test\.js$''',
+]
+regexes = ['''^(?:0123456789abcdef|fedcba9876543210)$''']

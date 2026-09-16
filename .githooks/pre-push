@@ -1,0 +1,177 @@
+#!/usr/bin/env bash
+# Refuse to push commits carrying a secret.
+#
+# The load-bearing gate is here, not in CI: a credential that reaches the remote
+# is leaked even in a private repository, and history is exactly what leaked for
+# graphify. CI is the backstop that catches what was pushed before this hook
+# existed, and re-scans when gitleaks ships new rules.
+#
+# FAILS CLOSED, and deliberately does not trust gitleaks' exit code alone.
+# Measured on 8.30.1: `gitleaks git` exits 0 and prints "no leaks found" when the
+# revision range is invalid and when the target is not a repository at all - it
+# reports "0 commits scanned" and calls that clean. So this hook counts the
+# commits it expects, and refuses unless the scan says it read them.
+#
+# `git push --no-verify` still bypasses every hook. That is git, and it is at
+# least explicit; there is no bypass variable here on purpose.
+#
+# Install (once per clone, because core.hooksPath is not a tracked file):
+#     git config core.hooksPath .githooks
+set -uo pipefail
+
+HOOK_DIR=$(cd "$(dirname "$0")" && pwd -P)
+ZERO=0000000000000000000000000000000000000000
+
+# $2 is optional operator guidance, printed between the reason and the verdict.
+refuse() {
+    echo "gitleaks-pre-push: $1" >&2
+    [ -n "${2:-}" ] && echo "gitleaks-pre-push: $2" >&2
+    echo "gitleaks-pre-push: COULD NOT ESTABLISH that this push is clean. Push refused." >&2
+    exit 1
+}
+
+toplevel=$(git rev-parse --show-toplevel 2>/dev/null) || refuse "cannot resolve the repository root."
+cd "$toplevel" || refuse "cannot enter $toplevel."
+
+# The ref list arrives on stdin and can only be read once, but `git lfs
+# pre-push` downstream needs it too. Buffer it and feed both.
+STDIN_FILE=$(mktemp) || refuse "cannot create a temp file."
+trap 'rm -f "$STDIN_FILE"' EXIT
+cat > "$STDIN_FILE" || refuse "cannot buffer the ref list from stdin."
+
+command -v gitleaks >/dev/null 2>&1 || refuse "gitleaks is not installed (brew install gitleaks)."
+# The machine-wide hook (system-maintenance/git-hooks/pre-push) deploys a copy of
+# this file and points it at the DEPLOYED config, so a fresh clone is scanned by
+# canonical rules even when its own .gitleaks.toml is absent or stale. Not a
+# security boundary - `git push --no-verify` is a shorter bypass than this - and
+# an unreadable value still refuses below.
+config="${GITLEAKS_PREPUSH_CONFIG:-$toplevel/.gitleaks.toml}"
+[ -r "$config" ] || refuse "cannot read $config."
+
+remote="${1:-origin}"
+found=0
+while read -r _local_ref local_sha _remote_ref remote_sha; do
+    [ -n "${local_sha:-}" ] || continue
+    # Deleting a remote branch pushes no objects.
+    [ "$local_sha" = "$ZERO" ] && continue
+
+    if [ "$remote_sha" = "$ZERO" ]; then
+        # New branch: everything on it the DESTINATION does not already have,
+        # asked of the destination itself. Remote-tracking refs cannot stand in
+        # for that - a push by URL has none, and every no-mistakes delivery push
+        # is one - and their absence silently widened this range to the branch's
+        # whole history. Only a sha that resolves locally is excluded; one we do
+        # not have, and every sha when the destination cannot be asked, stays in
+        # the scan. Both errors scan MORE, which is the safe direction.
+        # system-maintenance/git-hooks/README.md, "Latency", owns the rest.
+        #
+        # $2 and never $1: with a `remote.<name>.pushurl` the two diverge and $1
+        # names the FETCH url, whose advertisement would exclude commits the
+        # destination has never seen. Measured: it pushed a secret to an empty
+        # bare unscanned. The fall-back keys on $1, because `--remotes=<name>`
+        # takes a name.
+        if advert=$(git ls-remote "${2:-$remote}" 2>/dev/null); then
+            # One `cat-file --batch-check`, not a `rev-parse` per sha: 0.018s
+            # against 1.917s over this repository's 201 advertised shas, same
+            # output. `^{commit}` peels a tag; an object we lack prints
+            # "<input> missing", the two-field line the second awk drops. The
+            # join is single-spaced with no leading or trailing space, because
+            # gitleaks splits --log-opts naively and one empty field reaches git
+            # as '' and kills the scan.
+            exclude=$(printf '%s\n' "$advert" | awk 'NF { print $1 "^{commit}" }' | sort -u |
+                git cat-file --batch-check='%(objectname)' 2>/dev/null |
+                awk 'NF == 1 && $1 ~ /^[0-9a-f]+$/ { printf "%s%s", (n++ ? " " : ""), $1 }')
+        else
+            exclude="--remotes=$remote"
+        fi
+        case "${2:-}" in "$HOME/.no-mistakes/repos/"*)
+            # The pipeline's staging bare, which starts empty and so advertises
+            # nothing. What it must catch is work no remote has ever seen; the
+            # gate's own delivery push re-scans the rest against the real
+            # destination above.
+            exclude="${exclude:+$exclude }--remotes"
+        ;; esac
+        # Exactly one `--not`, every exclusion after it. A second reverses the
+        # sense rather than adding to it: on git 2.55 `A --not X --not --remotes`
+        # counts 4 where `A --not X --remotes` counts 2, so two `--not`s INCLUDE
+        # every remote-tracking ref.
+        if [ -n "$exclude" ]; then
+            range="$local_sha --not $exclude"
+        else
+            range="$local_sha"
+        fi
+    else
+        range="$remote_sha..$local_sha"
+    fi
+
+    # gitleaks counts the commits it could read a patch from, so the expected
+    # count has to be the same set or an ordinary push becomes unpushable. On
+    # 8.30.1 a commit counts iff one file diff survives three skips in its own
+    # sources/git.go: whole-file deletions (`if gitdiffFile.IsDelete`),
+    # non-archive binaries, and a nil text fragment (mode-only, rename-only).
+    # Merges are absent because `git log -p` emits no patch for one.
+    #
+    # This mirrors all three - `--no-merges`, a binary printing "-\t-\tpath", no
+    # numeric line for the rest - and `--diff-filter=d` is the deletion mirror:
+    # without it a whole-file deletion prints a numeric "0\t1\tpath" and refused
+    # every deletion-only push, a `git revert` of a file-add being the everyday
+    # way one arrives. A LINE-deletion-only edit IS counted by gitleaks, so the
+    # filter is git's delete status and never added lines. Each skip only lowers
+    # the expected count, and a deletion adds no blob, so none can hide content.
+    # 13-shape matrix: firstmate data/prepush-count-heuristic-c9/report.md.
+    #
+    # It also means an evil merge, and a secret inside a binary, are unscannable
+    # in git mode; only the CI backstop covers those.
+    # shellcheck disable=SC2086  # $range is a deliberately multi-word rev-list spec
+    # `--format=%H` rather than a literal marker: git reads a --format string with
+    # no `%` in it as the NAME of a pretty format and dies with
+    # "invalid --pretty format", which took every push down when this was first
+    # written as `--format=C`. A commit line is the only one-field 40-character
+    # line here; a numstat line always has three.
+    expected=$(git log --no-merges --numstat --diff-filter=d --format=%H $range 2>/dev/null |
+        awk 'NF == 1 && length($1) == 40 { seen = 1; next }
+             seen && $1 ~ /^[0-9]+$/ && $2 ~ /^[0-9]+$/ && ($1 + $2) > 0 { n++; seen = 0 }
+             END { print n + 0 }') || refuse "cannot enumerate the commits in $range."
+    [ "${expected:-0}" -eq 0 ] && continue
+
+    out=$(gitleaks git . --config "$config" --log-opts="$range" \
+        --no-banner --no-color --redact --log-level info 2>&1)
+    rc=$?
+
+    # gitleaks reports a git failure as an ERR line and still exits 0.
+    if printf '%s\n' "$out" | grep -q ' ERR '; then
+        printf '%s\n' "$out" >&2
+        refuse "gitleaks reported an error while scanning $range."
+    fi
+    scanned=$(printf '%s\n' "$out" | sed -n 's/.*[^0-9]\([0-9][0-9]*\) commits scanned\..*/\1/p' | tail -1)
+    # git's count is the only trustworthy witness. gitleaks prints a number,
+    # "no leaks found" and exit 0 whether it read the whole range or one commit
+    # of it, so a short count is a scan that did not cover the push. Only short
+    # counts refuse: a count above the expected one is not evidence of a gap.
+    [ -n "${scanned:-}" ] || refuse "gitleaks did not report how many commits it scanned (unexpected output format)."
+    [ "$scanned" -lt "$expected" ] && refuse \
+        "gitleaks scanned $scanned of $expected commits in $range." \
+        "if this push only deletes or reverts files, that is a defect in this hook - report it; do not push --no-verify, which also skips the watermark gate, git-lfs and the orphan-dir guard."
+
+    case $rc in
+        0) ;;
+        1) printf '%s\n' "$out" >&2; found=1 ;;
+        *) printf '%s\n' "$out" >&2; refuse "the scan of $range did not complete (gitleaks exit $rc)." ;;
+    esac
+done < "$STDIN_FILE"
+
+if [ "$found" -ne 0 ]; then
+    echo "gitleaks-pre-push: secrets found in the commits being pushed. Push refused." >&2
+    echo "gitleaks-pre-push: rotate the credential first - rewriting history does not un-leak it." >&2
+    exit 1
+fi
+
+# Run whatever pre-push this repository's core.hooksPath displaced, so setting
+# it here does not silently drop git-lfs and the orphan-dir guard.
+next=$(git config --get --global core.hooksPath 2>/dev/null)
+# shellcheck disable=SC2088  # matching a literal leading "~/" from git config output, not shell tilde expansion
+case "$next" in '~/'*) next="$HOME/${next#\~/}" ;; esac
+[ -n "$next" ] || next="$(git rev-parse --git-common-dir)/hooks"
+if [ -x "$next/pre-push" ] && [ "$(cd "$next" 2>/dev/null && pwd -P)" != "$HOOK_DIR" ]; then
+    "$next/pre-push" "$@" < "$STDIN_FILE"
+fi

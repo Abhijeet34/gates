@@ -1,0 +1,147 @@
+name: shared watermark scan
+
+# The fleet's CI backstop for the no-watermarking gate, beside
+# shared-secret-scan.yml and for the same reason: the GATE is the machine-wide
+# pre-push hook, which refuses before anything reaches the remote, and this is
+# what sees what the hook never did. Four things bypass it, all measured or
+# structural - `git push --no-verify`, a machine with no deployed hook, any
+# commit made on GitHub itself (web edit, API, Actions), and the filed
+# fail-open in the repo-local chain when the global hook is absent. Nothing
+# re-scanned for detective provenance after a push until this existed.
+#
+# SCOPE is the tree, not history, and that is the difference from the secret
+# scan. A credential committed and later deleted is still published, so that
+# scan must read every commit; a watermark deleted at HEAD is genuinely gone
+# from the artefact anyone downloads. The tip is the artefact.
+#
+# A reusable workflow's steps run in the CALLER's checkout, so the scanner and
+# its allowlist are checked out beside it from THIS workflow's own repository
+# at this workflow's own commit (`job.workflow_repository`/`job.workflow_sha`).
+# A caller carries no copy, and a copy it does carry is never the one run: the
+# caller's tree is what is being judged, so it cannot also supply the judge.
+# That checkout needs no token only while this repository is public; from a
+# private one the caller's GITHUB_TOKEN answers `Not Found` (measured
+# 2026-09-16), and the scan refuses rather than reporting a clean tree.
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  watermark-scan:
+    name: watermark scan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      # .ci/test-watermark-scan-workflow.sh reads these two from this file and
+      # fails unless both resolve inside the scanner checkout below.
+      SCANNER: .gates-scanner/system-maintenance/git-hooks/watermark-scan.py
+      ALLOWLIST: .gates-scanner/system-maintenance/git-hooks/watermark-allow.conf
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # An empty context would make the checkout below fall back to the
+      # CALLER's repository, which is the one source the scanner must not come
+      # from, so it is refused before that checkout can run.
+      # `job` is not an allowed context in job-level `env`, only in a step's.
+      - name: Resolve the scanner's own repository
+        env:
+          SCANNER_REPOSITORY: ${{ job.workflow_repository }}
+          SCANNER_SHA: ${{ job.workflow_sha }}
+        run: |
+          [ -n "$SCANNER_REPOSITORY" ] && [ -n "$SCANNER_SHA" ] || {
+            echo "::error::job.workflow_repository or job.workflow_sha is empty, so the scanner's source cannot be named. COULD NOT ESTABLISH that this tree is clean." >&2
+            exit 1
+          }
+          echo "scanner from $SCANNER_REPOSITORY@$SCANNER_SHA"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .gates-scanner
+          persist-credentials: false
+
+      # exiftool is the binary inspector. The scanner refuses without it rather
+      # than skipping binaries, so this is not an optimisation - a run without
+      # it would measure the refusal path and nothing else.
+      - name: Install the binary inspector
+        run: sudo apt-get update && sudo apt-get install -y libimage-exiftool-perl
+
+      - name: Scan the working tree
+        run: |
+          set -uo pipefail
+
+          fail() {
+            echo "::error::$1 COULD NOT ESTABLISH that this tree is clean." >&2
+            exit 1
+          }
+
+          # A scanner checkout that produced no scanner is refused: a missing
+          # scanner reported as a pass is the empty green this file exists to
+          # prevent.
+          [ -r "$SCANNER" ] || fail "$SCANNER is missing, so nothing scanned this tree."
+          [ -r "$ALLOWLIST" ] || fail "$ALLOWLIST is missing, so no allowlist was applied."
+
+          # Every tracked path, NUL-delimited, because a filename is bytes and
+          # core.quotePath would hand the scanner an escaped name that matches
+          # nothing. Counted first: a scan that read no file must not report a
+          # clean tree, which is the same witness the secret scan keeps on its
+          # commit count.
+          expected=$(git -c core.quotePath=false ls-files -z | tr -cd '\0' | wc -c | tr -d ' ')
+          [ "${expected:-0}" -gt 0 ] || fail "git listed no tracked file."
+
+          # Batches are driven from here rather than from xargs, because GNU
+          # xargs (this runner's /usr/bin/xargs) does not pass a batch's own
+          # exit status through: it remaps ANY invocation exit in 1-125 to its
+          # own 123, so the scanner's findings exit (1) and its die()/refuse()
+          # exits (also non-zero, e.g. 2 for a missing exiftool) would arrive
+          # indistinguishable. A gate whose whole posture is to refuse what it
+          # cannot establish must not let that remap turn a genuine "could not
+          # establish" into a false "findings" report - so each batch is
+          # invoked directly and its own exit status is read straight from the
+          # python3 process, with no xargs in between.
+          out=""
+          overall=0
+          batch=()
+          run_batch() {
+            local batch_out batch_rc=0
+            batch_out=$(WATERMARK_ALLOW="$ALLOWLIST" python3 "$SCANNER" inspect "$@" 2>&1) || batch_rc=$?
+            out="$out$batch_out"$'\n'
+            if [ "$batch_rc" -ne 0 ] && [ "$batch_rc" -ne 1 ]; then
+              fail "the scan did not complete (scanner exit $batch_rc)."
+            fi
+            [ "$batch_rc" -eq 1 ] && overall=1
+            return 0
+          }
+          while IFS= read -r -d '' path; do
+            batch+=("$path")
+            if [ "${#batch[@]}" -ge 200 ]; then
+              run_batch "${batch[@]}"
+              batch=()
+            fi
+          done < <(git -c core.quotePath=false ls-files -z)
+          [ "${#batch[@]}" -gt 0 ] && run_batch "${batch[@]}"
+
+          printf '%s\n' "$out"
+
+          # One summary line per path, whatever the verdict, so this counts what
+          # was actually read rather than trusting the exit status.
+          #
+          # `|| true` is load-bearing and not defensive noise: the runner's shell
+          # is `bash -e {0}`, and a `grep -c` that matches nothing exits 1, which
+          # aborts on the ASSIGNMENT. Without it a scanner that printed nothing -
+          # exactly the case this line exists to catch - killed the step before
+          # this guard was reached, so it refused with no message at all. Found
+          # by running the extracted body under -e, which is the whole reason
+          # .ci/test-watermark-scan-workflow.sh does that.
+          scanned=$(printf '%s\n' "$out" | grep -cE '^watermark-scan: (clean|VERIFIED|findings in|[0-9]+ (allowed|noted))' || true)
+          [ "$scanned" -gt 0 ] || fail "the scanner produced no per-path verdict for $expected tracked file(s)."
+
+          if [ "$overall" -eq 0 ]; then
+            echo "scanned $expected tracked file(s), no detective provenance found"
+          else
+            echo "::error::DETECTIVE PROVENANCE is in this repository's tree. The local pre-push gate did not see this push - --no-verify, a machine without the hook deployed, or a commit made on GitHub itself. Remedy: watermark-scan.py clean <path>, or an allowlist entry naming its reason." >&2
+            exit 1
+          fi

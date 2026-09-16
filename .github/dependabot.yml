@@ -1,0 +1,14 @@
+version: 2
+
+# The only manifests here are the workflow files' SHA-pinned actions.
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: "ci"
+    groups:
+      actions:
+        patterns: ["*"]

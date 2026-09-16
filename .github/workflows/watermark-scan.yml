@@ -1,0 +1,26 @@
+name: watermark scan
+
+# gates calls its own shared-watermark-scan.yml by the same-repository path,
+# so a pull request that changes that workflow or the scanner runs the version
+# it is changing rather than main's.
+#
+# The push trigger is not redundant with the pull-request one: a commit made on
+# GitHub itself or pushed with --no-verify never passed a local hook, and only a
+# push-triggered run sees it.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: watermark-scan-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  watermark:
+    uses: ./.github/workflows/shared-watermark-scan.yml

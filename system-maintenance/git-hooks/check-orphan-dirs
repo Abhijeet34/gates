@@ -1,0 +1,90 @@
+#!/bin/sh
+# Block a push when a directory holds real files but git tracks NONE of them,
+# so it can never reach the remote. Catches both ways that happens: never
+# `git add`-ed (how system-maintenance/github/ was lost, its own README
+# documented it for weeks while the remote had nothing), and swallowed whole by
+# an ignore rule.
+#
+# Escape hatches:
+#   ORPHANS_OK=1 git push                  # this push only
+#   git config --add orphans.skip '<dir>'  # permanent, this repo
+#
+# Reads no stdin: the ref list on stdin belongs to `git lfs pre-push`, so the
+# scan loop reads from a temp file rather than a pipe.
+
+[ "${ORPHANS_OK:-0}" = "1" ] && exit 0
+
+toplevel=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+[ -n "$toplevel" ] || exit 0
+cd "$toplevel" || exit 0
+
+# Path components that are build output, caches, or runtime data. Skipped at any
+# depth, machine-wide. This is the deliberate blind spot: a source directory
+# genuinely named build/ or dist/ is not reported. Anchoring the equivalent
+# patterns in ~/.gitignore_global is what covers that case.
+SKIP='node_modules|__pycache__|\.venv|venv|\.next|\.nuxt|\.cache|\.sessions|dist|build|out|target|coverage|vendor|binaries|backups|logs|test-results|gen|[Dd]ownloads'
+EXTRA=$(git config --get-all orphans.skip 2>/dev/null | tr '\n' '|' | sed 's/|$//')
+
+# An ignored directory is only reported when the rule that hid it lives in the
+# machine-wide excludesfile. A rule in the repo's own .gitignore is a decision
+# someone made and can read in the diff; the global file is the one that hides a
+# directory in a repo whose own config never mentions it.
+GLOBALIGNORE=$(git config --get core.excludesfile 2>/dev/null)
+# shellcheck disable=SC2088  # matching a literal leading "~/" from git config output, not shell tilde expansion
+case "$GLOBALIGNORE" in
+    '~/'*) GLOBALIGNORE="$HOME/${GLOBALIGNORE#~/}" ;;
+esac
+
+TMP=$(mktemp) || exit 0
+git status --porcelain=v1 --ignored=matching --untracked-files=normal >"$TMP" 2>/dev/null || {
+    rm -f "$TMP"
+    exit 0
+}
+
+FOUND=0
+while IFS= read -r line; do
+    # Only collapsed DIRECTORY entries: git prints "?? dir/" or "!! dir/" when it
+    # tracks nothing inside. A tracked-but-modified dir never appears this way.
+    case "$line" in
+        '?? '*/) kind='??'; d=${line#???} ;;
+        '!! '*/) kind='!!'; d=${line#???} ;;
+        *) continue ;;
+    esac
+    case "$d" in \"*\") d=${d#\"}; d=${d%\"} ;; esac
+    d=${d%/}
+
+    # A nested repo with its own remote pushes itself (media/streaming-anix-rs).
+    [ -e "$d/.git" ] && continue
+
+    if [ "$kind" = '!!' ]; then
+        [ -n "$GLOBALIGNORE" ] || continue
+        src=$(git check-ignore -v "$d" 2>/dev/null | head -1 | cut -d: -f1)
+        [ "$src" = "$GLOBALIGNORE" ] || continue
+    fi
+    printf '%s\n' "$d" | grep -Eq "(^|/)($SKIP)(/|\$)" && continue
+    [ -n "$EXTRA" ] && printf '%s\n' "$d" | grep -Eqx "($EXTRA)" && continue
+    # Does it hold anything that is actually work? Ask git rather than find:
+    # git stops at a nested repository boundary (so a directory whose only
+    # content is a submodule-like clone reports just "that/repo/" and is not
+    # mistaken for lost work) and, for the untracked case, --exclude-standard
+    # drops files an ignore rule already covers, .DS_Store included.
+    if [ "$kind" = '??' ]; then
+        real=$(git ls-files --others --exclude-standard -- "$d" 2>/dev/null | grep -v '/$' | head -1)
+    else
+        # Already known to be ignored, so --exclude-standard would empty it.
+        real=$(git ls-files --others -- "$d" 2>/dev/null | grep -v '/$' | grep -v '\.DS_Store$' | head -1)
+    fi
+    [ -n "$real" ] || continue
+
+    echo "orphan-dirs: '$d/' has files on disk but ZERO tracked files; it will never reach the remote." >&2
+    FOUND=1
+done <"$TMP"
+rm -f "$TMP"
+
+if [ "$FOUND" = 1 ]; then
+    echo "orphan-dirs: push blocked. Track the files, add an ignore rule you actually mean, or:" >&2
+    echo "  git config --add orphans.skip '<dir>'   # permanent, this repo" >&2
+    echo "  ORPHANS_OK=1 git push                   # this push only" >&2
+    exit 1
+fi
+exit 0

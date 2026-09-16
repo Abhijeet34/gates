@@ -1,0 +1,52 @@
+# Defect rules only; style is the formatter's job and no style rule duplicates
+# it. Opinion rulesets (I, UP, SIM, RUF) stay off on purpose: turning one on
+# means fixing its findings in a commit of its own, not letting CI go red.
+
+target-version = "py311"
+
+# One cache location for every entry point, so none of them drops .ruff_cache/
+# at the repo root. Ruff expands the variable itself.
+cache-dir = "${HOME}/.cache/ruff/gates"
+
+[lint]
+select = [
+    "E4", # import placement
+    "E7", # statement-level mistakes (bare except, multiple statements per line)
+    "E9", # syntax and IO errors
+    "F",  # pyflakes: undefined names, unused imports and bindings
+    "B",  # bugbear: mutable defaults, loop-variable closures, zip without strict
+
+    # flake8-bandit (S), named rule by rule rather than as the whole ruleset.
+    # These are defect rules, not opinion, so they belong here - but the full S
+    # set is 90 findings on this repo and 57 of them are noise: S603 (29) and
+    # S607 (22) fire on every subprocess call that names a binary rather than an
+    # absolute path, which is what a CLI wrapper is *for*; S101 (6) fires on the
+    # asserts inside these scripts' own embedded self-tests; S310, S110 and S112
+    # are likewise judgement calls, not defects. Enabling the whole set would
+    # have repeated the mistake of adopting a rule by its findings count.
+    #
+    # Every rule below sat at 0 findings once the 6 real ones were fixed, so
+    # this is a guard against future regressions rather than a backlog. Adding a
+    # rule here means fixing its findings in a commit of its own, as above.
+    "S102", # exec()
+    "S105", # hardcoded password string
+    "S106", # hardcoded password as a function argument
+    "S107", # hardcoded password as a default argument
+    "S108", # hardcoded temp path: world-writable and guessable
+    "S301", # pickle.loads on untrusted data
+    "S302", # marshal.loads
+    "S306", # tempfile.mktemp, which races between name and open
+    "S307", # eval()
+    "S311", # random module used where a CSPRNG is needed
+    "S324", # weak hash (md5/sha1) without usedforsecurity=False
+    "S506", # yaml.load without a safe loader
+    "S508", # snmp without encryption
+    "S509", # snmp weak cryptography
+    "S601", # shell injection via paramiko exec_command
+    "S602", # subprocess with shell=True
+    "S605", # os.system with a shell-interpolated string
+    "S608", # SQL built by string concatenation
+    "S609", # wildcard injection into a shell command
+    "S612", # logging.config.listen, a remote code-execution listener
+    "S701", # jinja2 with autoescape disabled
+]

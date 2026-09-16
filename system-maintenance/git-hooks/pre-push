@@ -1,0 +1,206 @@
+#!/bin/sh
+# The machine-wide pre-push hook: deployed to ~/.git-hooks/pre-push, so it fires
+# for EVERY repository on this machine that has not overridden core.hooksPath.
+#
+# It runs four gates in order:
+#   1. the gitleaks secret scan  - allowlisted repositories only
+#   2. the no-watermarking gate  - EVERY repository, minus a written opt-out
+#   3. check-orphan-dirs         - every repository, as before
+#   4. git lfs pre-push          - every repository, as before
+#
+# THE TWO SCANS HAVE OPPOSITE DEFAULTS, and that is deliberate rather than an
+# oversight. They ask different questions about different subjects:
+#   - gitleaks asks "does this push leak OUR secrets", which is meaningless in a
+#     third-party clone, so it is opt-IN and the allowlist below is its switch;
+#   - the watermark gate asks "are WE shipping a machine-detectable origin
+#     mark", and every push from this machine is us shipping - including from a
+#     repository created tomorrow, which no allowlist can name in advance. So it
+#     is opt-OUT, seeded with the upstreams this machine only reads, and each
+#     entry there has to carry a written reason.
+# Sharing one switch would have made every new project born ungated, which is
+# the failure this file's own header argument - "machine-wide is the only level
+# at which a clone is covered the moment it exists" - exists to prevent.
+#
+# WHY THE SCAN LIVES HERE. core.hooksPath is repository config, not a tracked
+# file, so no commit can arm a repository's own .githooks/pre-push and a fresh
+# clone starts ungated. Machine-wide is the only level at which a clone is
+# covered the moment it exists.
+#
+# WHAT IT NEVER DOES: run a script that came out of the repository being pushed.
+# Git deliberately does not populate .git/hooks from a clone, precisely so that
+# cloning hostile code cannot execute it. A global hook that chained into
+# "$toplevel/.githooks/pre-push" would hand that property straight back, and
+# third-party clones do live on this machine (a clone of meld). So the
+# scanner this runs is ALWAYS $HOOK_DIR/gitleaks-pre-push - a copy deployed from
+# gates, reviewed in a diff, never one that arrived with a clone. Nothing
+# in a pushed repository is executed by this file, allowlisted or not.
+#
+# The allowlist below is therefore about BLAST RADIUS, not about code execution:
+# a repository not on it is left completely alone - not scanned, not refused,
+# byte-for-byte the behaviour it had before this hook grew a scan.
+#
+# THIS IS AN ACCIDENT-CATCHER, NOT A CONTROL. `git push --no-verify` bypasses
+# every hook; so does deleting this file. It stops an agent or a human committing
+# a credential by mistake. It stops nobody who means to. The only enforcement a
+# determined push cannot skip is server-side, and GitHub sells none that reaches
+# a user-owned private repository - see system-maintenance/git-hooks/README.md.
+#
+# Source of truth: system-maintenance/git-hooks/pre-push in the gates repo.
+# Deploy with system-maintenance/git-hooks/install.sh; editing the live copy puts
+# the two out of sync and the next deploy overwrites it.
+
+# Deliberately no `set -e` and no `set -u`: this file runs for every push on the
+# machine, so an abort on an unset variable would refuse them all. Every failure
+# path below is handled explicitly instead.
+
+# Prepend Homebrew prefix so this hook works when git is invoked from processes
+# that run with a stripped PATH (e.g. Homebrew internal auto-update).
+export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+command -v git-lfs >/dev/null 2>&1 || { printf >&2 "\n%s\n\n" "This repository is configured for Git LFS but 'git-lfs' was not found on your path. If you no longer wish to use Git LFS, remove this hook by deleting the 'pre-push' file in the hooks directory (set by 'core.hookspath'; usually '.git/hooks')."; exit 2; }
+
+HOOK_DIR=$(cd "$(dirname "$0")" && pwd -P) || exit 1
+
+# --- allowlist ---------------------------------------------------------------
+# Repositories whose pushes are scanned for secrets. Matched with shell glob
+# semantics against the NORMALISED identity of the repository's `origin` remote
+# (host/owner/name, no scheme, no userinfo, no port, no .git), which makes a fresh
+# clone covered wherever it lands - a physical-path key cannot be, since a clone
+# chooses its own path and would have to be added by hand every time, which is
+# the per-repo setup this hook exists to remove.
+#
+# Owner-scoped rather than a list of names on purpose: a NEW repository of his
+# should be gated the day it is created, and the failure mode of a name missing
+# from a list is silence. The trust statement is "repositories Abhijeet34 owns on
+# github.com", and the pattern is anchored at both ends by `case`, so
+# github.com.evil.example/Abhijeet34/x does not match.
+ALLOW='
+github.com/Abhijeet34/*
+'
+
+# Optional additive extension, one pattern per line, # comments allowed. It can
+# only ever cause MORE repositories to be scanned, never fewer, so a hostile
+# write here buys nothing a hostile write to this file would not already buy.
+# The test suite uses it to point a throwaway HOME at throwaway repositories.
+ALLOW_FILE="$HOOK_DIR/pre-push-allow"
+
+# origin, not the remote being pushed to: identity is a property of the
+# repository, and no-mistakes pushes every gated change through a LOCAL bare
+# remote under ~/.no-mistakes/repos/. Keying on the push target would leave every
+# pipeline push unscanned, which is the exact push that most needs scanning.
+#
+# Normalising it is where a sloppy parser becomes a spoof, so the userinfo strip
+# is scoped to the AUTHORITY: only an "@" before the first "/" is userinfo, so a
+# credential-bearing origin (https://user:pass@host/...) is still stripped down to
+# host/owner/name, while a `${url#*@}` over the whole string - which would turn
+# https://evil.example/x@github.com/Abhijeet34/y into github.com/Abhijeet34/y and
+# match - never fires because that "@" sits after the first "/".
+# test-global-hooks.sh pins eleven origin URLs against this: six shapes that
+# must be scanned, and five that must be left alone.
+identity=$(git config --get remote.origin.url 2>/dev/null)
+identity=${identity#*://}          # https:// ssh:// git://, and nothing for scp form
+case "$identity" in
+    *@*)
+        before=${identity%%/*}
+        case "$before" in *@*) identity=${identity#*@} ;; esac
+        ;;
+esac
+host=${identity%%[/:]*}            # the authority, up to the first / or :
+rest=${identity#"$host"}           # its separator and everything after
+case "$rest" in
+    :[0-9]*/*) rest="/${rest#:*/}" ;;   # https://host:443/owner/name
+    :*)        rest="/${rest#:}" ;;     # git@host:owner/name
+esac
+identity="$host$rest"
+identity=${identity%.git}
+identity=${identity%/}
+
+extra=''
+[ -r "$ALLOW_FILE" ] && extra=$(sed 's/#.*//' "$ALLOW_FILE" 2>/dev/null)
+
+allowed=0
+if [ -n "$identity" ]; then
+    # -f for the loop only: the words being split ARE globs, and without it the
+    # shell would first try to expand `github.com/Abhijeet34/*` against the
+    # working directory and match the pattern against whatever it found.
+    set -f
+    # shellcheck disable=SC2086  # deliberate word splitting: one pattern per line
+    for pat in $ALLOW $extra; do
+        # shellcheck disable=SC2254  # $pat is deliberately a glob, not a literal
+        case "$identity" in $pat) allowed=1; break ;; esac
+    done
+    set +f
+fi
+
+# A repository that routes git's hooks elsewhere did not reach this file from
+# git - its own hook chained here, and if that hook is byte-identical to the
+# canonical scanner then the SECRET scan has already run on this same ref list.
+# Inferred from git config and a content comparison, so a push cannot claim it:
+# a repository can only skip the scan here by having actually run it.
+#
+# Its own flag, not `allowed`, and that distinction is load-bearing: the
+# repository-local hook is the gitleaks scanner and nothing else, so folding
+# this into `allowed` would silently exempt the watermark gate in every one of
+# the 32 clones that set core.hooksPath - `automation` among them.
+scan_gitleaks=$allowed
+if [ "$allowed" = 1 ]; then
+    local_hooks=$(git config --local --get core.hooksPath 2>/dev/null)
+    if [ -n "$local_hooks" ]; then
+        # shellcheck disable=SC2088  # matching a literal leading "~/" from git config output, not shell tilde expansion
+        case "$local_hooks" in '~/'*) local_hooks="$HOME/${local_hooks#\~/}" ;; esac
+        case "$local_hooks" in /*) ;; *) local_hooks="$(git rev-parse --show-toplevel)/$local_hooks" ;; esac
+        cmp -s "$local_hooks/pre-push" "$HOOK_DIR/gitleaks-pre-push" 2>/dev/null && scan_gitleaks=0
+    fi
+fi
+
+# --- gates -------------------------------------------------------------------
+# The ref list arrives on stdin and can only be read once, but the scanners and
+# `git lfs pre-push` all need it, so it is buffered for every push. It used to
+# be buffered only for an allowlisted one, on the reasoning that an unscanned
+# repository should keep the untouched pipe it always had; the watermark gate
+# runs everywhere, so there is no unscanned repository left to protect.
+refuse() {
+    echo "global-pre-push: $1" >&2
+    echo "global-pre-push: COULD NOT ESTABLISH that this push is clean. Push refused." >&2
+    exit 1
+}
+STDIN_FILE=$(mktemp) || refuse "cannot create a temp file."
+trap 'rm -f "$STDIN_FILE"' EXIT
+cat > "$STDIN_FILE" || refuse "cannot buffer the ref list from stdin."
+
+if [ "$scan_gitleaks" = 1 ]; then
+    # Fail closed: an allowlisted repository whose scanner is missing is a
+    # repository nobody scanned, and that must not look like a clean push.
+    [ -x "$HOOK_DIR/gitleaks-pre-push" ] || refuse "$HOOK_DIR/gitleaks-pre-push is missing or not executable (run system-maintenance/git-hooks/install.sh deploy)."
+    [ -r "$HOOK_DIR/gitleaks.toml" ] || refuse "$HOOK_DIR/gitleaks.toml is missing (run system-maintenance/git-hooks/install.sh deploy)."
+
+    # The scan reads the DEPLOYED config, never the pushed repository's copy, for
+    # the same reason it runs the deployed scanner: a fresh clone is scanned by
+    # canonical rules even if its own .gitleaks.toml is absent or stale, and no
+    # data out of the repo steers them.
+    GITLEAKS_PREPUSH_CONFIG="$HOOK_DIR/gitleaks.toml" \
+        "$HOOK_DIR/gitleaks-pre-push" "$@" < "$STDIN_FILE" || exit 1
+fi
+
+# The no-watermarking gate, on every push. Same posture as above: the deployed
+# scanner, the deployed allowlist and the deployed opt-out list, never a copy
+# that arrived with the repository. It is a DETECTOR here - it refuses and names
+# `watermark-scan.py clean` as the remedy, and never rewrites what you are
+# pushing, because a hook that mutated a commit would be rewriting history
+# behind you.
+[ -x "$HOOK_DIR/watermark-scan.py" ] || refuse "$HOOK_DIR/watermark-scan.py is missing or not executable (run system-maintenance/git-hooks/install.sh deploy)."
+[ -r "$HOOK_DIR/watermark-allow.conf" ] || refuse "$HOOK_DIR/watermark-allow.conf is missing (run system-maintenance/git-hooks/install.sh deploy)."
+[ -r "$HOOK_DIR/watermark-optout.conf" ] || refuse "$HOOK_DIR/watermark-optout.conf is missing (run system-maintenance/git-hooks/install.sh deploy)."
+# The identity is passed in rather than recomputed: the normalisation above is
+# the security boundary and a second implementation of it would drift. An empty
+# value is a repository with no origin, which is still ours and still scanned;
+# the variable being UNSET is a wiring failure and the scanner refuses on it.
+WATERMARK_IDENTITY="$identity" \
+    WATERMARK_ALLOW="$HOOK_DIR/watermark-allow.conf" \
+    WATERMARK_OPTOUT="$HOOK_DIR/watermark-optout.conf" \
+    "$HOOK_DIR/watermark-scan.py" push "$@" < "$STDIN_FILE" || exit 1
+
+# Refuse to push while a directory of real files has nothing tracked in it.
+# Reads no stdin, so the ref list stays intact for git-lfs below.
+"$HOOK_DIR/check-orphan-dirs" || exit 1
+
+git lfs pre-push "$@" < "$STDIN_FILE"

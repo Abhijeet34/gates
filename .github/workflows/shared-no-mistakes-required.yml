@@ -1,0 +1,120 @@
+name: no-mistakes required (shared)
+
+# Callable gate shared by the five axi tool repositories: tasks-axi,
+# lavish-axi, chrome-devtools-axi, gh-axi and quota-axi. Each of them carried
+# its own copy of this check and the copies had drifted, so a correction to the
+# marker or the failure message reached one repository and not the other four.
+#
+# The split of responsibility is deliberate:
+#   - the caller owns the trigger, the `paths-ignore` release-output set, the
+#     concurrency group and the bot-author exemption, because all four are
+#     per-repository policy and each repository's test suite asserts them in
+#     its own workflow file;
+#   - this file owns the check itself.
+#
+# `on: workflow_call` is the only trigger, so this workflow never runs for
+# `gates` on its own - it exists to be called.
+
+on:
+  workflow_call:
+    inputs:
+      pipeline_steps:
+        description: >-
+          The steps this repository's no-mistakes pipeline runs, named in the
+          failure message only. chrome-devtools-axi says "build" where the
+          other four say "lint"; both wordings predate this workflow and are
+          preserved rather than unified.
+        type: string
+        required: false
+        default: review/test/lint/CI
+
+# `pull-requests: read` is what lets the step re-read the body; a caller that
+# grants only `contents: read` makes every run fail closed, because a called
+# workflow can narrow the caller's token but never widen it.
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  check:
+    name: PR must be raised via no-mistakes
+    runs-on: ubuntu-latest
+    # The step sleeps between retries, so the 360-minute default is no longer
+    # a harmless ceiling.
+    timeout-minutes: 5
+    steps:
+      - name: Verify no-mistakes signature in PR body
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_REPO: ${{ github.repository }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PIPELINE_STEPS: ${{ inputs.pipeline_steps }}
+        run: |
+          set -eu
+          # This is not our string to choose: it is the literal the no-mistakes
+          # binary writes into a PR body, spelled with the maintainer's URL
+          # because our build inherits it verbatim (one occurrence in the
+          # v1.49.0-19-g5076e43 binary built from Abhijeet34/no-mistakes).
+          # Editing it here does not rename anything - it makes the gate stop
+          # matching, and every caller's PR check goes red. Clearing the name
+          # means changing what our own fork emits, then this line.
+          marker='Updates from [git push no-mistakes](https://github.com/kunchenguid/no-mistakes)'
+
+          # no-mistakes creates the pull request and only then writes the
+          # `## Pipeline` section, so the event payload's body can describe a
+          # pull request that no longer exists - measured on firstmate#42,
+          # where the `edited` payload was stale too, not just `opened`. Read
+          # the body live, and retry so a write landing seconds after creation
+          # is still seen; a write that takes longer than this arrives with its
+          # own `edited` event, which this same live read then passes.
+          attempts=6
+          delay=10
+          read_ok=0
+
+          for attempt in $(seq 1 "$attempts"); do
+            if body=$(gh api "repos/${PR_REPO}/pulls/${PR_NUMBER}" --jq '.body // ""'); then
+              read_ok=1
+              if printf '%s' "$body" | grep -qF -- "$marker"; then
+                echo "Found no-mistakes signature in PR #${PR_NUMBER} body (attempt ${attempt})."
+                exit 0
+              fi
+              echo "No signature in PR #${PR_NUMBER} body yet (attempt ${attempt}/${attempts})."
+            else
+              echo "Could not read PR #${PR_NUMBER} body (attempt ${attempt}/${attempts})." >&2
+            fi
+            if [ "$attempt" -lt "$attempts" ]; then
+              sleep "$delay"
+            fi
+          done
+
+          # Never read the body at all: report that, and do not pass. "Could
+          # not determine" is not "compliant".
+          if [ "$read_ok" -eq 0 ]; then
+            {
+              echo "::error::Could not establish whether this PR was raised through no-mistakes."
+              echo
+              echo "All ${attempts} attempts to read the body of PR #${PR_NUMBER} in ${PR_REPO} failed."
+              echo "This is not a verdict on the PR - the check could not reach the API."
+              echo "Usual causes: the caller granted no 'pull-requests: read' permission,"
+              echo "a rate limit, or a GitHub outage. Re-run this check once it is resolved."
+              echo
+              echo "This check fails closed: an unreadable body never passes."
+            } >&2
+            exit 1
+          fi
+
+          {
+            echo "::error::This PR was not raised through no-mistakes."
+            echo
+            echo "Contributions to this repository must be submitted via 'git push no-mistakes'."
+            echo "That pipeline runs the required ${PIPELINE_STEPS} steps and writes a"
+            echo "deterministic '## Pipeline' section into the PR body containing:"
+            echo
+            echo "    $marker"
+            echo
+            echo "See CONTRIBUTING.md for setup and the full workflow."
+            echo
+            echo "PR author: ${PR_AUTHOR}"
+          } >&2
+          exit 1

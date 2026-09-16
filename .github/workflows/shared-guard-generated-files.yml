@@ -1,0 +1,323 @@
+name: guard generated files (shared)
+
+# Callable gate shared by the five axi tool repositories: tasks-axi,
+# lavish-axi, chrome-devtools-axi, gh-axi and quota-axi. It fails a pull
+# request that hand-edits a file release-please owns.
+#
+# The five copies this replaces had drifted into four variants, and each
+# variant held a correction the others had missed. This file is their union:
+#
+#   - rename and copy detection, from tasks-axi. `git diff --name-only` sees a
+#     `CHANGELOG.md -> NOTES.md` rename as a plain deletion of CHANGELOG.md and
+#     a plain addition of NOTES.md, so the four repositories without it never
+#     reported the destination path.
+#   - the `A` (added) exemption, from tasks-axi and quota-axi, but as the
+#     `allow_first_add` input rather than as a fixed rule: the two repositories
+#     disagreed about which paths it covers and each pins its own answer in a
+#     test, so the answer is the caller's to give. See the input description.
+#   - the explanatory comments, from tasks-axi, chrome-devtools-axi, gh-axi and
+#     quota-axi; lavish-axi's copy had them stripped.
+#
+# A fifth property is none of theirs: the check reads the PROVENANCE of a
+# generated file's content, not only its name. All four variants were a plain
+# `git diff base...head`, which cannot tell a hand edit from a fork's upstream
+# sync - a merge carrying upstream's own release commits, which are exactly
+# what writes these files. lavish-axi#18 was a legitimate sync this gate reddened,
+# and it could only merge behind an `upstream-sync` label in that caller. See
+# the comment on the check body for the rule that replaces the label.
+#
+# A sixth is also none of theirs: a caller may carry
+# `.github/generated-file-exceptions` declaring a reviewed, one-time rewrite of
+# one generated file. It is a file rather than an input because an input is a
+# switch someone flips per run and a file is a diff someone reads; it pins the
+# blob it permits and is spent by the pull request that adds it, so it cannot
+# become a standing exemption. A caller carrying no such file behaves exactly
+# as it did before. See the comment on the check body.
+#
+# The check body is the single copy of this logic in the fleet and is exercised
+# off a runner by `.ci/test-guard-generated-files.sh`, which extracts it from
+# this file. Keep the `run: |` block under the step name that script greps for.
+#
+# `on: workflow_call` is the only trigger, so this workflow never runs for
+# `gates` on its own - it exists to be called.
+
+on:
+  workflow_call:
+    inputs:
+      allow_first_add:
+        description: >-
+          Newline-separated generated paths whose first-ever addition is not a
+          violation. A pull request that wires up release-please creates these
+          files, which is not hand-editing bot-owned content; every later
+          change to them is. Callers pass what they pin today: tasks-axi
+          `.release-please-manifest.json`, quota-axi that plus `CHANGELOG.md`,
+          and the other three nothing. A path listed here is still guarded
+          against modification, deletion, rename and copy.
+        type: string
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Generated files must not be hand-edited
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Need history on both sides of the merge-base so `git diff base...head`
+          # reflects exactly what GitHub shows as "Files changed".
+          fetch-depth: 0
+
+      - name: Check PR does not modify release-please-generated files
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          ALLOW_FIRST_ADD: ${{ inputs.allow_first_add }}
+        run: |
+          set -eu
+          set -o pipefail
+
+          # One list for both halves below: the provenance test and the awk
+          # rules have to agree on what "generated" means.
+          GENERATED_PATHS='CHANGELOG.md .release-please-manifest.json'
+          export GENERATED_PATHS
+
+          DECL_FILE='.github/generated-file-exceptions'
+
+          # Content that arrived through a merge was not written on this branch.
+          # A fork's upstream sync merges the release commits that WROTE these
+          # files, so the diff below reads it as a hand edit and reds every sync
+          # of every caller - lavish-axi#18 needed a label to merge. A flagged
+          # path is therefore excused only when its blob at HEAD is byte-identical
+          # to that path in a commit this branch merged in: anything typed on the
+          # branch, or typed while resolving the merge, changes the blob and is
+          # still caught. Deletions and renames AWAY from a generated path are
+          # never excused - upstream dropping one is rare enough to be worth a
+          # human read. Merged content the branch author wrote on a side branch
+          # is the residual hole; closing it needs an identity this check does
+          # not have, and it is a narrower path than the label it retires, which
+          # disarmed the whole check for any pull request carrying it.
+          merged_in=$(
+            git rev-list --first-parent --min-parents=2 --parents \
+              "${BASE_SHA}..${HEAD_SHA}" | cut -d' ' -f3-
+          )
+          from_merge=""
+          for path in $GENERATED_PATHS; do
+            head_blob=$(git rev-parse -q --verify "${HEAD_SHA}:${path}") || continue
+            for parent in $merged_in; do
+              parent_blob=$(git rev-parse -q --verify "${parent}:${path}") || parent_blob=
+              if [ "$parent_blob" = "$head_blob" ]; then
+                from_merge="${from_merge} ${path}"
+                break
+              fi
+            done
+          done
+          export FROM_MERGE="$from_merge"
+
+          # A caller may carry $DECL_FILE, whose stanzas each declare ONE
+          # reviewed, one-time rewrite of ONE generated file. A caller without
+          # the file behaves exactly as it did before this existed: refuse.
+          #
+          # Two properties are what make a stanza an exception rather than the
+          # guard switched off, and both are enforced below rather than asked
+          # for in prose:
+          #
+          #   - `blob` pins the exact content the stanza permits, so it excuses
+          #     one OUTCOME and not a path. A head commit sha cannot do this: it
+          #     names the tree that would have to contain it, so it can never be
+          #     written into that tree. A date is the runner's clock rather than
+          #     a property of the change, permits every edit until it passes,
+          #     and is renewed by editing one line.
+          #   - the stanza must be absent from the base branch, so it is SPENT
+          #     by the pull request that introduces it. Landing a permissive
+          #     stanza in one pull request and drawing on it in the next is the
+          #     shape this refuses, and it is also why a stanza already merged
+          #     cannot be reused: consumption is asked of BASE_SHA, the base
+          #     branch tip, not of the merge-base the diff below is taken from.
+          #
+          # Parsing is strict on both sides and a bad file fails the step. That
+          # cannot deadlock a repository whose base copy is malformed, because
+          # the only way a stanza reaches the base branch is a pull request this
+          # same parser accepted.
+          DECL_AWK='
+            function err(msg) {
+              printf "%s: %s\n", ENVIRON["DECL_FILE"], msg > "/dev/stderr"
+              bad = 1
+            }
+            function flush(   k) {
+              if (!started) { last = ""; return }
+              for (k in need)
+                if (!(k in val) || val[k] == "")
+                  err("stanza ending at line " NR ": missing \"" k "\"")
+              if (("path" in val) && !(val["path"] in generated))
+                err("stanza ending at line " NR ": \"" val["path"] "\" is not a generated file")
+              if (("blob" in val) && (length(val["blob"]) != 40 || val["blob"] !~ /^[0-9a-f]+$/))
+                err("stanza ending at line " NR ": \"blob\" is not a 40-character git object id")
+              if (!bad) print val["path"] "\t" val["blob"]
+              for (k in val) delete val[k]
+              started = 0
+              last = ""
+            }
+            BEGIN {
+              n = split(ENVIRON["GENERATED_PATHS"], e, /[\n\r ,]+/)
+              for (i = 1; i <= n; i++) if (e[i] != "") generated[e[i]] = 1
+              need["path"] = 1; need["blob"] = 1
+              need["reason"] = 1; need["one-time"] = 1
+            }
+            /^[ \t]*#/ { next }
+            /^[ \t]*$/ { flush(); next }
+            # A line opening with whitespace continues the value above it, so a
+            # reason can be a paragraph and still read as one in a diff.
+            /^[ \t]/ {
+              if (last == "") { err("line " NR ": continuation with no key above it"); next }
+              line = $0
+              gsub(/^[ \t]+|[ \t]+$/, "", line)
+              val[last] = val[last] " " line
+              next
+            }
+            {
+              pos = index($0, ":")
+              if (pos == 0) { err("line " NR ": expected \"key: value\""); next }
+              k = substr($0, 1, pos - 1)
+              v = substr($0, pos + 1)
+              gsub(/^[ \t]+|[ \t]+$/, "", v)
+              if (!(k in need)) { err("line " NR ": unknown key \"" k "\""); next }
+              if (k in val) { err("line " NR ": duplicate key \"" k "\""); next }
+              val[k] = v
+              last = k
+              started = 1
+            }
+            END { flush(); exit bad ? 2 : 0 }
+          '
+          export DECL_FILE
+          decl_head=$( { git cat-file -p "${HEAD_SHA}:${DECL_FILE}" 2>/dev/null || :; } | awk "$DECL_AWK" )
+          decl_base=$( { git cat-file -p "${BASE_SHA}:${DECL_FILE}" 2>/dev/null || :; } | awk "$DECL_AWK" )
+
+          declared=""
+          for path in $GENERATED_PATHS; do
+            head_blob=$(git rev-parse -q --verify "${HEAD_SHA}:${path}") || continue
+            pair=$(printf '%s\t%s' "$path" "$head_blob")
+            printf '%s\n' "$decl_head" | grep -Fxq -- "$pair" || continue
+            printf '%s\n' "$decl_base" | grep -Fxq -- "$pair" && continue
+            declared="${declared} ${path}"
+          done
+          export DECLARED="$declared"
+
+          # An unresolvable range must fail the check, not pass it silently:
+          # pipefail plus the assignment's exit status make a broken `git diff`
+          # abort the step.
+          violated=$(
+            git diff --name-status \
+              --find-renames --find-copies --find-copies-harder \
+              "${BASE_SHA}...${HEAD_SHA}" |
+              awk '
+                # Read the list from the environment, not from `-v`: awk parses
+                # a -v value as a string literal and rejects a newline in one,
+                # and this input is newline-separated.
+                BEGIN {
+                  n = split(ENVIRON["ALLOW_FIRST_ADD"], entries, /[\n\r ,]+/)
+                  for (i = 1; i <= n; i++) if (entries[i] != "") first_add_ok[entries[i]] = 1
+                  n = split(ENVIRON["GENERATED_PATHS"], entries, /[\n\r ,]+/)
+                  for (i = 1; i <= n; i++) if (entries[i] != "") is_generated[entries[i]] = 1
+                  n = split(ENVIRON["FROM_MERGE"], entries, /[\n\r ,]+/)
+                  for (i = 1; i <= n; i++) if (entries[i] != "") from_merge[entries[i]] = 1
+                  n = split(ENVIRON["DECLARED"], entries, /[\n\r ,]+/)
+                  for (i = 1; i <= n; i++) if (entries[i] != "") declared[entries[i]] = 1
+                }
+                function generated(path) {
+                  return (path in is_generated)
+                }
+                # Whatever the status, a path holding content that came in
+                # verbatim through a merge was not edited here; the provenance
+                # test above establishes it. Destination side only, so a rename
+                # or copy away from a generated path is still reported.
+                $1 ~ /^[AMT]/ && ($2 in from_merge) { next }
+                $1 ~ /^[RC]/ && NF >= 3 && ($3 in from_merge) { next }
+                # A declared exception excuses the same side and only that side,
+                # for the same reason the merge rule does: the declaration pins
+                # the blob a path HOLDS, and a deletion or a rename away from a
+                # generated path leaves no content to pin.
+                $1 ~ /^[AMT]/ && ($2 in declared) { next }
+                $1 ~ /^[RC]/ && NF >= 3 && ($3 in declared) { next }
+                $1 == "A" && generated($2) && ($2 in first_add_ok) { next }
+                $1 == "A" && generated($2) { printf " %s", $2 }
+                $1 ~ /^[MDT]/ && generated($2) { printf " %s", $2 }
+                # A rename or copy is reported whichever side is generated: away
+                # from a generated path loses bot-owned content, into one plants
+                # content the bot will overwrite.
+                $1 ~ /^[RC]/ && (generated($2) || generated($3)) {
+                  if (NF >= 3) { printf " %s -> %s", $2, $3 } else { printf " %s", $2 }
+                }
+              '
+          )
+
+          if [ -n "$violated" ]; then
+            # A stanza that was written but did not apply is the case worth
+            # diagnosing: without this the author sees the same refusal whether
+            # they forgot the file, mistyped the path, or shipped a later edit
+            # than the blob they declared.
+            notes=""
+            for path in $GENERATED_PATHS; do
+              case " ${violated} " in *" ${path} "*) ;; *) continue ;; esac
+              want=$(printf '%s\n' "$decl_head" | awk -F'\t' -v p="$path" '$1 == p { print $2; exit }')
+              if [ -z "$want" ]; then
+                # A stanza naming the wrong file is silent otherwise: nothing
+                # covers the violated path, which reads exactly like no
+                # declaration at all. Measured against lavish-axi#31 with one
+                # word of `path` changed.
+                [ -n "$decl_head" ] || continue
+                notes="${notes}$(printf '\n  %s: no stanza names it. %s declares: %s' \
+                  "$path" "$DECL_FILE" "$(printf '%s\n' "$decl_head" | cut -f1 | paste -sd' ' -)")"
+                continue
+              fi
+              head_blob=$(git rev-parse -q --verify "${HEAD_SHA}:${path}") || head_blob=
+              # printf rather than a multi-line string literal: every line of
+              # this block scalar has to stay indented past the `run: |`, and
+              # .ci/test-guard-generated-files.sh extracts the block by exactly
+              # that rule - a continuation at column 2 silently truncates it.
+              if [ "$want" != "$head_blob" ]; then
+                notes="${notes}$(printf '\n  %s: the declared blob is %s, but HEAD holds %s.' \
+                  "$path" "$want" "${head_blob:-no such file}")"
+                notes="${notes}$(printf "\n    Re-run 'git rev-parse HEAD:%s' and declare the content you are shipping." \
+                  "$path")"
+              else
+                notes="${notes}$(printf '\n  %s: that stanza is already on the base branch, so it has been spent.' "$path")"
+                notes="${notes}$(printf '\n    An exception is consumed by the pull request that introduces it.')"
+              fi
+            done
+            {
+              echo "::error::This PR modifies release-please-generated files:${violated}"
+              echo
+              echo "CHANGELOG.md and .release-please-manifest.json are auto-generated by"
+              echo "release-please from conventional commits on main. Do not hand-edit them."
+              echo
+              echo "If you want your change to appear in the next release notes, use a"
+              echo "conventional commit message (feat/fix/docs/...). release-please will"
+              echo "update these files in the next release PR automatically."
+              if [ -n "$notes" ]; then
+                echo
+                echo "A declared exception was read but did not apply:${notes}"
+              else
+                echo
+                echo "A deliberate, reviewed, one-time rewrite is declared in ${DECL_FILE},"
+                echo "in the same pull request that makes it. Add a stanza:"
+                echo
+                echo "  path: CHANGELOG.md"
+                echo "  blob: \$(git rev-parse HEAD:CHANGELOG.md)"
+                echo "  reason: why this edit is right and what would be lost without it"
+                echo "  one-time: what makes this unrepeatable rather than a standing exemption"
+                echo
+                echo "The blob pins the one content the exception permits, and the stanza is"
+                echo "spent by the pull request that adds it; ${DECL_FILE} itself"
+                echo "carries the full format."
+              fi
+              echo
+              echo "See CONTRIBUTING.md for the full contributor workflow."
+            } >&2
+            exit 1
+          fi
+
+          echo "No release-please-generated files modified. OK."

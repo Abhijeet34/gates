@@ -1,0 +1,4 @@
+# Upstream maintainers whose account name may appear in this repository, one per
+# line. Read by .ci/test-upstream-owner-refs.sh, which fails on any occurrence
+# of one of these names that its table does not declare with a reason.
+kunchenguid

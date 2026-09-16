@@ -1,0 +1,372 @@
+name: shared dependency advisories
+
+# The fleet's dependency-advisory gate, called by a thin per-repo caller in the
+# same shape as shared-secret-scan.yml. It reads the CALLING repository's own
+# Dependabot alerts through the API rather than running any ecosystem auditor,
+# so one implementation covers npm, pip, cargo and Go modules at once and
+# inherits GitHub's own severity and scope labels instead of re-deriving them.
+#
+# Why not the ecosystem's own auditor, which is the obvious reach: a production
+# filter is actively wrong here. lavish-axi's scripts/build.js bundles 138 npm
+# packages into dist/whiteboard/whiteboard.js - mermaid alone contributing
+# 1,976,553 bytes - and every one of them is a devDependency that ships to
+# anyone who installs the package. `pnpm audit --prod` calls that tree clean.
+# And this fleet is JavaScript, Python, Go, Rust and Shell, so a per-ecosystem
+# route is four implementations to keep in step. automation#193 has the
+# measurements.
+#
+# This is a BACKSTOP for a surface that had no owner at all, not a gate that
+# stops a bad dependency arriving. Dependabot files an alert after the merge
+# that introduces it; what this adds is that the alert is read by something,
+# on every pull request, instead of by nobody.
+#
+# The token needs no PAT. `vulnerability-alerts: read` is a documented
+# GITHUB_TOKEN permission, and it was verified rather than assumed before this
+# file was written - Abhijeet34/automation run 33563190397, two jobs against the
+# same endpoint: with the permission HTTP 200 and a JSON array, without it HTTP
+# 403 "Resource not accessible by integration".
+#
+# THE CALLER MUST GRANT `vulnerability-alerts: read` ITSELF. A called workflow
+# can narrow the caller's GITHUB_TOKEN but never widen it, so a caller that
+# omits it fails the run outright with GitHub's unhelpful "workflow file issue"
+# annotation - the same trap that cost all five callers of
+# shared-no-mistakes-required.yml a round over `pull-requests: read`
+# (.ci/shared-workflows.md).
+#
+# Propagation: callers reference @main, with no digest pin, so a change here is
+# live in every caller on its next run and a caller cannot hold an older
+# behaviour. That is the shared-guard-generated-files.yml model rather than the
+# shared-secret-scan.yml one, and deliberately: secret-scan pins because it
+# distributes files that live in the caller's tree, and nothing here does - the
+# deferral list is the caller's own policy, not a synced canonical copy. The
+# only thing standing against a bad change reaching everyone at once is
+# .ci/test-dependency-advisories.sh running inside `checks`.
+on:
+  workflow_call:
+    inputs:
+      severity_floor:
+        description: >-
+          Lowest severity that fails the job: critical, high, medium or low.
+          Default high, so high and critical fail. Not medium: 16 of
+          lavish-axi's 18 open alerts are medium, and a check that is always
+          red is a check nobody reads. A repository far from clean can adopt at
+          `critical` and tighten.
+        type: string
+        default: high
+      fail_on_development:
+        description: >-
+          Whether an alert GitHub labels development scope can fail the job.
+          Default true, and the default is the answer to automation#193's open
+          question. Measured 2026-09-02 across all 12 repositories on this
+          account: of the 40 open high and critical alerts, 33 are labelled
+          `development`. Four of the five repositories carrying any - gh-axi,
+          quota-axi, gnhf and tasks-axi, 25 alerts between them, 4 of those
+          critical - would report entirely CLEAN under a lenient caller. The
+          label is also measurably wrong about what ships: lavish-axi's
+          scripts/build.js bundles 138 devDependencies into the published dist.
+          The failure this check exists for was a scope label being trusted.
+        type: boolean
+        default: true
+      deferrals_path:
+        description: Path to the deferral list in the calling repository.
+        type: string
+        default: .github/dependency-deferrals.yml
+
+permissions:
+  contents: read
+  vulnerability-alerts: read
+
+jobs:
+  advisories:
+    name: dependency advisories
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      vulnerability-alerts: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Only the deferral list is read from the tree, and it is one file.
+          fetch-depth: 1
+
+      # Separated from the verdict below because this step is the only part that
+      # touches the network, and the split is what lets .ci/test-dependency-advisories.sh
+      # drive the verdict against fixture inventories with no API at all - and
+      # drive this step against a stub curl for every way the read can fail.
+      - name: Read this repository's open Dependabot alerts
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ALERTS_JSON: ${{ runner.temp }}/dependabot-alerts.json
+        run: |
+          set -uo pipefail
+
+          # A visibility gate that goes quiet when it cannot see is the exact
+          # defect automation#193 is about, so every path out of this step that
+          # is not a complete read is a refusal. Same wording, same reason, as
+          # shared-secret-scan.yml's history scan.
+          fail() {
+            echo "::error::$1 COULD NOT ESTABLISH this repository's advisory state." >&2
+            exit 1
+          }
+
+          api="${GITHUB_API_URL:-https://api.github.com}"
+          tmp="${RUNNER_TEMP:-.}"
+          : >"$tmp/pages.list"
+
+          # Cursor pagination, not `page=`. Measured on run 33563979852: this
+          # endpoint answers HTTP 400 to a `page` parameter - it is one of the
+          # few REST endpoints that paginates only by the Link header's before/
+          # after cursors, so the ordinary page-counting loop refuses everything.
+          # No repository here yet exceeds one page at per_page=100, so this loop
+          # is exercised live at a smaller page size instead: against
+          # chrome-devtools-axi at per_page=25 it reads 3 pages and merges to 51,
+          # the same count `gh api --paginate` reports (2026-09-02). A loop that
+          # silently stopped at page 1 would report the rest of a repository clean.
+          url="$api/repos/$GITHUB_REPOSITORY/dependabot/alerts?state=open&per_page=100"
+          page=0
+          # 100 alerts a page. A repository past 3000 open alerts is a different
+          # problem, but the cap refuses rather than truncating: a silent ceiling
+          # reads exactly like a clean tail.
+          max_pages=30
+          while [ -n "$url" ]; do
+            page=$((page + 1))
+            if [ "$page" -gt "$max_pages" ]; then
+              fail "this repository has more than $((max_pages * 100)) open alerts, which this check will not silently truncate."
+            fi
+            body="$tmp/alerts-page-$page.json"
+            hdr="$tmp/alerts-page-$page.head"
+            # `curl_rc=$?` on the next line would never run: the runner's shell
+            # is `bash -e`, which aborts on the failing assignment itself, so the
+            # refusal has to be attached to the assignment.
+            curl_rc=0
+            code=$(curl -sS -D "$hdr" -o "$body" -w '%{http_code}' \
+              -H "Authorization: Bearer $GITHUB_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "$url") || curl_rc=$?
+            [ "$curl_rc" -eq 0 ] || fail "the request for page $page did not complete (curl exit $curl_rc)."
+
+            case "$code" in
+              200) ;;
+              403)
+                # Two different causes, one status. Naming which one is what
+                # turns this refusal into something a reader can act on.
+                if grep -qi 'disabled' "$body" 2>/dev/null; then
+                  fail "Dependabot alerts are DISABLED on this repository (HTTP 403). Enable them in Settings -> Advanced Security, or stop calling this workflow;"
+                fi
+                fail "the token was refused (HTTP 403, \"$(jq -r '.message? // "no message"' "$body" 2>/dev/null)\"). The CALLER must grant \`vulnerability-alerts: read\` - a called workflow cannot widen the caller's GITHUB_TOKEN;"
+                ;;
+              404) fail "the alerts endpoint answered HTTP 404, so this repository has no dependency graph or no alerts feature;" ;;
+              *)   fail "the alerts endpoint answered HTTP $code;" ;;
+            esac
+
+            jq -e 'type == "array"' "$body" >/dev/null 2>&1 \
+              || fail "page $page was HTTP 200 but is not a JSON array (the endpoint answered with something else);"
+
+            printf '%s\n' "$body" >>"$tmp/pages.list"
+            # No Link header, or one with no `next`, is the normal last page and
+            # both make this pipeline exit non-zero under pipefail, so the empty
+            # result has to be spelled rather than inherited.
+            url=$(tr -d '\r' <"$hdr" | grep -i '^link:' | tr ',' '\n' \
+              | grep 'rel="next"' | sed -n 's/.*<\(.*\)>.*/\1/p' | head -1) || url=""
+          done
+
+          # shellcheck disable=SC2046
+          jq -s 'add' $(tr '\n' ' ' <"$tmp/pages.list") >"$ALERTS_JSON" \
+            || fail "the pages could not be merged;"
+
+          # An alert whose severity or ghsa id is absent cannot be judged, and
+          # judging it as clean is the failure mode this file exists to prevent.
+          unjudgeable=$(jq '[.[] | select(
+              (.security_advisory.severity | type) != "string"
+              or (.security_advisory.ghsa_id | type) != "string"
+              or (.dependency.package.name | type) != "string"
+            )] | length' "$ALERTS_JSON") \
+            || fail "the merged inventory could not be inspected;"
+          [ "${unjudgeable:-1}" = 0 ] \
+            || fail "$unjudgeable of the alerts returned are missing a severity, a GHSA id or a package name, so they cannot be judged;"
+
+          echo "read $(jq 'length' "$ALERTS_JSON") open alerts over $page page(s)"
+
+      - name: Judge the open advisories against the deferral list
+        env:
+          ALERTS_JSON: ${{ runner.temp }}/dependabot-alerts.json
+          SEVERITY_FLOOR: ${{ inputs.severity_floor }}
+          FAIL_ON_DEVELOPMENT: ${{ inputs.fail_on_development }}
+          DEFERRALS_PATH: ${{ inputs.deferrals_path }}
+        run: |
+          set -uo pipefail
+
+          refuse() { echo "::error::$1" >&2; exit 1; }
+
+          case "$SEVERITY_FLOOR" in
+            critical | high | medium | low) ;;
+            *) refuse "severity_floor is \"$SEVERITY_FLOOR\"; it must be one of critical, high, medium, low." ;;
+          esac
+          case "$FAIL_ON_DEVELOPMENT" in
+            true | false) ;;
+            *) refuse "fail_on_development is \"$FAIL_ON_DEVELOPMENT\"; it must be true or false." ;;
+          esac
+          [ -r "$ALERTS_JSON" ] || refuse "the alert inventory at $ALERTS_JSON is missing, so nothing was judged."
+
+          # --- the deferral list ---------------------------------------------
+          #
+          # Read from the repository rather than from GitHub's dismiss button,
+          # which records the decision where no diff shows it and no reviewer
+          # meets it. Real YAML, parsed with yq into JSON and validated with jq,
+          # so a malformed file is a named refusal rather than a silently empty
+          # list. yq missing is itself a refusal: an unreadable deferral list
+          # that defaults to empty would fail LOUDLY here, but one that defaults
+          # to empty on a repository with no failing alerts would pass while
+          # having read nothing.
+          deferrals=$(mktemp)
+          # GitHub's escaping for a workflow-command property value.
+          DEFERRALS_FILE_PROP=${DEFERRALS_PATH//%/%25}
+          DEFERRALS_FILE_PROP=${DEFERRALS_FILE_PROP//$'\r'/%0D}
+          DEFERRALS_FILE_PROP=${DEFERRALS_FILE_PROP//$'\n'/%0A}
+          DEFERRALS_FILE_PROP=${DEFERRALS_FILE_PROP//:/%3A}
+          DEFERRALS_FILE_PROP=${DEFERRALS_FILE_PROP//,/%2C}
+          if [ -e "$DEFERRALS_PATH" ]; then
+            command -v yq >/dev/null 2>&1 \
+              || refuse "$DEFERRALS_PATH exists but yq is not installed, so the deferral list could not be read."
+            yq -o=json '.' "$DEFERRALS_PATH" >"$deferrals" 2>"$deferrals.err" \
+              || refuse "$DEFERRALS_PATH is not valid YAML: $(tr '\n' ' ' <"$deferrals.err")"
+          else
+            printf '{"deferrals":[]}\n' >"$deferrals"
+          fi
+
+          # Every rule the file has to satisfy, as one list of named errors.
+          # All four keys are required and an unknown key is an error, for the
+          # reason .ci/shared-workflows.md gives for the generated-file
+          # exceptions: `until` stated separately from `reason` is what stops a
+          # standing exemption reading as a one-off, and it is the one field no
+          # check can grade - the parser asserts it is answered, a reviewer
+          # asserts the answer is true. No expiry DATE, deliberately and for the
+          # same reason recorded there: a date is the runner's clock rather than
+          # a property of the decision, it permits everything until it passes,
+          # and it is renewed by editing one line.
+          errors=$(jq -r '
+            def required: ["ghsa", "package", "reason", "until"];
+            def nonempty($v): ($v | type) == "string" and (($v | gsub("\\s"; "")) | length) > 0;
+            ( if type != "object" then ["the file must be a mapping with a `deferrals:` key"]
+              else
+                ( (keys_unsorted - ["deferrals"]) | map("unknown top-level key `\(.)`") )
+                + ( if has("deferrals") | not then ["no `deferrals:` key"]
+                    elif (.deferrals | type) != "array" then ["`deferrals:` must be a list"]
+                    else
+                      ( [ .deferrals | to_entries[]
+                          | .key as $i | .value as $e
+                          | if ($e | type) != "object" then "deferral \($i + 1): must be a mapping"
+                            else
+                              ( ($e | keys_unsorted) - required | map("deferral \($i + 1): unknown key `\(.)`") )
+                              + ( required - ($e | keys_unsorted) | map("deferral \($i + 1): missing required key `\(.)`") )
+                              + ( required | map(select($e[.] != null and (nonempty($e[.]) | not))
+                                                 | "deferral \($i + 1): `\(.)` is empty") )
+                              + ( if ($e.ghsa | type) == "string"
+                                    and (($e.ghsa | test("^GHSA-[0-9a-z]{4}-[0-9a-z]{4}-[0-9a-z]{4}$")) | not)
+                                  then ["deferral \($i + 1): `ghsa` is \"\($e.ghsa)\", which is not a GHSA id"] else [] end )
+                              | .[]
+                            end ] )
+                      + ( [ .deferrals | map(select(type == "object") | .ghsa) | group_by(.)[]
+                            | select(length > 1) | "`\(.[0])` is listed \(length) times" ] )
+                    end )
+              end ) | .[]' "$deferrals" 2>&1) \
+            || refuse "$DEFERRALS_PATH could not be validated: $errors"
+          [ -z "$errors" ] || {
+            printf '%s\n' "$errors" | while IFS= read -r e; do echo "::error file=$DEFERRALS_FILE_PROP::$e" >&2; done
+            refuse "$DEFERRALS_PATH is malformed; every deferral needs ghsa, package, reason and until."
+          }
+
+          # --- the verdict ----------------------------------------------------
+          verdict=$(jq -n \
+            --slurpfile alerts "$ALERTS_JSON" \
+            --slurpfile deferrals "$deferrals" \
+            --arg floor "$SEVERITY_FLOOR" \
+            --argjson faildev "$FAIL_ON_DEVELOPMENT" '
+            def rank: {"low": 1, "medium": 2, "high": 3, "critical": 4}[.] // 0;
+            ($alerts[0] // []) as $a
+            | ($deferrals[0].deferrals // []) as $d
+            | ($a | map({
+                ghsa: .security_advisory.ghsa_id,
+                sev: .security_advisory.severity,
+                # A null scope is NOT development. GitHub omits the label when
+                # it cannot tell, and treating unknown as exempt is the scope
+                # label being trusted one layer further down.
+                scope: (.dependency.scope // "unknown"),
+                pkg: .dependency.package.name,
+                manifest: (.dependency.manifest_path // "?"),
+                url: (.html_url // "")
+              })) as $open
+            | ($open | map(select((.sev | rank) >= ($floor | rank))
+                                  | select($faildev or .scope != "development"))) as $atfloor
+            | ($d | map(.ghsa)) as $dghsa
+            | {
+                open: $open,
+                counts: ($open | group_by(.sev) | map({sev: .[0].sev, n: length})
+                         | sort_by(.sev | rank) | reverse),
+                deferred: ($atfloor | map(select(.ghsa as $g | $dghsa | index($g)))),
+                failing:  ($atfloor | map(select(.ghsa as $g | ($dghsa | index($g)) | not))),
+                # A deferral naming a GHSA with no open alert is dead text, not a
+                # false verdict: it is keyed on the exact advisory, so it can
+                # never widen to cover a new one. Reported, never fatal - a
+                # repository that FIXED the advisory must not go red for it.
+                stale: ($d | map(select(.ghsa as $g | ($open | map(.ghsa) | index($g)) | not))),
+                # Mis-keyed, though, is a real error: the deferral names an open
+                # advisory but the wrong package, so the reviewer approved a
+                # sentence about something else.
+                miskeyed: ($d | map(. as $e
+                            | select(($open | map(.ghsa) | index($e.ghsa)) != null)
+                            | select(($open | map(select(.ghsa == $e.ghsa) | .pkg) | index($e.package)) == null)
+                            | {ghsa: $e.ghsa, claimed: $e.package,
+                               actual: ($open | map(select(.ghsa == $e.ghsa) | .pkg) | unique | join(", "))})),
+                reasons: ($d | map({key: .ghsa, value: {reason, until}}) | from_entries)
+              }') \
+            || refuse "the verdict could not be computed from $ALERTS_JSON."
+          [ -n "$verdict" ] || refuse "the verdict could not be computed from $ALERTS_JSON."
+
+          # The path is passed as data, never spliced into jq program text: a
+          # `"` in it broke the program, and a `::` or newline in a workflow
+          # command property is read as the command's own syntax.
+          get() { printf '%s' "$verdict" | jq -r --arg file "$DEFERRALS_FILE_PROP" "$1"; }
+
+          # The standing count, in the log and in the run summary, so low and
+          # medium are visible as a trend rather than invisible until one of
+          # them becomes high. Printed on every run, including the green ones.
+          {
+            echo "### Dependency advisories"
+            echo
+            echo "Floor \`$SEVERITY_FLOOR\`; development-scoped alerts $([ "$FAIL_ON_DEVELOPMENT" = true ] && echo 'can fail' || echo 'are exempt')."
+            echo
+            echo "| severity | open |"
+            echo "| --- | --- |"
+            get '.counts[] | "| \(.sev) | \(.n) |"'
+            [ "$(get '.open | length')" = 0 ] && echo "| _none_ | 0 |"
+            echo
+            echo "| severity | scope | package | GHSA | manifest |"
+            echo "| --- | --- | --- | --- | --- |"
+            get '.open | sort_by(.sev) | reverse | .[] | "| \(.sev) | \(.scope) | \(.pkg) | \(.ghsa) | \(.manifest) |"'
+          } | tee -a "${GITHUB_STEP_SUMMARY:-/dev/null}"
+          echo
+
+          get '.miskeyed[] | "::error file=\($file)::deferral for \(.ghsa) names package `\(.claimed)`, but the open alert for it is `\(.actual)`"' >&2
+          [ "$(get '.miskeyed | length')" = 0 ] \
+            || refuse "$DEFERRALS_PATH mis-names the package of an advisory it defers."
+
+          get '.stale[] | "::warning file=\($file)::deferral for \(.ghsa) (\(.package)) matches no open alert; the decision it records has outlived its reason and the entry can go"' >&2
+
+          deferred_n=$(get '.deferred | length')
+          if [ "$deferred_n" != 0 ]; then
+            echo "$deferred_n advisory(ies) at or above \`$SEVERITY_FLOOR\` are deferred by $DEFERRALS_PATH:"
+            get '.deferred[] as $x | .reasons[$x.ghsa] as $r
+                 | "  \($x.sev) \($x.pkg) \($x.ghsa)\n    reason: \($r.reason | gsub("\\s+"; " "))\n    until:  \($r.until | gsub("\\s+"; " "))"'
+          fi
+
+          failing_n=$(get '.failing | length')
+          if [ "$failing_n" = 0 ]; then
+            echo "no open advisory at or above \`$SEVERITY_FLOOR\` is undeferred; $(get '.open | length') open alert(s) inventoried"
+            exit 0
+          fi
+
+          get '.failing[] | "::error::\(.sev) advisory in \(.pkg) (\(.scope) scope, \(.manifest)): \(.ghsa) \(.url)"' >&2
+          refuse "$failing_n open advisory(ies) at or above \`$SEVERITY_FLOOR\` are neither fixed nor recorded in $DEFERRALS_PATH. Upgrade the dependency, or add the GHSA id there with the reason it stands and the condition that ends it."

@@ -1,0 +1,45 @@
+# SYNTHETIC, NON-FUNCTIONAL credentials, same provenance as known-secrets.tsv:
+# nothing here was ever issued and nothing here authenticates anything.
+#
+# One row per PATH REGEX declared in a [[allowlists]] block of .gitleaks.toml.
+# .ci/gitleaks/test-allowlists.py reads that file as the registry and fails on
+# any declared path this table does not exercise, so a new allowlist cannot be
+# added without stating, here, exactly how wide it is.
+#
+# Columns, tab-separated:
+#   path-regex   the entry's own regex, verbatim, which is what the coverage
+#                check matches on - copy it, do not retype it
+#   file-path    a concrete path that regex must match
+#   silenced     a line that MUST NOT be reported at that path
+#   still-fires  a line at the SAME path that MUST still be reported, or `-`
+#                for a blanket entry that has no such line. A `-` is a
+#                declaration that the entry excuses every rule at that path.
+(^|/)node_modules/	node_modules/pkg/index.js	R2_SECRET_ACCESS_KEY = "ZKAkWfbB1+//qC7pswXkmjEDdTvng4ib1PJNNCfn"	-
+(^|/)target/	target/debug/build.rs	R2_SECRET_ACCESS_KEY = "ZKAkWfbB1+//qC7pswXkmjEDdTvng4ib1PJNNCfn"	-
+(^|/)dist/	dist/bundle.js	R2_SECRET_ACCESS_KEY = "ZKAkWfbB1+//qC7pswXkmjEDdTvng4ib1PJNNCfn"	-
+(^|/)vendor/	vendor/lib.go	R2_SECRET_ACCESS_KEY = "ZKAkWfbB1+//qC7pswXkmjEDdTvng4ib1PJNNCfn"	-
+(^|/)\.next/	.next/server/page.js	R2_SECRET_ACCESS_KEY = "ZKAkWfbB1+//qC7pswXkmjEDdTvng4ib1PJNNCfn"	-
+(^|/)\.venv/	.venv/lib/mod.py	R2_SECRET_ACCESS_KEY = "ZKAkWfbB1+//qC7pswXkmjEDdTvng4ib1PJNNCfn"	-
+(^|/)__pycache__/	__pycache__/mod.py	R2_SECRET_ACCESS_KEY = "ZKAkWfbB1+//qC7pswXkmjEDdTvng4ib1PJNNCfn"	-
+(^|/)\.ruff_cache/	.ruff_cache/0.1.0/cache.json	R2_SECRET_ACCESS_KEY = "ZKAkWfbB1+//qC7pswXkmjEDdTvng4ib1PJNNCfn"	-
+(^|/)\.mypy_cache/	.mypy_cache/3.12/mod.json	R2_SECRET_ACCESS_KEY = "ZKAkWfbB1+//qC7pswXkmjEDdTvng4ib1PJNNCfn"	-
+(^|/)\.pytest_cache/	.pytest_cache/v/cache/lastfailed	R2_SECRET_ACCESS_KEY = "ZKAkWfbB1+//qC7pswXkmjEDdTvng4ib1PJNNCfn"	-
+(^|/)graphify-out/	graphify-out/graph.json	R2_SECRET_ACCESS_KEY = "ZKAkWfbB1+//qC7pswXkmjEDdTvng4ib1PJNNCfn"	-
+(^|/)\.claude/worktrees/	.claude/worktrees/task/x.py	R2_SECRET_ACCESS_KEY = "ZKAkWfbB1+//qC7pswXkmjEDdTvng4ib1PJNNCfn"	-
+(^|/)evals/scrape-baseline/fixtures/	evals/scrape-baseline/fixtures/page.html	R2_SECRET_ACCESS_KEY = "ZKAkWfbB1+//qC7pswXkmjEDdTvng4ib1PJNNCfn"	-
+^\.ci/gitleaks/fixtures/	.ci/gitleaks/fixtures/known-secrets.tsv	MODELS = {"kimi": "sk-4pFs2fUUv5sIcAXo8aDOzvz6Ipq0zw8dLMWhNRShSoAC7bk8"}	-
+^documents/GoodnotesWebExporter/\.sessions/	documents/GoodnotesWebExporter/.sessions/cookies.json	R2_SECRET_ACCESS_KEY = "ZKAkWfbB1+//qC7pswXkmjEDdTvng4ib1PJNNCfn"	-
+^email-management/config/(credentials|token)\.json$	email-management/config/token.json	R2_SECRET_ACCESS_KEY = "ZKAkWfbB1+//qC7pswXkmjEDdTvng4ib1PJNNCfn"	-
+^fixtures/golden\.(docx|pdf)$	fixtures/golden.docx	R2_SECRET_ACCESS_KEY = "ZKAkWfbB1+//qC7pswXkmjEDdTvng4ib1PJNNCfn"	-
+^media/streaming-anix-rs/src/config\.rs$	media/streaming-anix-rs/src/config.rs	src_key: "d405d0edd690624b66baba3068e0edc3ac90f1597d898a1ec8db4e5c43c00fec".into(),	R2_SECRET_ACCESS_KEY = "ZKAkWfbB1+//qC7pswXkmjEDdTvng4ib1PJNNCfn"
+^media/streaming-anix-rs/(reference/)?config\.example\.conf$	media/streaming-anix-rs/reference/config.example.conf	src_key = "d405d0edd690624b66baba3068e0edc3ac90f1597d898a1ec8db4e5c43c00fec"	R2_SECRET_ACCESS_KEY = "ZKAkWfbB1+//qC7pswXkmjEDdTvng4ib1PJNNCfn"
+^apps/desktop/src-tauri/src/pipeline/(redactor|selftest)\.rs$	apps/desktop/src-tauri/src/pipeline/redactor.rs	assert!(labels("sk-abcdefghijklmnopqrstuvwx").contains(&"openai-api-key".to_string()));	REMOTE = {"auth": "ghp_ebyLdtLrwDBVFyZdNec4zKmIT9ZxNOfOeRaM"}
+^ai/local-dictation/apps/desktop/src-tauri/src/pipeline/(redactor|selftest)\.rs$	ai/local-dictation/apps/desktop/src-tauri/src/pipeline/selftest.rs	assert!(labels("sk-abcdefghijklmnopqrstuvwx").contains(&"openai-api-key".to_string()));	REMOTE = {"auth": "ghp_ebyLdtLrwDBVFyZdNec4zKmIT9ZxNOfOeRaM"}
+^internal/intent/redact_test\.go$	internal/intent/redact_test.go	{"openai key", "key sk-abcdefghijklmnop12345678", "[REDACTED]"},	REMOTE = {"auth": "ghp_ebyLdtLrwDBVFyZdNec4zKmIT9ZxNOfOeRaM"}
+^internal/cli/status_test\.go$	internal/cli/status_test.go	api_key = "d405d0edd690624b66baba3068e0edc3ac90f1597"	REMOTE = {"auth": "ghp_ebyLdtLrwDBVFyZdNec4zKmIT9ZxNOfOeRaM"}
+^system-maintenance/claude-code/config/commands/tools\.md$	system-maintenance/claude-code/config/commands/tools.md	Pull web content/data into files         →  scrape (local, zero-API: crawl/map/render/PDF; --attach renders in your real logged-in Brave)	R2_SECRET_ACCESS_KEY = "ZKAkWfbB1+//qC7pswXkmjEDdTvng4ib1PJNNCfn"
+^test/attachment-disk-admission\.test\.js$	test/attachment-disk-admission.test.js	const KEY = "0123456789abcdef";	R2_SECRET_ACCESS_KEY = "ZKAkWfbB1+//qC7pswXkmjEDdTvng4ib1PJNNCfn"
+^test/attachment-store\.test\.js$	test/attachment-store.test.js	const KEY_B = "fedcba9876543210";	R2_SECRET_ACCESS_KEY = "ZKAkWfbB1+//qC7pswXkmjEDdTvng4ib1PJNNCfn"
+^test/server-attachments\.test\.js$	test/server-attachments.test.js	const key = "0123456789abcdef";	R2_SECRET_ACCESS_KEY = "ZKAkWfbB1+//qC7pswXkmjEDdTvng4ib1PJNNCfn"
+^test/server-whiteboard\.test\.js$	test/server-whiteboard.test.js	const sessionKey = "0123456789abcdef";	R2_SECRET_ACCESS_KEY = "ZKAkWfbB1+//qC7pswXkmjEDdTvng4ib1PJNNCfn"
+^test/whiteboard-store\.test\.js$	test/whiteboard-store.test.js	const KEY = "0123456789abcdef";	R2_SECRET_ACCESS_KEY = "ZKAkWfbB1+//qC7pswXkmjEDdTvng4ib1PJNNCfn"
