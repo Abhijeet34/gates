@@ -2,8 +2,8 @@
 # Refuse to push commits carrying a secret.
 #
 # The load-bearing gate is here, not in CI: a credential that reaches the remote
-# is leaked even in a private repository, and history is exactly what leaked for
-# graphify. CI is the backstop that catches what was pushed before this hook
+# is leaked even in a private repository, and it stays in history after the file
+# is fixed. CI is the backstop that catches what was pushed before this hook
 # existed, and re-scans when gitleaks ships new rules.
 #
 # FAILS CLOSED, and deliberately does not trust gitleaks' exit code alone.

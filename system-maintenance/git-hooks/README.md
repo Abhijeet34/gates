@@ -50,7 +50,7 @@ Measured 2026-08-17 across the 37 non-pool git working trees under `$HOME`:
 
 | Outcome | Count | Which |
 |---|---|---|
-| Scanned | 33 | working trees of `automation`, `blurt`, `firstmate`, `gnhf`, `graphify`, `lavish-axi`, `no-mistakes`, `papertrace` |
+| Scanned | 33 | working trees of `automation`, `blurt`, `firstmate`, `gnhf`, `lavish-axi`, `no-mistakes`, `papertrace`, and one repository since dropped from the fleet |
 | Left alone | 3 | no `origin` at all: three local-only working trees |
 | Left alone | 1 | a clone of `gitlab.gnome.org/GNOME/meld` |
 
