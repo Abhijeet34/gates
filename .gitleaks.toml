@@ -1,10 +1,11 @@
 # Fleet secret-scan configuration. CANONICAL COPY - edit here, never in a
 # sibling repository.
 #
-# `automation`, `firstmate`, `blurt`, `papertrace`, `graphify` and `no-mistakes`
-# all carry this file byte-identical at their root, so one review changes what
-# six repositories detect. `.ci/gitleaks/sync.sh` copies it out and reports
-# drift; `.ci/gitleaks/test-rules.sh` fails if any rule below stops firing.
+# `automation`, `firstmate`, `blurt`, `papertrace`, `no-mistakes` and the other
+# fleet repositories all carry this file byte-identical at their root, so one
+# review changes what every one of them detects. `.ci/gitleaks/sync.sh` copies
+# it out and reports drift; `.ci/gitleaks/test-rules.sh` fails if any rule below
+# stops firing.
 #
 # One config, not a base plus per-repo overlays: `[extend] path` inherits rules
 # but NOT allowlists, so an overlay would have to duplicate every allowlist
@@ -39,8 +40,8 @@ useDefault = true
 
 [[rules]]
 id = "openai-compatible-api-key"
-# The one credential type with a proven leak record here: two hardcoded Kimi
-# keys reached public history in graphify, and gitleaks has no Moonshot rule.
+# gitleaks ships no Moonshot/Kimi rule, so without this a Kimi key hardcoded
+# as a bare constant would reach the remote unreported.
 # Moonshot publishes no format, so this matches the family instead - an
 # unbroken alphanumeric run after `sk-`, which is what Kimi, DeepSeek and
 # legacy OpenAI keys all are. Vendors whose keys contain a hyphen inside the
@@ -122,7 +123,6 @@ paths = [
     '''(^|/)\.ruff_cache/''',
     '''(^|/)\.mypy_cache/''',
     '''(^|/)\.pytest_cache/''',
-    '''(^|/)graphify-out/''',
     # automation: a second checkout of automation itself. gitleaks does not read
     # .gitignore, so the entry there does not cover it, and the real tree is
     # still scanned for everything this skips.

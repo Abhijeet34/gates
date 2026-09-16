@@ -24,7 +24,6 @@
 (^|/)\.ruff_cache/	.ruff_cache/0.1.0/cache.json	R2_SECRET_ACCESS_KEY = "ZKAkWfbB1+//qC7pswXkmjEDdTvng4ib1PJNNCfn"	-
 (^|/)\.mypy_cache/	.mypy_cache/3.12/mod.json	R2_SECRET_ACCESS_KEY = "ZKAkWfbB1+//qC7pswXkmjEDdTvng4ib1PJNNCfn"	-
 (^|/)\.pytest_cache/	.pytest_cache/v/cache/lastfailed	R2_SECRET_ACCESS_KEY = "ZKAkWfbB1+//qC7pswXkmjEDdTvng4ib1PJNNCfn"	-
-(^|/)graphify-out/	graphify-out/graph.json	R2_SECRET_ACCESS_KEY = "ZKAkWfbB1+//qC7pswXkmjEDdTvng4ib1PJNNCfn"	-
 (^|/)\.claude/worktrees/	.claude/worktrees/task/x.py	R2_SECRET_ACCESS_KEY = "ZKAkWfbB1+//qC7pswXkmjEDdTvng4ib1PJNNCfn"	-
 (^|/)evals/scrape-baseline/fixtures/	evals/scrape-baseline/fixtures/page.html	R2_SECRET_ACCESS_KEY = "ZKAkWfbB1+//qC7pswXkmjEDdTvng4ib1PJNNCfn"	-
 ^\.ci/gitleaks/fixtures/	.ci/gitleaks/fixtures/known-secrets.tsv	MODELS = {"kimi": "sk-4pFs2fUUv5sIcAXo8aDOzvz6Ipq0zw8dLMWhNRShSoAC7bk8"}	-
