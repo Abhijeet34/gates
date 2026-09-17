@@ -4,6 +4,10 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 
 - **This repository was cut from `Abhijeet34/automation` at `10ff49e1759885c60b8fe56be46ce16db4ac22af` as a history-free snapshot.**
   The private `automation` repository holds the history and the dated records these files cite; a reference here to a measurement's date is the pointer into that history.
+- **This repository is public, so tracked text names no private repository, alert count, run id or local path.**
+  Those measurements stay in `automation`; a comment here states the finding and its date, never where it was measured.
+- **`gitleaks dir .` in `.ci/check.sh` scans ignored directories too**, so an untracked log quoting a fixture value (a pooled worktree's `.fm-evidence/`, say) fails `secrets` locally while CI passes.
+  Validate in a clean clone before reading that failure as the branch's.
 - **Every shared-workflow step body runs on the runner as `bash -e {0}`, so its contract test runs the extracted body with `bash -e`.**
   Under `-e` a failing command substitution aborts on the assignment, so an `rc=$?` on the following line never runs, and a `grep` that matches nothing takes the step down under `pipefail`.
   Each `.ci/test-*.sh` extracts its `run:` block by indentation and asserts a marker at both ends, because a continuation line at a shallower indent truncates the body silently.
