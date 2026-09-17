@@ -41,6 +41,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 CONFIG = ROOT / ".gitleaks.toml"
 CASES = ROOT / ".ci/gitleaks/fixtures/allowlist-cases.tsv"
+KNOWN = ROOT / ".ci/gitleaks/fixtures/known-secrets.tsv"
 
 RED, GREEN, YELLOW, OFF = "\033[31m", "\033[32m", "\033[33m", "\033[0m"
 failures: list[str] = []
@@ -117,7 +118,7 @@ def build(base: Path, rel: str, lines: list[str]) -> Path:
 def main() -> int:
     if not shutil.which("gitleaks"):
         die("gitleaks not installed - install with: brew install gitleaks")
-    for path in (CONFIG, CASES):
+    for path in (CONFIG, CASES, KNOWN):
         if not path.is_file():
             die(f"cannot read {path}")
 
@@ -132,6 +133,14 @@ def main() -> int:
     if not registry:
         die("no allowlist paths declared - the coverage check would be vacuous")
 
+    # `@label` in a case cell is that label's line in the generated fixture.
+    known = {
+        cols[1]: cols[2]
+        for raw in KNOWN.read_text().splitlines()
+        if raw and not raw.startswith("#")
+        for cols in [raw.split("\t")]
+    }
+
     rows = []
     for lineno, raw in enumerate(CASES.read_text().splitlines(), 1):
         if not raw or raw.startswith("#"):
@@ -139,6 +148,11 @@ def main() -> int:
         parts = raw.split("\t")
         if len(parts) != 4:
             die(f"{CASES}:{lineno}: expected 4 tab-separated columns, got {len(parts)}")
+        for i in (2, 3):
+            if parts[i].startswith("@"):
+                if parts[i][1:] not in known:
+                    die(f"{CASES}:{lineno}: no {parts[i][1:]!r} row in {KNOWN.name}")
+                parts[i] = known[parts[i][1:]]
         rows.append(parts)
     if not rows:
         die("case table yielded zero rows")
