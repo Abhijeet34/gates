@@ -301,7 +301,8 @@ A hook that shipped a list of this machine's identifiers would publish exactly w
 | macOS | `scutil --get LocalHostName` and `HostName`; `ether` lines from `ifconfig`; `IOPlatformSerialNumber` and `IOPlatformUUID` from `ioreg` |
 | Linux | `/sys/class/net/*/address`; `/etc/machine-id` |
 
-A missing `scutil`, `ifconfig` or `ioreg` on macOS, or a failing one, is a refusal naming the tool: dropping a class would pass the exact push it exists to stop.
+Derivation runs only once a push is known to introduce commits; a delete-only push, which has nothing to scan, lands even on a machine that cannot derive its own identifiers.
+Once derivation runs, a missing `scutil`, `ifconfig` or `ioreg` on macOS, or a failing one, is a refusal naming the tool: dropping a class would pass the exact push it exists to stop.
 The dispatcher appends `/usr/sbin:/sbin` to `PATH` for them, because a stripped `PATH` lacks both.
 A MAC address matches in any spelling - colons, hyphens, dots, or none - and a value too short to be distinctive (a home under 6 characters, a hostname under 4, `localhost`) is not used.
 
