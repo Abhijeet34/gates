@@ -1,6 +1,6 @@
 # Machine-wide git hooks
 
-The six hooks git runs from `~/.git-hooks`, tracked here so the machine can be rebuilt from the repository, plus the two scan gates one of them chains.
+The six hooks git runs from `~/.git-hooks`, tracked here so the machine can be rebuilt from the repository, plus the three scan gates one of them chains.
 
 `install.sh deploy` writes them out; `install.sh check` reports drift and never absorbs it.
 
@@ -270,6 +270,68 @@ A credential committed and later deleted is still published, so that scan must r
 It refuses rather than passing whenever it cannot establish a verdict: a caller not carrying the scanner, a missing allowlist, a checkout git lists no file in, or a scanner that exits 0 having printed nothing.
 `.ci/test-watermark-scan-workflow.sh` runs the extracted step body under `bash -e`, the way the runner runs it, and that is what caught a `grep -c` matching nothing aborting the whole step on the assignment - so the case the count exists to catch refused with no message at all.
 
+## The exposure gate
+
+`exposure-scan.py` refuses a push that publishes who made it or the machine it was made on.
+It runs on every push, with no allowlist and no opt-out: a leak of this machine's identifiers is the same leak from a third-party clone as from one of ours.
+
+| Check | What it reads | Refused toward |
+|---|---|---|
+| `identity.author`, `.committer`, `.tagger`, `.co-authored-by`, `.signed-off-by` | every commit and annotated tag object in the pushed range, and every trailer line in their messages | public or unverifiable |
+| `machine.home-path`, `.hostname`, `.mac-address`, `.hardware-id` | every added line, every path, and every commit and tag header and message | public or unverifiable |
+| `content.vulnerability-count` | the same text, for a count carrying a security source or noun (`Dependabot alerts`, `code scanning alerts`, `vulnerabilities`, `CVEs`) | public or unverifiable only |
+
+An identity passes only if it matches `ALLOWED_IDENTITIES` in the scanner: GitHub's `*@users.noreply.github.com` form, which covers Dependabot and `github-actions[bot]`, `noreply@github.com` for web-flow merges, `support@github.com`, which is Dependabot's own `Signed-off-by`, and `noreply@anthropic.com`.
+That set was drawn from every author, committer, tagger and trailer address in the local clones' history since 2026-06-01, measured 2026-09-17; every other address found there was a personal one or a company domain naming a person.
+
+### Why a gate, and not only a config fix
+
+Commits carrying a personal address reached public repositories in September 2026 while the global `user.email` was the noreply address, no clone set a local one, and no environment variable set one.
+The commits that did so carry good SSH signatures from the global signing configuration, so the global config was read when they were made; the address came from something overriding it for that one invocation.
+What did the overriding was not identified.
+The gate is what makes the cause not matter: whatever writes the address next, the push that would publish it is refused.
+
+### Needles are derived, never written down
+
+A hook that shipped a list of this machine's identifiers would publish exactly what it hides, so every value is read at run time and none appears in this repository, its tests included.
+
+| Platform | Source |
+|---|---|
+| any | `$HOME` and the password-database home, so a sandbox with a throwaway `HOME` still catches the real one; `uname -n` |
+| macOS | `scutil --get LocalHostName` and `HostName`; `ether` lines from `ifconfig`; `IOPlatformSerialNumber` and `IOPlatformUUID` from `ioreg` |
+| Linux | `/sys/class/net/*/address`; `/etc/machine-id` |
+
+A missing `scutil`, `ifconfig` or `ioreg` on macOS, or a failing one, is a refusal naming the tool: dropping a class would pass the exact push it exists to stop.
+The dispatcher appends `/usr/sbin:/sbin` to `PATH` for them, because a stripped `PATH` lacks both.
+A MAC address matches in any spelling - colons, hyphens, dots, or none - and a value too short to be distinctive (a home under 6 characters, a hostname under 4, `localhost`) is not used.
+
+The refusal never repeats what it found: a machine value is named by class and location only, a path containing one is redacted, and an address is masked to its first character and domain.
+A pipeline push returns the hook's stderr into step output, and a refusal that quoted the value would publish it there.
+
+### Public, private, and unverifiable
+
+The destination is the URL git passes as `$2`.
+A local destination, which is what the no-mistakes staging bare is, is judged by `origin` instead, because that is where the pipeline delivers; a repository with no network origin publishes nothing and counts as private.
+A `github.com` repository is asked `gh api repos/<owner>/<name> --jq .visibility`, and only `private` or `internal` makes it private.
+Any other answer, a failed lookup, and every other host are **unverifiable**, and refuse exactly as public does.
+The lookup only runs when there is a finding, so a clean push pays nothing for it.
+
+Toward a private destination every identity and machine finding is printed as a `WARNING` and the push lands, so the fleet's private working repositories stay usable; the vulnerability count is not reported there at all.
+
+### What it reads, and what it does not
+
+The range is the one `.githooks/pre-push` scans: what the destination does not already advertise.
+A leak already published is therefore not re-read, and cannot make every later push of that repository unpushable.
+A merge is read with `--diff-merges=remerge`, so a conflict resolution is examined and a merge of already published work is not.
+
+Binary content is not read, and a bare `N open alerts` with no security qualifier is not a finding.
+That second limit is a measured trade: over this repository's own history the unqualified form fired four times, and three were false - a threshold, and a log format a test asserts twice - while the fourth, a real census line, is the one the narrower pattern now misses.
+
+Cost, measured 2026-09-17: 0.11s to derive the needles, 0.15s for an ordinary one-commit push, 0.67s for this repository's whole history as a first push.
+
+`test-exposure-scan.sh` drives every class through real pushes, masks and all, including a new branch over an already-published leak, the no-`scutil` refusal, and this repository's own history as a first push to prove its fixtures do not fire.
+`test-global-hooks.sh` pins the dispatch.
+
 ## This is an accident-catcher, not a control
 
 `git push --no-verify` bypasses every hook, and so does deleting the file.
@@ -346,6 +408,8 @@ GLOBAL_HOOKS_E2E=1 system-maintenance/git-hooks/test-global-hooks.sh   # adds on
 
 ```bash
 system-maintenance/git-hooks/test-watermark-scan.py            # ~11s, offline; needs exiftool, ffmpeg, qpdf, magick
+system-maintenance/git-hooks/test-exposure-scan.sh             # ~8s, offline; real pushes through the exposure gate
+system-maintenance/git-hooks/exposure-scan.py needles           # which identifier classes this machine yields, never the values
 .ci/test-watermark-scan-workflow.sh                            # ~6s, offline; the CI backstop's step body under bash -e
 ```
 
@@ -359,6 +423,7 @@ The opt-in networked case clones `Abhijeet34/papertrace` and is deliberately not
 
 - `.githooks/pre-push` - the canonical secret scanner, deployed here as `gitleaks-pre-push`. It fails closed and does not trust gitleaks' exit code alone; its header carries the measurement.
 - `watermark-scan.py`, `watermark-allow.conf`, `watermark-optout.conf` - the no-watermarking gate and its two rule files, all three deployed by `install.sh`.
+- `exposure-scan.py`, `test-exposure-scan.sh` - the exposure gate and its suite.
 - `test-watermark-scan.py` - the gate's own suite: a fixture per rule, each re-graded once neutralised, the three legitimate contexts, both rule files' contracts, the `clean`/`verify` verbs, and the refusal when exiftool is gone. `test-global-hooks.sh` pins the dispatch around it.
 - `.ci/gitleaks/sync.sh` - copies that hook and `.gitleaks.toml` out to the sibling repositories, and sets `core.hooksPath` there.
 - `.ci/gitleaks/test-pre-push.sh` - pins the scanner's own refusal behaviour, where `test-global-hooks.sh` pins the machine-wide dispatch around it.

@@ -25,6 +25,8 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 - **A skipped job satisfies a required status check**, so `checks` must never skip on a pull request; `.ci/checks-verdict.sh` allows no skip and `.ci/test-checks-verdict.sh` fails when a job in `ci.yml` is missing from `checks.needs`.
 - **A fixture repository must not inherit this machine's git config**: set `GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null`, or `core.hooksPath` runs the global hooks inside the fixture.
   `test-global-hooks.sh` is the exception and must run bare, because it deploys into a throwaway `HOME` whose global config it writes.
+- **Tracked text carries no machine identifier and no security-alert count, tests included, because `exposure-scan.py` refuses both on a push to this public repository.**
+  A test plants such a value by reading it from the machine or assembling it from a variable at run time; `system-maintenance/git-hooks/README.md`, "The exposure gate", owns the rules.
 
 ## Maintaining this file
 

@@ -2,11 +2,12 @@
 # The machine-wide pre-push hook: deployed to ~/.git-hooks/pre-push, so it fires
 # for EVERY repository on this machine that has not overridden core.hooksPath.
 #
-# It runs four gates in order:
+# It runs five gates in order:
 #   1. the gitleaks secret scan  - allowlisted repositories only
 #   2. the no-watermarking gate  - EVERY repository, minus a written opt-out
-#   3. check-orphan-dirs         - every repository, as before
-#   4. git lfs pre-push          - every repository, as before
+#   3. the exposure gate         - EVERY repository, no opt-out
+#   4. check-orphan-dirs         - every repository, as before
+#   5. git lfs pre-push          - every repository, as before
 #
 # THE TWO SCANS HAVE OPPOSITE DEFAULTS, and that is deliberate rather than an
 # oversight. They ask different questions about different subjects:
@@ -198,6 +199,15 @@ WATERMARK_IDENTITY="$identity" \
     WATERMARK_ALLOW="$HOOK_DIR/watermark-allow.conf" \
     WATERMARK_OPTOUT="$HOOK_DIR/watermark-optout.conf" \
     "$HOOK_DIR/watermark-scan.py" push "$@" < "$STDIN_FILE" || exit 1
+
+# The exposure gate, on every push: a non-noreply identity, or this machine's
+# own identifiers, in what is being published. It refuses toward a public
+# destination and warns toward a proven-private one, and derives what it looks
+# for at run time so no identifier is ever written into this repository.
+# /usr/sbin and /sbin are appended for scutil, ifconfig and ioreg, which a
+# stripped PATH lacks; appended, so they never shadow anything.
+[ -x "$HOOK_DIR/exposure-scan.py" ] || refuse "$HOOK_DIR/exposure-scan.py is missing or not executable (run system-maintenance/git-hooks/install.sh deploy)."
+PATH="$PATH:/usr/sbin:/sbin" "$HOOK_DIR/exposure-scan.py" push "$@" < "$STDIN_FILE" || exit 1
 
 # Refuse to push while a directory of real files has nothing tracked in it.
 # Reads no stdin, so the ref list stays intact for git-lfs below.
