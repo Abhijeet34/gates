@@ -25,8 +25,8 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P) || exit 2
 SRC="$ROOT/system-maintenance/git-hooks"
 DEST="${GIT_HOOKS_DIR:-$HOME/.git-hooks}"
 
-# "<source>:<name in ~/.git-hooks>". The last five are not hooks git ever runs -
-# git only invokes files whose name is exactly a hook name - they are the two
+# "<source>:<name in ~/.git-hooks>". The last six are not hooks git ever runs -
+# git only invokes files whose name is exactly a hook name - they are the three
 # scanners the machine-wide pre-push chains and their rule files, deployed here
 # so it never has to reach into the repository it is scanning to find them.
 PAYLOAD=(
@@ -41,6 +41,7 @@ PAYLOAD=(
     "$SRC/watermark-scan.py:watermark-scan.py"
     "$SRC/watermark-allow.conf:watermark-allow.conf"
     "$SRC/watermark-optout.conf:watermark-optout.conf"
+    "$SRC/exposure-scan.py:exposure-scan.py"
 )
 
 # Everything but the three rule files is executed by git or by a hook.

@@ -79,6 +79,8 @@ check_shell() {
     bash .ci/test-watermark-scan-workflow.sh || rc=1
     bash .ci/test-upstream-owner-refs.sh || rc=1
     bash .ci/test-suite-coverage.sh || rc=1
+    # The exposure gate, through real pushes into throwaway repositories.
+    bash system-maintenance/git-hooks/test-exposure-scan.sh || rc=1
     return $rc
 }
 

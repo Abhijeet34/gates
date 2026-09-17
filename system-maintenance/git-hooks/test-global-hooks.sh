@@ -90,7 +90,9 @@ after=$(shasum -a 256 "$REAL_HOOKS"/* 2>/dev/null | shasum -a 256)
 [ "$before" = "$after" ] || { echo "test-global-hooks: the real $REAL_HOOKS changed - refusing to continue" >&2; exit 2; }
 
 git config --global user.name test
-git config --global user.email test@example.invalid
+# A noreply address, because the exposure gate refuses any other one on a push
+# whose destination is not proven private - and several cases below push to one.
+git config --global user.email test@users.noreply.github.com
 git config --global init.defaultBranch main
 bash "$INSTALL" check >/dev/null 2>&1 || fail "install.sh check reports drift immediately after deploy"
 
@@ -446,6 +448,29 @@ git -C "$TMP/wmself" add -A && git -C "$TMP/wmself" commit --quiet -m "marked as
 git -C "$TMP/wmself" push origin main >"$TMP/wmself.log" 2>&1
 check "self-hooked repo: the watermark gate still runs (the secret-scan skip must not carry it)" refuse $?
 said "self-hooked repo: refused by the watermark gate" "$TMP/wmself.log" "DETECTIVE PROVENANCE"
+
+# ==============================================================================
+# 10b. The exposure gate is dispatched on every push and fails closed. Its rules
+#      are proven in test-exposure-scan.sh; asserted here is only that a
+#      repository on no allowlist reaches it, and that a missing scanner refuses.
+#      The origin is on a host with no visibility lookup, so it cannot be proven
+#      private and a finding refuses; nothing is sent to it.
+# ==============================================================================
+seed "$TMP/exposed"
+git -C "$TMP/exposed" remote set-url origin https://example.invalid/fixture/exposed.git
+git -C "$TMP/exposed" remote add target "$TMP/exposed.git"
+git -C "$TMP/exposed" -c user.email=someone@example.com commit --quiet --allow-empty -m "authored from a personal address"
+git -C "$TMP/exposed" push target main >"$TMP/exposed.log" 2>&1
+check "a non-noreply author is refused through the machine-wide hook" refuse $?
+said "exposure: refused in the gate's own words" "$TMP/exposed.log" "IDENTITY OR MACHINE EXPOSURE"
+git -C "$TMP/exposed" commit --quiet --amend --allow-empty --reset-author --no-edit
+mv "$HOME/.git-hooks/exposure-scan.py" "$TMP/exposure.away"
+git -C "$TMP/exposed" push target main >"$TMP/exposed.log" 2>&1
+check "no deployed exposure scanner refuses" refuse $?
+said "exposure: a missing scanner names itself" "$TMP/exposed.log" "exposure-scan.py is missing"
+mv "$TMP/exposure.away" "$HOME/.git-hooks/exposure-scan.py"
+git -C "$TMP/exposed" push --quiet target main >/dev/null 2>&1
+check "the same push lands once the author is a noreply address" pass $?
 
 # ==============================================================================
 # 11. Opt-in: a real clone of a real allowlisted repository over the network.
