@@ -1,9 +1,9 @@
 name: no-mistakes required (shared)
 
-# Callable gate shared by the five axi tool repositories: tasks-axi,
-# lavish-axi, chrome-devtools-axi, gh-axi and quota-axi. Each of them carried
-# its own copy of this check and the copies had drifted, so a correction to the
-# marker or the failure message reached one repository and not the other four.
+# Callable gate for repositories that accept pull requests only through the
+# no-mistakes pipeline. Each caller used to carry its own copy of this check and
+# the copies had drifted, so a correction to the marker or the failure message
+# reached one repository and not the others.
 #
 # The split of responsibility is deliberate:
 #   - the caller owns the trigger, the `paths-ignore` release-output set, the
@@ -21,9 +21,9 @@ on:
       pipeline_steps:
         description: >-
           The steps this repository's no-mistakes pipeline runs, named in the
-          failure message only. chrome-devtools-axi says "build" where the
-          other four say "lint"; both wordings predate this workflow and are
-          preserved rather than unified.
+          failure message only. Callers differ, "build" in one and "lint" in
+          another; both wordings predate this workflow and are preserved rather
+          than unified.
         type: string
         required: false
         default: review/test/lint/CI
@@ -55,19 +55,20 @@ jobs:
           # These are not our strings to choose: each is the literal a
           # no-mistakes build writes into a PR body, and the URL in it is the
           # repository that build came from. Our mirror build writes the first
-          # (measured on gh-axi#15, 2026-09-17); an upstream build writes the
-          # second. Both are signatures, so both match - dropping either reds
-          # every pull request raised by that build in every caller.
+          # (measured 2026-09-17); an upstream build writes the second. Both are
+          # signatures, so both match - dropping either reds every pull request
+          # raised by that build in every caller.
           marker_mirror='Updates from [git push no-mistakes](https://github.com/Abhijeet34/no-mistakes)'
           marker_upstream='Updates from [git push no-mistakes](https://github.com/kunchenguid/no-mistakes)'
 
           # no-mistakes creates the pull request and only then writes the
           # `## Pipeline` section, so the event payload's body can describe a
-          # pull request that no longer exists - measured on firstmate#42,
-          # where the `edited` payload was stale too, not just `opened`. Read
-          # the body live, and retry so a write landing seconds after creation
-          # is still seen; a write that takes longer than this arrives with its
-          # own `edited` event, which this same live read then passes.
+          # pull request that no longer exists - measured on a caller's pull
+          # request, where the `edited` payload was stale too, not just
+          # `opened`. Read the body live, and retry so a write landing seconds
+          # after creation is still seen; a write that takes longer than this
+          # arrives with its own `edited` event, which this same live read then
+          # passes.
           attempts=6
           delay=10
           read_ok=0

@@ -1,30 +1,29 @@
 name: guard generated files (shared)
 
-# Callable gate shared by the five axi tool repositories: tasks-axi,
-# lavish-axi, chrome-devtools-axi, gh-axi and quota-axi. It fails a pull
-# request that hand-edits a file release-please owns.
+# Callable gate for repositories whose changelog release-please owns. It fails
+# a pull request that hand-edits a file release-please owns.
 #
-# The five copies this replaces had drifted into four variants, and each
-# variant held a correction the others had missed. This file is their union:
+# The per-repository copies this replaces had drifted into four variants, and
+# each variant held a correction the others had missed. This file is their
+# union:
 #
-#   - rename and copy detection, from tasks-axi. `git diff --name-only` sees a
+#   - rename and copy detection. `git diff --name-only` sees a
 #     `CHANGELOG.md -> NOTES.md` rename as a plain deletion of CHANGELOG.md and
-#     a plain addition of NOTES.md, so the four repositories without it never
-#     reported the destination path.
-#   - the `A` (added) exemption, from tasks-axi and quota-axi, but as the
-#     `allow_first_add` input rather than as a fixed rule: the two repositories
-#     disagreed about which paths it covers and each pins its own answer in a
-#     test, so the answer is the caller's to give. See the input description.
-#   - the explanatory comments, from tasks-axi, chrome-devtools-axi, gh-axi and
-#     quota-axi; lavish-axi's copy had them stripped.
+#     a plain addition of NOTES.md, so the variants without it never reported
+#     the destination path.
+#   - the `A` (added) exemption, but as the `allow_first_add` input rather than
+#     as a fixed rule: the copies that had it disagreed about which paths it
+#     covers and each pinned its own answer in a test, so the answer is the
+#     caller's to give. See the input description.
+#   - the explanatory comments, which one copy had stripped.
 #
 # A fifth property is none of theirs: the check reads the PROVENANCE of a
 # generated file's content, not only its name. All four variants were a plain
 # `git diff base...head`, which cannot tell a hand edit from a fork's upstream
 # sync - a merge carrying upstream's own release commits, which are exactly
-# what writes these files. lavish-axi#18 was a legitimate sync this gate reddened,
-# and it could only merge behind an `upstream-sync` label in that caller. See
-# the comment on the check body for the rule that replaces the label.
+# what writes these files. A legitimate sync this gate reddened could only
+# merge behind an `upstream-sync` label in its caller. See the comment on the
+# check body for the rule that replaces the label.
 #
 # A sixth is also none of theirs: a caller may carry
 # `.github/generated-file-exceptions` declaring a reviewed, one-time rewrite of
@@ -49,10 +48,9 @@ on:
           Newline-separated generated paths whose first-ever addition is not a
           violation. A pull request that wires up release-please creates these
           files, which is not hand-editing bot-owned content; every later
-          change to them is. Callers pass what they pin today: tasks-axi
-          `.release-please-manifest.json`, quota-axi that plus `CHANGELOG.md`,
-          and the other three nothing. A path listed here is still guarded
-          against modification, deletion, rename and copy.
+          change to them is. A caller passes the paths its own tests pin, or
+          nothing. A path listed here is still guarded against modification,
+          deletion, rename and copy.
         type: string
         required: false
         default: ""
@@ -90,7 +88,7 @@ jobs:
           # Content that arrived through a merge was not written on this branch.
           # A fork's upstream sync merges the release commits that WROTE these
           # files, so the diff below reads it as a hand edit and reds every sync
-          # of every caller - lavish-axi#18 needed a label to merge. A flagged
+          # of every caller, and one needed a label to merge. A flagged
           # path is therefore excused only when its blob at HEAD is byte-identical
           # to that path in a commit this branch merged in: anything typed on the
           # branch, or typed while resolving the merge, changes the blob and is
@@ -266,8 +264,8 @@ jobs:
               if [ -z "$want" ]; then
                 # A stanza naming the wrong file is silent otherwise: nothing
                 # covers the violated path, which reads exactly like no
-                # declaration at all. Measured against lavish-axi#31 with one
-                # word of `path` changed.
+                # declaration at all. Measured against a real declaration with
+                # one word of `path` changed.
                 [ -n "$decl_head" ] || continue
                 notes="${notes}$(printf '\n  %s: no stanza names it. %s declares: %s' \
                   "$path" "$DECL_FILE" "$(printf '%s\n' "$decl_head" | cut -f1 | paste -sd' ' -)")"

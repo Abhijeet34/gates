@@ -44,26 +44,13 @@ Keyed on the owner rather than a list of names because a new repository of his s
 `~/.git-hooks/pre-push-allow` extends the list, one glob per line, `#` comments allowed.
 It can only ever cause more repositories to be scanned, never fewer.
 
-### Coverage on this machine
-
-Measured 2026-08-17 across the 37 non-pool git working trees under `$HOME`:
-
-| Outcome | Count | Which |
-|---|---|---|
-| Scanned | 33 | working trees of `automation`, `blurt`, `firstmate`, `gnhf`, `lavish-axi`, `no-mistakes`, `papertrace`, and one repository since dropped from the fleet |
-| Left alone | 3 | no `origin` at all: three local-only working trees |
-| Left alone | 1 | a clone of `gitlab.gnome.org/GNOME/meld` |
-
-`~/.claude/tools/gnhf` is the one fleet clone that had no gate at all before this: it has no `.githooks` directory and resolves `~/.git-hooks`, so it was pushing unscanned.
-The four fleet repositories with no clone on this machine today - `chrome-devtools-axi`, `gh-axi`, `quota-axi`, `tasks-axi` - are gated the moment they are cloned, which is the point.
-
 ### Known, and not fixed here: `core.hooksPath` swallows the other five hooks
 
 `core.hooksPath` replaces the hooks directory outright, so a repository pointed at its own `.githooks` - which holds `pre-push` and nothing else - runs **no** `commit-msg`, `post-checkout`, `post-commit` or `post-merge` at all.
 Measured 2026-08-17 with a global `commit-msg` that prints a marker: it fires before the repository sets `core.hooksPath=.githooks` and does not fire after.
-`.ci/gitleaks/sync.sh` sets that config in every repository it installs into, so this is live in the 32 working trees that carry it.
+`.ci/gitleaks/sync.sh` sets that config in every repository it installs into, so this is live in every working tree that carries it.
 
-What it actually costs here, measured the same day: nothing for git-lfs, because none of the eight fleet clones has a single LFS-tracked file; and the `warp.dev` co-author stripper in `commit-msg`.
+What it actually costs, measured the same day: nothing for git-lfs, because none of the gated clones had an LFS-tracked file; and the co-author stripper in `commit-msg`.
 
 This predates the machine-wide hook and is not fixed by it.
 It is now *fixable*, because the scan no longer needs the repository-local `core.hooksPath` on a machine where these hooks are deployed - but unsetting it would silently ungate any machine that has not run `install.sh deploy`, so making that trade is a fleet decision, not a side effect of this change.
@@ -233,7 +220,7 @@ When the artefact is precisely the thing wanted - a generated image or video tha
 Corrected on the captain's instruction, 2026-09-02.
 
 So the output states what was found and names the generator, what was removed and re-verified, what could not be established, and then every path that exists: re-synthesise the pixels through a generator that does not mark using this asset as input; recreate as vector where it is a logo, icon, banner or diagram; re-encode or transform, flagged honestly as best-effort and unverifiable; replace it where a replacement exists; or use it as it is, which is the author's call and stays visible rather than being refused on their behalf.
-No re-synthesis pipeline is implemented here and none is planned in this change - no local image model exists on this machine - so remedy 1 is named as a step you run elsewhere.
+No re-synthesis pipeline is implemented here and none is planned in this change, so remedy 1 is named as a step you run elsewhere.
 
 The rule that does not bend is the other half: a best-effort transform earns `UNVERIFIED`, never `clean`.
 Shipping an unverified asset with your eyes open is legitimate; being told it is clean when nothing established that is not.
@@ -260,20 +247,17 @@ And `verify` answers "is anything detectable left in this file", never "was this
 
 | Shape | Time |
 |---|---|
-| ordinary incremental push, 5 commits (`automation`, 20 blobs) | 0.27s; 0.265s after every change in this pass |
 | ordinary incremental push, 5 commits (`meld`, forced in scope) | 0.15-0.25s; 0.240s after |
-| ordinary incremental push, 5 commits (`firstmate`) | 0.341s before, 0.426s after |
 | opted-out repository, fast path | 0.07-0.10s |
 | worst case: first push of a whole history to a remote holding none of it - `meld`, 5,842 commits, 21MB clone | 26.8s and 29.8s over two runs; 27.5s and 27.4s after container recursion; 33.8s after the base64 closures |
-| the same shape on our own repositories, full history | `automation` 2,746 blobs 4.6s, `blurt` 1,652 blobs 4.6s, `firstmate` 4,379 blobs 14.1s, `papertrace` 364 blobs 0.9s |
 
-The worst case is the same class as the gitleaks gate's 27.6s on `automation`, and it is not what an ordinary push pays.
+The worst case is the same class as the gitleaks gate's own full-history scan, and it is not what an ordinary push pays.
 Container recursion, the largest addition, cost 2.4% of it: the walk only descends a blob that actually is a container, and the diff pass that gives every path per blob is 0.18s over meld's whole history.
 The base64 closures cost the rest, and that number is a deliberate trade rather than an oversight: scanning every text blob for base64 fragments is 7.0s over meld's 289MB of text, and the pre-filter that would reclaim it - only look at a blob with a 128-character line - is measured at 0.54s but skips a base64 payload wrapped at PEM's 64 columns, which is a real shape.
 False negatives outrank cost in the captain's own ranking, and the number that decides whether anyone reaches for `--no-verify` is the ORDINARY push, which pays 60 to 90 milliseconds more.
-The false-positive delta over the same corpus was measured against the pre-change scanner rather than argued: `automation` 8 finding lines to 8, `firstmate` 16 to 16, `meld` 123 to 165 - and all 42 of meld's new ones are the encoding refusal firing on latin-1 `po/ChangeLog` entries, in a clone already on the opt-out list.
+The false-positive delta over the same corpus was measured against the pre-change scanner rather than argued: unchanged on our own repositories, and `meld` 123 to 165 - all 42 of meld's new ones are the encoding refusal firing on latin-1 `po/ChangeLog` entries, in a clone already on the opt-out list.
 That measurement also surfaced 48 findings in meld's `po/*.po` gettext catalogues - Hebrew and Persian bidi marks, a Slovenian RLE, German BOMs - which are legitimate right-to-left typesetting and one concrete reason a third-party upstream belongs in the opt-out.
-None of our four repositories carries a translation catalogue today; the first that does will need either a structural RTL exemption or an allowlist entry, decided on that repository's evidence rather than pre-built here.
+None of our own repositories carries a translation catalogue today; the first that does will need either a structural RTL exemption or an allowlist entry, decided on that repository's evidence rather than pre-built here.
 
 ### The CI backstop
 
@@ -295,25 +279,18 @@ The CI backstop above narrows that to what never reaches CI either, but it does 
 
 Read it as the thing that catches the mistake, and never as the thing that makes a leak impossible.
 
-## Origin-side enforcement is NOT delivered, and cannot be bought today
+## Origin-side enforcement is not part of these gates
 
 Every gate described here is local.
-Nothing on the GitHub side rejects a push carrying a secret, and re-measured on 2026-08-17 that is not a budget decision - it is not purchasable for these repositories as they are.
+Whether GitHub itself rejects a push carrying a secret depends on the repository, not on anything in this directory.
 
-- `repos/Abhijeet34/automation` reports `security_and_analysis: null` and `visibility: private`; `GET /repos/Abhijeet34/automation/secret-scanning/alerts` answers `404 Secret scanning is disabled on this repository.`
-- Secret scanning and push protection are free on public repositories.
-  On private ones GitHub's own documentation scopes them to repositories **owned by an organization** with GitHub Secret Protection on Team or Enterprise Cloud: "Secret scanning alerts for users can be enabled on any free public repository that you own."
-  All 12 private repositories here are owned by the `Abhijeet34` **user** account, so there is no add-on to buy that would cover them while they stay private and personally owned.
+- Secret scanning and push protection are free on public repositories and run server-side.
+- On a private repository GitHub scopes them to repositories **owned by an organization** with GitHub Secret Protection on Team or Enterprise Cloud: "Secret scanning alerts for users can be enabled on any free public repository that you own."
+  A private repository owned by a user account has no add-on that covers it.
 - Pre-receive hooks are GitHub Enterprise Server only, confirmed rather than assumed: `GET /admin/pre-receive-hooks` against `api.github.com` answers `404`.
 
-The two routes that would deliver genuine origin-side enforcement are therefore:
-
-1. **Make the repositories public.** Secret scanning and push protection both become free and both run server-side.
-2. **Move them into an organization on GitHub Team or Enterprise Cloud and buy GitHub Secret Protection.** Note that a *free* organization is not enough for this any more than it was for branch protection - see the mirror-owner entry in the root `AGENTS.md`.
-
-Both are captain decisions and both connect to the repo-visibility question.
-Until one of them happens, CI is the only server-side backstop: `.github/workflows/shared-secret-scan.yml` re-scans full history after the push, which catches what was already published rather than preventing it.
-CI itself is running again - eight `CI` runs on `Abhijeet34/automation` in the eight hours before this was written, all `success` - so that backstop is live, but it is a detector and not a gate.
+Where server-side scanning is unavailable, CI is the only server-side backstop: `.github/workflows/shared-secret-scan.yml` re-scans full history after the push, which catches what was already published rather than preventing it.
+That backstop is a detector, not a gate.
 
 ## Latency
 

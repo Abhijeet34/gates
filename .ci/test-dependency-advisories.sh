@@ -5,11 +5,10 @@
 #   .ci/test-dependency-advisories.sh
 #
 # Same reason as the other three shared-workflow suites: a reusable workflow's
-# steps run in the CALLER's checkout and GITHUB_TOKEN cannot clone this private
-# repository to fetch a script, so the logic lives inline in YAML where no
-# linter reaches it, and callers reference @main with no digest pin - so a
-# broken body is live in every caller at once. This file is the only thing
-# standing against that.
+# steps run in the CALLER's checkout, where no file of this repository exists,
+# so the logic lives inline in YAML where no linter reaches it, and callers
+# reference @main with no digest pin - so a broken body is live in every caller
+# at once. This file is the only thing standing against that.
 #
 # The properties, in the order that matters:
 #   1. an open high advisory FAILS,
@@ -19,9 +18,9 @@
 #   5. a malformed or mis-keyed deferral list REFUSES rather than reading empty.
 #
 # (4) has the teeth. A visibility gate that goes quiet when it cannot see is the
-# defect automation#193 is about, so the read is driven against a stub `curl`
-# for each status it can meet - the same technique test-secret-scan.sh uses for
-# the gitleaks failures real gitleaks cannot be made to produce.
+# defect the workflow exists to prevent, so the read is driven against a stub
+# `curl` for each status it can meet - the same technique test-secret-scan.sh
+# uses for the gitleaks failures real gitleaks cannot be made to produce.
 #
 # The last three cases are mutation cases: each deletes one property from the
 # extracted body and fails unless the body then wrongly allows an input it
@@ -170,7 +169,7 @@ judge 'no advisory at or above the floor passes' 0 "$MEDIUM_ONLY" /nonexistent.y
 said  '  and still inventories the medium and low ones' '| medium |' out
 judge 'a repository with no open alerts at all passes' 0 "$EMPTY" /nonexistent.yml
 
-# The open question of automation#193, answered strict and pinned both ways.
+# Whether development-scoped alerts can fail, answered strict and pinned both ways.
 judge 'development scope fails by default' nonzero "$HIGH_DEV" /nonexistent.yml high true
 judge 'fail_on_development=false exempts it' 0 "$HIGH_DEV" /nonexistent.yml high false
 
