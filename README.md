@@ -22,6 +22,11 @@ jobs:
 ```
 
 Callers reference `@main`.
+A caller cannot move a commit pin on its own, which was measured on 2026-09-17 in a private caller.
+Its `GITHUB_TOKEN` was refused on every write that touches `.github/workflows/`: `git push` and the contents API answered `refusing to allow a GitHub App to create or update workflow ... without workflows permission`, and the git data API answered `Resource not accessible by integration`.
+That token also could not open a pull request, because the repository's Actions setting forbids it (`GitHub Actions is not permitted to create or approve pull requests`).
+It can dispatch the caller's own workflows, and a dispatched run puts its `checks` result on the commit it ran on, so the write is the only missing piece.
+A pinned `uses:` therefore needs a writer that already holds workflow write, such as Dependabot's `github-actions` updater, whose pull requests do receive the caller's checks.
 A reusable workflow runs in the caller's checkout with the caller's token, so a caller grants whatever the workflow reads: `shared-dependency-advisories.yml` needs `vulnerability-alerts: read`, and `shared-no-mistakes-required.yml` needs `pull-requests: read`.
 `shared-secret-scan.yml` pins the sha256 of `.gitleaks.toml` and `.githooks/pre-push`, so a caller whose synced copy has drifted fails until `.ci/gitleaks/sync.sh <clone>` is re-run.
 `shared-watermark-scan.yml` checks out this repository at the workflow's own commit for its scanner, so a caller carries no copy of it.
