@@ -110,6 +110,9 @@ check_secrets() {
     # ImageMagick 7 calls it `magick`, the 6 that ubuntu-24.04 installs `convert`.
     need_any 'brew install imagemagick' magick convert || return 1
     local rc=0
+    # The fixture is generator output, and the generator is what shows every
+    # value is computed and fails its provider's own format check.
+    ./.ci/gitleaks/generate-fixtures.py --check || rc=1
     ./.ci/gitleaks/test-rules.sh || rc=1
     ./.ci/gitleaks/test-allowlists.py || rc=1
     ./.ci/gitleaks/test-pre-push.sh || rc=1
