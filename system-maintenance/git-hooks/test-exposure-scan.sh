@@ -222,12 +222,22 @@ push "$d" feature
 expect "a new branch over an already-published leak lands" pass $?
 
 # ==============================================================================
-# 7. No identifier source: a clear refusal, never a silent pass.
+# 7. No identifier source: a clear refusal, never a silent pass - but only when
+#    there is something to scan. A delete-only push has nothing to examine and
+#    must land even on a machine that cannot derive its own identifiers.
 # ==============================================================================
 if [ "$(uname -s)" = Darwin ]; then
-    printf 'refs/heads/main %s refs/heads/main %s\n' "$ZERO" "$ZERO" |
+    DELETED_SHA=$(printf 'a%.0s' $(seq 1 40))
+    printf 'refs/heads/gone %s refs/heads/gone %s\n' "$ZERO" "$DELETED_SHA" |
         env PATH=/usr/bin:/bin "$PYTHON" "$SCANNER" push dest /nonexistent >"$TMP/log" 2>&1
-    expect "no scutil/ioreg on PATH refuses" refuse $?
+    expect "a delete-only push needs no identifiers and lands" pass $?
+    said "and says there is nothing to examine" "nothing to examine"
+
+    PARENT_SHA=$(git -C "$ROOT" rev-parse HEAD~1)
+    HEAD_SHA=$(git -C "$ROOT" rev-parse HEAD)
+    printf 'refs/heads/main %s refs/heads/main %s\n' "$HEAD_SHA" "$PARENT_SHA" |
+        (cd "$ROOT" && env PATH=/usr/bin:/bin "$PYTHON" "$SCANNER" push dest /nonexistent) >"$TMP/log" 2>&1
+    expect "a push that introduces commits refuses without scutil/ioreg on PATH" refuse $?
     said "the missing tool is named" "is not on PATH, so this machine's identifiers cannot be derived"
     said "and it is a refusal" "Push refused"
 else

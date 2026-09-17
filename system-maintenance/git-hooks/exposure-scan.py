@@ -110,7 +110,14 @@ def derive_needles():
     Refuses rather than dropping a class: a check that silently lost the
     hostname would pass the exact push it exists to stop.
     """
-    homes = {os.environ.get("HOME", ""), pwd.getpwuid(os.getuid()).pw_dir}
+    try:
+        pw_home = pwd.getpwuid(os.getuid()).pw_dir
+    except KeyError:
+        refuse(
+            "uid %d has no password-database entry to read a home directory from."
+            % os.getuid()
+        )
+    homes = {os.environ.get("HOME", ""), pw_home}
     hosts, macs, ids = {os.uname().nodename}, set(), []
     if sys.platform == "darwin":
         hosts.add(run(tool("scutil"), "--get", "LocalHostName").strip())
@@ -398,13 +405,13 @@ def scan_text(needles, text):
 def cmd_push(argv):
     remote = argv[0] if argv else "origin"
     url = argv[1] if len(argv) > 1 else ""
-    needles = derive_needles()
     stdin = sys.stdin.read()
     ranges = ranges_from(stdin, remote, url)
     if not ranges:
         print("%s: nothing to examine (no ref in this push introduces objects)." % TOOL)
         return 0
 
+    needles = derive_needles()
     commits = []
     for spec in ranges:
         for sha in run("git", "rev-list", *spec).split():
