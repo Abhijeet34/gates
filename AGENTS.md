@@ -20,6 +20,9 @@ This file is the project's committed home for project-intrinsic agent knowledge:
   Read it before changing a rule, an exemption or the scope.
 - **`gitleaks git` exits 0 and reports "no leaks found" when it scanned nothing, and counts only commits it read a patch from.**
   `.githooks/pre-push` compares the scan's count with its own `rev-list` count and refuses a short scan; `.ci/gitleaks/test-pre-push.sh` pins that, including a binary-only push that must still land.
+- **Merging a change to anything `install.sh` deploys does not put it in service on this machine; `system-maintenance/git-hooks/install.sh check` after the merge is what shows it.**
+  On 2026-09-17 the merged exposure gate was absent and two earlier merges were still stale in `~/.git-hooks`.
+  A sandboxed agent shell cannot run `deploy` (`~/.git-hooks` and `~/.gitconfig` answer `Operation not permitted`, every `cp` fails before any rename, so nothing half-lands); that write is deliberately not granted, so the deploy is a one-off unsandboxed act with the fleet confirmed idle.
 - **Every workflow file is held to three properties by `.ci/test-workflow-policy.sh`**: no `pull_request_target`, `workflow_run` or `issue_comment` and no `self-hosted` anywhere in the file, comments included, and no secret but `GITHUB_TOKEN`.
   Reword a comment rather than weakening the match; the list form `on: [push, workflow_run]` is why it matches words, not keys.
 - **A skipped job satisfies a required status check**, so `checks` must never skip on a pull request; `.ci/checks-verdict.sh` allows no skip and `.ci/test-checks-verdict.sh` fails when a job in `ci.yml` is missing from `checks.needs`.
