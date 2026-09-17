@@ -12,9 +12,9 @@
 # milliseconds and the attempt count is observable.
 #
 # Same extraction trick and same reason as test-guard-generated-files.sh: a
-# reusable workflow's steps run in the caller's checkout and GITHUB_TOKEN
-# cannot clone this private repository, so the logic has to live inline in the
-# YAML where no linter reaches it.
+# reusable workflow's steps run in the caller's checkout, where no file of this
+# repository exists, so the logic lives inline in the YAML where no linter
+# reaches it.
 
 set -uo pipefail
 

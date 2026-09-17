@@ -6,8 +6,8 @@
 #
 # The third shared workflow, and the last one to get a contract test. Same
 # reason as the other two: a reusable workflow's steps run in the CALLER's
-# checkout and GITHUB_TOKEN cannot clone this private repository to fetch a
-# script, so the logic has to live inline in YAML where no linter reaches it.
+# checkout, where no file of this repository exists, so the logic lives inline
+# in YAML where no linter reaches it.
 # Without this file a broken body reaches main and every caller silently loses
 # secret scanning - a scan that reports clean because it never ran is worse
 # than no scan at all.

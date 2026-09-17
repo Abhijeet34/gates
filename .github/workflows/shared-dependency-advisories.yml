@@ -7,13 +7,11 @@ name: shared dependency advisories
 # inherits GitHub's own severity and scope labels instead of re-deriving them.
 #
 # Why not the ecosystem's own auditor, which is the obvious reach: a production
-# filter is actively wrong here. lavish-axi's scripts/build.js bundles 138 npm
-# packages into dist/whiteboard/whiteboard.js - mermaid alone contributing
-# 1,976,553 bytes - and every one of them is a devDependency that ships to
-# anyone who installs the package. `pnpm audit --prod` calls that tree clean.
-# And this fleet is JavaScript, Python, Go, Rust and Shell, so a per-ecosystem
-# route is four implementations to keep in step. automation#193 has the
-# measurements.
+# filter is actively wrong here. A package whose build script bundles its
+# devDependencies into the published dist ships every one of them to anyone who
+# installs it, and `pnpm audit --prod` calls that tree clean. And the callers
+# span JavaScript, Python, Go, Rust and Shell, so a per-ecosystem route is four
+# implementations to keep in step.
 #
 # This is a BACKSTOP for a surface that had no owner at all, not a gate that
 # stops a bad dependency arriving. Dependabot files an alert after the merge
@@ -22,16 +20,15 @@ name: shared dependency advisories
 #
 # The token needs no PAT. `vulnerability-alerts: read` is a documented
 # GITHUB_TOKEN permission, and it was verified rather than assumed before this
-# file was written - Abhijeet34/automation run 33563190397, two jobs against the
-# same endpoint: with the permission HTTP 200 and a JSON array, without it HTTP
-# 403 "Resource not accessible by integration".
+# file was written - two jobs against the same endpoint: with the permission
+# HTTP 200 and a JSON array, without it HTTP 403 "Resource not accessible by
+# integration".
 #
 # THE CALLER MUST GRANT `vulnerability-alerts: read` ITSELF. A called workflow
 # can narrow the caller's GITHUB_TOKEN but never widen it, so a caller that
 # omits it fails the run outright with GitHub's unhelpful "workflow file issue"
-# annotation - the same trap that cost all five callers of
-# shared-no-mistakes-required.yml a round over `pull-requests: read`
-# (.ci/shared-workflows.md).
+# annotation - the same trap shared-no-mistakes-required.yml's callers hit over
+# `pull-requests: read` (.ci/shared-workflows.md).
 #
 # Propagation: callers reference @main, with no digest pin, so a change here is
 # live in every caller on its next run and a caller cannot hold an older
@@ -47,24 +44,21 @@ on:
       severity_floor:
         description: >-
           Lowest severity that fails the job: critical, high, medium or low.
-          Default high, so high and critical fail. Not medium: 16 of
-          lavish-axi's 18 open alerts are medium, and a check that is always
-          red is a check nobody reads. A repository far from clean can adopt at
-          `critical` and tighten.
+          Default high, so high and critical fail. Not medium: most open
+          alerts are medium, and a check that is always red is a check nobody
+          reads. A repository far from clean can adopt at `critical` and
+          tighten.
         type: string
         default: high
       fail_on_development:
         description: >-
           Whether an alert GitHub labels development scope can fail the job.
-          Default true, and the default is the answer to automation#193's open
-          question. Measured 2026-09-02 across all 12 repositories on this
-          account: of the 40 open high and critical alerts, 33 are labelled
-          `development`. Four of the five repositories carrying any - gh-axi,
-          quota-axi, gnhf and tasks-axi, 25 alerts between them, 4 of those
-          critical - would report entirely CLEAN under a lenient caller. The
-          label is also measurably wrong about what ships: lavish-axi's
-          scripts/build.js bundles 138 devDependencies into the published dist.
-          The failure this check exists for was a scope label being trusted.
+          Default true. Most high and critical alerts GitHub reports are
+          labelled `development`, so a lenient caller can report entirely CLEAN
+          while carrying critical advisories. The label is also wrong about
+          what ships: a build that bundles devDependencies into the published
+          dist ships them. The failure this check exists for was a scope label
+          being trusted.
         type: boolean
         default: true
       deferrals_path:
@@ -102,9 +96,9 @@ jobs:
           set -uo pipefail
 
           # A visibility gate that goes quiet when it cannot see is the exact
-          # defect automation#193 is about, so every path out of this step that
-          # is not a complete read is a refusal. Same wording, same reason, as
-          # shared-secret-scan.yml's history scan.
+          # defect this workflow exists to prevent, so every path out of this
+          # step that is not a complete read is a refusal. Same wording, same
+          # reason, as shared-secret-scan.yml's history scan.
           fail() {
             echo "::error::$1 COULD NOT ESTABLISH this repository's advisory state." >&2
             exit 1
@@ -114,15 +108,13 @@ jobs:
           tmp="${RUNNER_TEMP:-.}"
           : >"$tmp/pages.list"
 
-          # Cursor pagination, not `page=`. Measured on run 33563979852: this
-          # endpoint answers HTTP 400 to a `page` parameter - it is one of the
-          # few REST endpoints that paginates only by the Link header's before/
-          # after cursors, so the ordinary page-counting loop refuses everything.
-          # No repository here yet exceeds one page at per_page=100, so this loop
-          # is exercised live at a smaller page size instead: against
-          # chrome-devtools-axi at per_page=25 it reads 3 pages and merges to 51,
-          # the same count `gh api --paginate` reports (2026-09-02). A loop that
-          # silently stopped at page 1 would report the rest of a repository clean.
+          # Cursor pagination, not `page=`. Measured: this endpoint answers
+          # HTTP 400 to a `page` parameter - it is one of the few REST endpoints
+          # that paginates only by the Link header's before/after cursors, so
+          # the ordinary page-counting loop refuses everything. The loop was
+          # exercised live at per_page=25 across 3 pages, merging to the same
+          # count `gh api --paginate` reports (2026-09-02). A loop that silently
+          # stopped at page 1 would report the rest of a repository clean.
           url="$api/repos/$GITHUB_REPOSITORY/dependabot/alerts?state=open&per_page=100"
           page=0
           # 100 alerts a page. A repository past 3000 open alerts is a different

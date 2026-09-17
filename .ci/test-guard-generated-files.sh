@@ -8,9 +8,9 @@
 # a vitest suite against a repo-local script, which the move to a shared
 # workflow removes, so they live here now.
 #
-# The logic cannot be a script in this repository: a reusable workflow's steps
-# run in the CALLER's checkout, and GITHUB_TOKEN cannot clone this private repo
-# to fetch one. So the workflow holds the only copy and this test extracts it.
+# The logic is not a script in this repository: a reusable workflow's steps
+# run in the CALLER's checkout, where no file of this repository exists. So the
+# workflow holds the only copy and this test extracts it.
 
 set -uo pipefail
 

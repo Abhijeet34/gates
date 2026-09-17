@@ -221,7 +221,7 @@ BINARY_FIXTURES = {
 # an XMP packet, and neither was ever examined: the gate matched `%PDF-` and
 # `.pdf`, handed the file to exiftool, and then read no field a PDF actually
 # uses, so a Producer tag passed as `clean`. The fixture is the measured case -
-# `~/Downloads/firstmate Banner.pdf` carries `Producer: appifact kit`.
+# a real banner PDF carried `Producer: appifact kit`.
 PDF_FIXTURES = {
     "binary.tool-tag": (pdf({"Producer": "appifact kit"}), pdf()),
 }
@@ -283,12 +283,12 @@ for base in EMOJI_BASES:
             "U+%04X after U+%04X is an emoji presentation selector" % (vs, base),
             ws.scan_text(s) == [],
         )
-# 👩 ZWJ 👩 - an emoji ZWJ sequence (no-mistakes internal/config/commit_test.go:168)
+# 👩 ZWJ 👩 - an emoji ZWJ sequence, as measured in a Go test string
 check(
     "ZWJ inside an emoji sequence is not a finding",
     ws.scan_text(chr(0x1F469) + chr(0x200D) + chr(0x1F469)) == [],
 )
-# Persian ZWNJ between two Arabic-script letters (commit_test.go:169)
+# Persian ZWNJ between two Arabic-script letters, from the same file
 check(
     "ZWNJ between Arabic-script letters is not a finding",
     ws.scan_text(chr(0x06CC) + chr(0x200C) + chr(0x0645)) == [],
@@ -311,21 +311,22 @@ check(
 # The measured occurrences in the live fleet, VENDORED. Each snippet is the
 # content of a real line, rebuilt from codepoints so this file carries no
 # literal invisible character of its own - it is pushed through the gate it
-# tests. The path:line says where it was measured (2026-08-31) and the
-# `carries` column is what makes the case a case, asserted present before the
-# scan so a snippet that lost its codepoint cannot pass by being ordinary text.
+# tests. The label says what kind of line it was measured in (2026-08-31) and
+# the `carries` column is what makes the case a case, asserted present before
+# the scan so a snippet that lost its codepoint cannot pass by being ordinary
+# text.
 ZWJ, ZWNJ, VS15, VS16 = chr(0x200D), chr(0x200C), chr(0xFE0E), chr(0xFE0F)
 
 VENDORED = [
     # A heavy check mark asking for TEXT presentation: typography, not a mark.
     (
-        "system-maintenance/claude-code/docs/SANDBOX.md:372",
+        "a Markdown table row quoting Homebrew output",
         "| 12 | `brew fetch --formula jq` | `" + chr(0x2714) + VS15 + " Bottle jq`",
         (0x2714, 0xFE0E),
     ),
     # The same pair inside an awk pattern matching Homebrew's own output.
     (
-        "system-maintenance/scripts/topgrade-squelch.awk:181",
+        "an awk pattern matching Homebrew output",
         "else if ($0 ~ /^("
         + chr(0x2714)
         + VS15
@@ -336,13 +337,13 @@ VENDORED = [
     ),
     # ZWJ joining two emoji into one glyph - the only way to write it.
     (
-        "no-mistakes internal/config/commit_test.go:168",
+        "a Go test string with an emoji ZWJ sequence",
         '"support ' + chr(0x1F469) + ZWJ + chr(0x1F4BB) + ' workflows"',
         (0x200D,),
     ),
     # ZWNJ between Arabic-script letters: Persian orthography requires it.
     (
-        "no-mistakes internal/config/commit_test.go:169",
+        "a Go test string in Persian",
         '"fix '
         + chr(0x0645)
         + chr(0x06CC)
@@ -355,7 +356,7 @@ VENDORED = [
     ),
     # Emoji presentation selectors after pictographic bases in status output.
     (
-        "no-mistakes internal/pipeline/steps/prsummary.go:867,877,1019,1023",
+        "Go status strings with emoji presentation selectors",
         chr(0x23F8)
         + VS16
         + " awaiting approval / "
@@ -370,7 +371,7 @@ VENDORED = [
         (0x23F8, 0x23ED, 0x26A0, 0x2139, 0xFE0F),
     ),
     (
-        "no-mistakes internal/pipeline/steps/pr_test.go:644",
+        "a Go test string holding a Markdown PR summary",
         "## Risk Assessment " + chr(0x26A0) + VS16 + " Medium: touches critical error "
         "handling / - "
         + chr(0x1F527)
@@ -382,7 +383,7 @@ VENDORED = [
     ),
     # A card-index-dividers favicon inlined as an SVG data URI.
     (
-        "lavish-axi test/server.test.js:4389",
+        "an inline SVG favicon in a JavaScript test",
         "<text>" + chr(0x1F5C2) + VS16 + "</text>",
         (0x1F5C2, 0xFE0F),
     ),
@@ -398,36 +399,6 @@ for where, snippet, carries in VENDORED:
     print(
         "measured: %s carrying %s -> %d finding(s)"
         % (where, " ".join("U+%04X" % cp for cp in carries), len(hits))
-    )
-
-# Additive only. The vendored case above has already run for every one of these
-# paths, so a machine without the clone loses a corroboration, never the check.
-LIVE = [
-    ("~/Developer/automation/system-maintenance/claude-code/docs/SANDBOX.md", 0),
-    ("~/Developer/automation/system-maintenance/scripts/topgrade-squelch.awk", 0),
-    (
-        "~/.claude/tools/firstmate/projects/no-mistakes/internal/config/commit_test.go",
-        0,
-    ),
-    (
-        "~/.claude/tools/firstmate/projects/no-mistakes/internal/pipeline/steps/prsummary.go",
-        0,
-    ),
-    (
-        "~/.claude/tools/firstmate/projects/no-mistakes/internal/pipeline/steps/pr_test.go",
-        0,
-    ),
-    ("~/.claude/tools/firstmate/projects/lavish-axi/test/server.test.js", 0),
-]
-for rel, expected in LIVE:
-    path = os.path.expanduser(rel)
-    if not os.path.exists(path):
-        continue
-    with open(path, encoding="utf-8") as fh:
-        hits = ws.scan_text(fh.read())
-    check(
-        "%s has %d finding(s), got %d %s" % (rel, expected, len(hits), hits[:3]),
-        len(hits) == expected,
     )
 
 # --- 4. end to end through the CLI, against a real fixture repository ----------
