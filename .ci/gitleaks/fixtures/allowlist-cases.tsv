@@ -26,16 +26,15 @@
 (^|/)\.pytest_cache/	.pytest_cache/v/cache/lastfailed	@r2-secret-keyword	-
 (^|/)\.claude/worktrees/	.claude/worktrees/task/x.py	@r2-secret-keyword	-
 (^|/)evals/scrape-baseline/fixtures/	evals/scrape-baseline/fixtures/page.html	@r2-secret-keyword	-
-^\.ci/gitleaks/fixtures/	.ci/gitleaks/fixtures/known-secrets.tsv	@moonshot-kimi	-
-^documents/GoodnotesWebExporter/\.sessions/	documents/GoodnotesWebExporter/.sessions/cookies.json	@r2-secret-keyword	-
-^email-management/config/(credentials|token)\.json$	email-management/config/token.json	@r2-secret-keyword	-
+^\.ci/gitleaks/fixtures/known-secrets\.tsv$	.ci/gitleaks/fixtures/known-secrets.tsv	@moonshot-kimi	-
+^\.ci/gitleaks/fixtures/allowlist-cases\.tsv$	.ci/gitleaks/fixtures/allowlist-cases.tsv	@moonshot-kimi	-
 ^fixtures/golden\.(docx|pdf)$	fixtures/golden.docx	@r2-secret-keyword	-
-^media/streaming-anix-rs/src/config\.rs$	media/streaming-anix-rs/src/config.rs	src_key: "d405d0edd690624b66baba3068e0edc3ac90f1597d898a1ec8db4e5c43c00fec".into(),	@r2-secret-keyword
-^media/streaming-anix-rs/(reference/)?config\.example\.conf$	media/streaming-anix-rs/reference/config.example.conf	src_key = "d405d0edd690624b66baba3068e0edc3ac90f1597d898a1ec8db4e5c43c00fec"	@r2-secret-keyword
+^media/streaming-anix-rs/src/config\.rs$	media/streaming-anix-rs/src/config.rs	src_key: "e185116d9bb2b3fb6e1e5664f7172ead6e5930a3d35691c98921e030124d7100".into(),	@r2-secret-keyword
+^media/streaming-anix-rs/(reference/)?config\.example\.conf$	media/streaming-anix-rs/reference/config.example.conf	src_key = "e185116d9bb2b3fb6e1e5664f7172ead6e5930a3d35691c98921e030124d7100"	@r2-secret-keyword
 ^apps/desktop/src-tauri/src/pipeline/(redactor|selftest)\.rs$	apps/desktop/src-tauri/src/pipeline/redactor.rs	assert!(labels("sk-abcdefghijklmnopqrstuvwx").contains(&"openai-api-key".to_string()));	@github-classic
 ^ai/local-dictation/apps/desktop/src-tauri/src/pipeline/(redactor|selftest)\.rs$	ai/local-dictation/apps/desktop/src-tauri/src/pipeline/selftest.rs	assert!(labels("sk-abcdefghijklmnopqrstuvwx").contains(&"openai-api-key".to_string()));	@github-classic
 ^internal/intent/redact_test\.go$	internal/intent/redact_test.go	{"openai key", "key sk-abcdefghijklmnop12345678", "[REDACTED]"},	@github-classic
-^internal/cli/status_test\.go$	internal/cli/status_test.go	api_key = "d405d0edd690624b66baba3068e0edc3ac90f1597"	@github-classic
+^internal/cli/status_test\.go$	internal/cli/status_test.go	api_key = "07c2f34e648b02729aafcd326db51c3af4679ff23"	@github-classic
 ^system-maintenance/claude-code/config/commands/tools\.md$	system-maintenance/claude-code/config/commands/tools.md	Pull web content/data into files         →  scrape (local, zero-API: crawl/map/render/PDF; --attach renders in your real logged-in Brave)	@r2-secret-keyword
 ^test/attachment-disk-admission\.test\.js$	test/attachment-disk-admission.test.js	const KEY = "0123456789abcdef";	@r2-secret-keyword
 ^test/attachment-store\.test\.js$	test/attachment-store.test.js	const KEY_B = "fedcba9876543210";	@r2-secret-keyword

@@ -69,8 +69,19 @@ case $? in
     *) fail "fixture allowlist check: gitleaks did not complete" ;;
 esac
 
+# ...and nothing else in that directory is. Scanned from inside a copy of the
+# layout, because an absolute path matches no `^`-anchored allowlist.
+mkdir -p "$TMP/tree/.ci/gitleaks/fixtures"
+grep -v '^#' "$FIXTURE" | head -n 1 | cut -f3 > "$TMP/tree/.ci/gitleaks/fixtures/pasted.txt"
+(cd "$TMP/tree" && gitleaks dir . --config "$OLDPWD/$CONFIG" --no-banner --redact --log-level error >/dev/null 2>&1)
+case $? in
+    1) ;;
+    0) fail "a new file under .ci/gitleaks/fixtures/ is allowlisted: the entry is wider than its two fixtures" ;;
+    *) fail "fixture directory check: gitleaks did not complete" ;;
+esac
+
 if [ "$failed" -ne 0 ]; then
     printf '\033[31m%d of %d rule checks failed\033[0m\n' "$failed" "$cases" >&2
     exit 1
 fi
-printf '\033[32mok\033[0m %d rules fired, fixture allowlisted\n' "$cases"
+printf '\033[32mok\033[0m %d rules fired, the two fixture files allowlisted and nothing else beside them\n' "$cases"

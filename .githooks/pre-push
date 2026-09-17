@@ -118,7 +118,7 @@ while read -r _local_ref local_sha _remote_ref remote_sha; do
     # way one arrives. A LINE-deletion-only edit IS counted by gitleaks, so the
     # filter is git's delete status and never added lines. Each skip only lowers
     # the expected count, and a deletion adds no blob, so none can hide content.
-    # 13-shape matrix: firstmate data/prepush-count-heuristic-c9/report.md.
+    # .ci/gitleaks/test-pre-push.sh pins each of these shapes.
     #
     # It also means an evil merge, and a secret inside a binary, are unscannable
     # in git mode; only the CI backstop covers those.
