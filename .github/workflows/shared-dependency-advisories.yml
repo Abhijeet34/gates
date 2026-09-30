@@ -27,6 +27,11 @@ name: shared dependency advisories
 # same day), so its failure fails the job only where an alert would otherwise
 # fail; with no such alert it is a warning, since the answer could change nothing.
 #
+# Known limit: the compare only sees what the pull request's diff touches. A
+# second vulnerable copy of the same package at a manifest the PR leaves
+# unchanged never appears there, so its alert stays open and the first run on
+# the default branch after the merge is red.
+#
 # The token needs no PAT. `vulnerability-alerts: read` is a documented
 # GITHUB_TOKEN permission, and it was verified rather than assumed before this
 # file was written - two jobs against the same endpoint: with the permission
