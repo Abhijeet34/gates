@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression tests for the two step bodies inside
+# Regression tests for the three step bodies inside
 # .github/workflows/shared-dependency-advisories.yml.
 #
 #   .ci/test-dependency-advisories.sh
@@ -15,7 +15,10 @@
 #   2. the same advisory on the deferral list PASSES,
 #   3. a repository with no advisory at or above the floor PASSES,
 #   4. every way the API read can fail to establish an inventory REFUSES,
-#   5. a malformed or mis-keyed deferral list REFUSES rather than reading empty.
+#   5. a malformed or mis-keyed deferral list REFUSES rather than reading empty,
+#   6. on a pull request, an alert the pull request's own dependency diff fixes
+#      PASSES, one it leaves or re-adds FAILS, and a diff that could not be read
+#      FAILS with the API's message whenever an alert depends on it.
 #
 # (4) has the teeth. A visibility gate that goes quiet when it cannot see is the
 # defect the workflow exists to prevent, so the read is driven against a stub
@@ -63,7 +66,9 @@ extract() { # workflow step-name outfile
 
 READ_STEP="$workdir/read.sh"
 JUDGE_STEP="$workdir/judge.sh"
+COMPARE_STEP="$workdir/compare.sh"
 extract "$WORKFLOW" "Read this repository's open Dependabot alerts" "$READ_STEP"
+extract "$WORKFLOW" 'Read the dependency changes this pull request makes' "$COMPARE_STEP"
 extract "$WORKFLOW" 'Judge the open advisories against the deferral list' "$JUDGE_STEP"
 
 # Extraction is the one failure that makes every case below pass vacuously, and
@@ -79,15 +84,17 @@ assert_marker() { # file marker label
 }
 assert_marker "$READ_STEP" 'COULD NOT ESTABLISH' 'read-step'
 assert_marker "$READ_STEP" 'open alerts over' 'read-step'
+assert_marker "$COMPARE_STEP" 'COULD NOT BE READ' 'compare-step'
+assert_marker "$COMPARE_STEP" 'dependency change(s) between' 'compare-step'
 assert_marker "$JUDGE_STEP" 'severity_floor is' 'judge-step'
 assert_marker "$JUDGE_STEP" 'neither fixed nor recorded' 'judge-step'
 
 # --- fixtures ----------------------------------------------------------------
 
-alert() { # severity scope ghsa package
-    jq -n --arg s "$1" --arg sc "$2" --arg g "$3" --arg p "$4" '{
+alert() { # severity scope ghsa package [manifest]
+    jq -n --arg s "$1" --arg sc "$2" --arg g "$3" --arg p "$4" --arg m "${5:-package.json}" '{
         security_advisory: {severity: $s, ghsa_id: $g},
-        dependency: {scope: $sc, package: {name: $p}, manifest_path: "package.json"},
+        dependency: {scope: $sc, package: {name: $p}, manifest_path: $m},
         html_url: "https://example.invalid/\($g)"
     }'
 }
@@ -121,10 +128,13 @@ YML
 
 # --- the judge step ----------------------------------------------------------
 
+# EVENT and COMPARE, when set by the caller, make the run a pull request's;
+# unset, it is a push, which never reads a compare record.
 judge() { # label expected-exit alerts deferrals-path [floor] [faildev]
     local label="$1" want="$2" rc
     (
         cd "$workdir" || exit 127
+        EVENT_NAME="${EVENT:-push}" COMPARE_JSON="${COMPARE:-/nonexistent.json}" \
         ALERTS_JSON="$3" DEFERRALS_PATH="$4" \
         SEVERITY_FLOOR="${5:-high}" FAIL_ON_DEVELOPMENT="${6:-true}" \
         GITHUB_STEP_SUMMARY=/dev/null \
@@ -263,7 +273,7 @@ for t in bash jq mktemp grep sed tr printf cat head env; do
 done
 (
     cd "$workdir" || exit 127
-    PATH="$stubdir" ALERTS_JSON="$HIGH_DEV" DEFERRALS_PATH="$DEF_OK" \
+    PATH="$stubdir" EVENT_NAME=push ALERTS_JSON="$HIGH_DEV" DEFERRALS_PATH="$DEF_OK" \
     SEVERITY_FLOOR=high FAIL_ON_DEVELOPMENT=true GITHUB_STEP_SUMMARY=/dev/null \
         "$BASH" -e "$JUDGE_STEP"
 ) >"$workdir/out" 2>"$workdir/err"
@@ -274,6 +284,81 @@ else
     sed 's/^/       /' "$workdir/err" | head -10
     failed=1
 fi
+
+# --- the verdict on a pull request ------------------------------------------
+
+echo '--- the verdict on a pull request ---'
+
+# The shape the live compare endpoint answered for treadling PR 120, which
+# upgrades fast-uri 3.1.6 -> 3.1.8 past GHSA-58mr-gqgx-xq4g (2026-09-30).
+FASTURI="$workdir/fast-uri.json"
+alert high development GHSA-58mr-gqgx-xq4g fast-uri package-lock.json | inventory >"$FASTURI"
+
+change() { # change_type name version [ghsa] [manifest]
+    jq -n --arg t "$1" --arg n "$2" --arg v "$3" --arg g "${4:-}" --arg m "${5:-package-lock.json}" '{
+        change_type: $t, manifest: $m, ecosystem: "npm", name: $n, version: $v,
+        vulnerabilities: (if $g == "" then [] else [{severity: "high", advisory_ghsa_id: $g}] end)
+    }'
+}
+record() { jq -s '{changes: .}'; }   # stdin: change objects
+
+FIXES="$workdir/cmp-fixes.json"
+{ change removed fast-uri 3.1.6 GHSA-58mr-gqgx-xq4g
+  change added fast-uri 3.1.8; } | record >"$FIXES"
+LEAVES="$workdir/cmp-leaves.json"
+{ change removed nanoid 3.3.7
+  change added nanoid 3.3.8; } | record >"$LEAVES"
+STILL="$workdir/cmp-still.json"
+{ change removed fast-uri 3.1.6 GHSA-58mr-gqgx-xq4g
+  change added fast-uri 3.1.5 GHSA-58mr-gqgx-xq4g; } | record >"$STILL"
+ELSEWHERE="$workdir/cmp-elsewhere.json"
+{ change removed fast-uri 3.1.6 GHSA-58mr-gqgx-xq4g docs/package-lock.json
+  change added fast-uri 3.1.8 "" docs/package-lock.json; } | record >"$ELSEWHERE"
+CMP_ERROR="$workdir/cmp-error.json"
+jq -n '{error: "HTTP 403, \"Forbidden\" (GitHub answers 403 here for a private repository without Advanced Security, and for a token without `contents: read`)"}' >"$CMP_ERROR"
+
+EVENT=pull_request COMPARE="$FIXES" \
+judge 'a pull request that removes the vulnerable version passes' 0 "$FASTURI" /nonexistent.yml
+said  '  and reports it as fixed in this pull request' 'Fixed in this pull request' out
+said  '  and names the advisory it fixed' '- high fast-uri GHSA-58mr-gqgx-xq4g (package-lock.json)' out
+
+EVENT=pull_request COMPARE="$LEAVES" \
+judge 'a pull request that leaves the vulnerable version fails' nonzero "$FASTURI" /nonexistent.yml
+said  '  and says it is neither fixed nor recorded' 'neither fixed nor recorded'
+
+EVENT=pull_request COMPARE="$STILL" \
+judge 'a pull request that bumps to another still-vulnerable version fails' nonzero "$FASTURI" /nonexistent.yml
+said  '  and names the advisory' 'GHSA-58mr-gqgx-xq4g'
+
+EVENT=pull_request COMPARE="$ELSEWHERE" \
+judge 'a removal at a different manifest does not fix the alert' nonzero "$FASTURI" /nonexistent.yml
+
+EVENT=pull_request COMPARE="$CMP_ERROR" \
+judge 'a compare API error fails when an alert depends on it' nonzero "$FASTURI" /nonexistent.yml
+said  '  and says the fix could not be established' 'COULD NOT BE ESTABLISHED'
+said  '  and carries the API message' 'HTTP 403, "Forbidden"'
+
+EVENT=pull_request COMPARE="$CMP_ERROR" \
+judge 'a compare API error with no alert at issue passes' 0 "$MEDIUM_ONLY" /nonexistent.yml
+said  '  and still warns with the API message' 'HTTP 403, "Forbidden"' out
+
+EVENT=pull_request COMPARE="$workdir/no-such-compare.json" \
+judge 'a pull request with no compare record fails rather than reading no changes' nonzero "$FASTURI" /nonexistent.yml
+said  '  and says the record is missing' 'left no readable record'
+
+# Push, schedule and dispatch never read the record, even one that would pass.
+EVENT=push COMPARE="$FIXES" \
+judge 'a push ignores a compare record and keeps the alert failing' nonzero "$FASTURI" /nonexistent.yml
+EVENT=schedule COMPARE="$FIXES" \
+judge 'a scheduled run ignores it too' nonzero "$FASTURI" /nonexistent.yml
+
+PIP="$workdir/pip.json"
+alert high runtime GHSA-aaaa-bbbb-cccc Foo_Bar requirements.txt | inventory >"$PIP"
+PIPFIX="$workdir/cmp-pip.json"
+{ change removed foo-bar 1.0 GHSA-aaaa-bbbb-cccc requirements.txt
+  change added foo-bar 1.1 "" requirements.txt; } | record >"$PIPFIX"
+EVENT=pull_request COMPARE="$PIPFIX" \
+judge 'package names are compared PEP 503-folded' 0 "$PIP" /nonexistent.yml
 
 # --- the API read ------------------------------------------------------------
 
@@ -307,6 +392,7 @@ if [ -n "$dumphdr" ]; then
         printf 'link: <https://api.invalid/x?stub_page=%s>; rel="next", <https://api.invalid/x?stub_page=9>; rel="last"\r\n' \
             "$((page + 1))" >>"$dumphdr"
     fi
+    [ -z "${STUB_EXTRA_HEADER:-}" ] || printf '%s\r\n' "$STUB_EXTRA_HEADER" >>"$dumphdr"
     printf '\r\n' >>"$dumphdr"
 fi
 if [ -r "$body" ]; then cat "$body" >"$out"; else : >"$out"; fi
@@ -395,6 +481,88 @@ s=$(scenario 200 '[]')
 read_step 'an endpoint that always offers a next page refuses rather than truncating' nonzero "$s" 0 1
 said '  and says it will not truncate' 'will not silently truncate'
 
+# --- the compare read --------------------------------------------------------
+#
+# The step never exits non-zero; what it must get right is the record it
+# leaves, because the verdict trusts a `changes` record as the whole diff.
+
+echo '--- the compare read ---'
+
+compare_step() { # label stubdir [curl-rc] [always-next] [extra-header] -> record in $workdir/record
+    local label="$1" rc
+    rm -f "$2/tmp/compare-record.json"
+    (
+        cd "$workdir" || exit 127
+        PATH="$curlbin:$PATH" STUB_DIR="$2" STUB_CURL_RC="${3:-0}" \
+        STUB_ALWAYS_NEXT="${4:-0}" STUB_EXTRA_HEADER="${5:-}" \
+        GITHUB_TOKEN=stub GITHUB_REPOSITORY=Abhijeet34/stub \
+        GITHUB_API_URL=https://api.invalid RUNNER_TEMP="$2/tmp" \
+        BASE_SHA=aaaa HEAD_SHA=bbbb COMPARE_JSON="$2/tmp/compare-record.json" \
+            bash -e "$COMPARE_STEP"
+    ) >"$workdir/out" 2>"$workdir/err"
+    rc=$?
+    cp "$2/tmp/compare-record.json" "$workdir/record" 2>/dev/null || : >"$workdir/record"
+    if [ "$rc" = 0 ] && [ -s "$workdir/record" ]; then
+        printf 'ok   %s\n' "$label"
+    else
+        printf 'FAIL %s: exit %d, record %s\n' "$label" "$rc" "$([ -s "$workdir/record" ] && echo written || echo missing)"
+        sed 's/^/       /' "$workdir/err" | head -10
+        failed=1
+    fi
+}
+
+s=$(scenario 200 "$(jq '.changes' "$FIXES")")
+compare_step 'a complete 200 compare is recorded as changes' "$s"
+said '  and reports what it read' 'read 2 dependency change(s) between aaaa and bbbb' out
+said '  and the record holds both changes' '"change_type": "added"' record
+
+s=$(scenario 403 '{"message":"Forbidden","documentation_url":"https://docs.github.com/rest/dependency-graph/dependency-review"}')
+compare_step 'HTTP 403 is recorded as an error' "$s"
+said '  and keeps the API message' 'HTTP 403, \"Forbidden\"' record
+said '  and names the likely causes' 'Advanced Security' record
+
+# The whole chain, as the runner runs it: the 403 record into the verdict.
+cp "$workdir/record" "$workdir/record-403.json"
+EVENT=pull_request COMPARE="$workdir/record-403.json" \
+judge 'a 403 from the compare API fails the pull request that needed it' nonzero "$FASTURI" /nonexistent.yml
+said '  and the failure quotes the API' 'the dependency compare failed with HTTP 403, "Forbidden"'
+
+s=$(scenario 404 '{"message":"Not Found"}')
+compare_step 'HTTP 404 is recorded as an error' "$s"
+said '  and names the dependency graph' 'no dependency graph' record
+
+for c in 400 500 503; do
+    s=$(scenario "$c" '{"message":"nope"}')
+    compare_step "HTTP $c is recorded as an error" "$s"
+    said "  and never as changes" '"error"' record
+done
+
+s=$(scenario 200 '[]')
+compare_step 'curl failing outright is recorded as an error' "$s" 7
+said '  and names the exit status' 'curl exit 7' record
+
+s=$(scenario 200 '{"message":"Not Found"}')
+compare_step 'a 200 that is not an array is recorded as an error' "$s"
+said '  and says so' 'not an array of changes' record
+
+s=$(scenario 200 '[{"change_type":"added","manifest":"package-lock.json","name":"fast-uri","version":"3.1.5"}]')
+compare_step 'an added version with no vulnerabilities list is an error, not a clean add' "$s"
+said '  and says what is missing' 'vulnerabilities list' record
+
+s=$(scenario 200 "$(jq '.changes' "$FIXES")")
+compare_step 'a paginated answer is recorded as an error, not read partially' "$s" 0 1
+said '  and says so' 'paginated' record
+
+s=$(scenario 200 "$(jq '.changes' "$FIXES")")
+compare_step 'a snapshot warning is recorded as an error' "$s" 0 0 \
+    "x-github-dependency-graph-snapshot-warnings: $(printf 'manifest go.sum was not processed' | base64)"
+said '  and decodes the warning' 'manifest go.sum was not processed' record
+
+s=$(scenario 200 "$(jq '.changes' "$FIXES")")
+compare_step 'an empty snapshot-warnings header, as GitHub sends it, is no warning' "$s" 0 0 \
+    'x-github-dependency-graph-snapshot-warnings: '
+said '  and the changes are recorded' '"changes"' record
+
 # --- mutations: each property, shown having teeth ----------------------------
 #
 # A registry cannot be its own oracle. Each case deletes one property from the
@@ -430,7 +598,7 @@ mutation_allows() { # label body env-assignments...
 if mut=$(mutate 'null-scope default' "$JUDGE_STEP" \
     's/scope: (\.dependency\.scope \/\/ "unknown")/scope: (.dependency.scope \/\/ "development")/'); then
     mutation_allows 'defaulting an unknown scope to development wrongly exempts it' \
-        ALERTS_JSON="$NULL_SCOPE" DEFERRALS_PATH=/nonexistent.yml \
+        EVENT_NAME=push ALERTS_JSON="$NULL_SCOPE" DEFERRALS_PATH=/nonexistent.yml \
         SEVERITY_FLOOR=high FAIL_ON_DEVELOPMENT=false GITHUB_STEP_SUMMARY=/dev/null
 else
     failed=1
@@ -452,8 +620,46 @@ fi
 if mut=$(mutate 'miskeyed refusal' "$JUDGE_STEP" \
     's/\[ "\$(get '"'"'\.miskeyed | length'"'"')" = 0 \]/true/'); then
     mutation_allows 'dropping the mis-key refusal lets a deferral for the wrong package stand' \
-        ALERTS_JSON="$HIGH_DEV" DEFERRALS_PATH="$MISKEY" \
+        EVENT_NAME=push ALERTS_JSON="$HIGH_DEV" DEFERRALS_PATH="$MISKEY" \
         SEVERITY_FLOOR=high FAIL_ON_DEVELOPMENT=true GITHUB_STEP_SUMMARY=/dev/null
+else
+    failed=1
+fi
+
+# 4. The re-add check: a bump to another still-vulnerable version is no fix.
+if mut=$(mutate 'still-vulnerable re-add' "$JUDGE_STEP" \
+    's/touches(\$chg; \.; "removed") and (touches(\$chg; \.; "added") | not)/touches($chg; .; "removed")/'); then
+    mutation_allows 'dropping the re-add check lets a still-vulnerable bump pass' \
+        EVENT_NAME=pull_request COMPARE_JSON="$STILL" ALERTS_JSON="$FASTURI" DEFERRALS_PATH=/nonexistent.yml \
+        SEVERITY_FLOOR=high FAIL_ON_DEVELOPMENT=true GITHUB_STEP_SUMMARY=/dev/null
+else
+    failed=1
+fi
+
+# 5. The event gate: only a pull request reads the compare record.
+if mut=$(mutate 'event gate' "$JUDGE_STEP" \
+    's/if \[ "\$EVENT_NAME" != pull_request \]; then/if false; then/'); then
+    mutation_allows 'dropping the event gate lets a push be judged on a compare record' \
+        EVENT_NAME=push COMPARE_JSON="$FIXES" ALERTS_JSON="$FASTURI" DEFERRALS_PATH=/nonexistent.yml \
+        SEVERITY_FLOOR=high FAIL_ON_DEVELOPMENT=true GITHUB_STEP_SUMMARY=/dev/null
+else
+    failed=1
+fi
+
+# 6. The shape check in the compare read: without it an added version with no
+# vulnerabilities list is recorded as a diff the verdict would trust.
+if mut=$(mutate 'compare shape check' "$COMPARE_STEP" \
+    's/(\.vulnerabilities | type) == "array"/true/; s/all(\.vulnerabilities\[\];/all(.vulnerabilities[]?;/'); then
+    s=$(scenario 200 '[{"change_type":"added","manifest":"package-lock.json","name":"fast-uri","version":"3.1.5"}]')
+    ( cd "$workdir" && env PATH="$curlbin:$PATH" STUB_DIR="$s" GITHUB_TOKEN=stub GITHUB_REPOSITORY=Abhijeet34/stub \
+        GITHUB_API_URL=https://api.invalid RUNNER_TEMP="$s/tmp" BASE_SHA=aaaa HEAD_SHA=bbbb \
+        COMPARE_JSON="$s/tmp/compare-record.json" bash -e "$mut" ) >/dev/null 2>&1
+    if jq -e 'has("changes")' "$s/tmp/compare-record.json" >/dev/null 2>&1; then
+        printf 'ok   %s\n' 'dropping the shape check records an unlisted re-add as a trusted diff'
+    else
+        printf 'FAIL %s\n' 'the mutated compare read still refuses, so the shape check has no teeth'
+        failed=1
+    fi
 else
     failed=1
 fi
