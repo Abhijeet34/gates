@@ -18,6 +18,20 @@ name: shared dependency advisories
 # that introduces it; what this adds is that the alert is read by something,
 # on every pull request, instead of by nobody.
 #
+# Those alerts describe the default branch and close only after a fix merges, so
+# on a pull_request event the job also reads GitHub's dependency compare for the
+# pull request, and an alert it removes without re-adding counts as fixed there.
+# That read needs `contents: read`, which every caller already grants (GitHub's
+# permission table, and the live runs of 2026-09-30). A private repository
+# without Advanced Security answers it 403 on every pull request (measured the
+# same day), so its failure fails the job only where an alert would otherwise
+# fail; with no such alert it is a warning, since the answer could change nothing.
+#
+# Known limit: the compare only sees what the pull request's diff touches. A
+# second vulnerable copy of the same package in the SAME manifest that the PR
+# leaves unchanged is not in the diff, so the PR reads fixed while the alert
+# stays open, and the first run on the default branch after the merge is red.
+#
 # The token needs no PAT. `vulnerability-alerts: read` is a documented
 # GITHUB_TOKEN permission, and it was verified rather than assumed before this
 # file was written - two jobs against the same endpoint: with the permission
@@ -181,9 +195,75 @@ jobs:
 
           echo "read $(jq 'length' "$ALERTS_JSON") open alerts over $page page(s)"
 
+      # Never exits non-zero: it records either the changes or the reason it
+      # could not read them, and the verdict decides whether that reason
+      # matters (the header says when). A missing record is itself a refusal.
+      - name: Read the dependency changes this pull request makes
+        if: github.event_name == 'pull_request'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          COMPARE_JSON: ${{ runner.temp }}/dependency-compare.json
+        run: |
+          set -uo pipefail
+
+          record_error() {
+            jq -n --arg e "$1" '{error: $e}' >"$COMPARE_JSON"
+            echo "the dependency compare COULD NOT BE READ: $1"
+            exit 0
+          }
+
+          api="${GITHUB_API_URL:-https://api.github.com}"
+          tmp="${RUNNER_TEMP:-.}"
+          body="$tmp/compare.json"
+          hdr="$tmp/compare.head"
+          curl_rc=0
+          code=$(curl -sS -D "$hdr" -o "$body" -w '%{http_code}' \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "$api/repos/$GITHUB_REPOSITORY/dependency-graph/compare/$BASE_SHA...$HEAD_SHA") || curl_rc=$?
+          [ "$curl_rc" -eq 0 ] || record_error "the request did not complete (curl exit $curl_rc)"
+
+          message=$(jq -r '.message? // empty' "$body" 2>/dev/null) || message=""
+          case "$code" in
+            200) ;;
+            403) record_error "HTTP 403, \"${message:-no message}\" (GitHub answers 403 here for a private repository without Advanced Security, and for a token without \`contents: read\`)" ;;
+            404) record_error "HTTP 404, \"${message:-no message}\" (no dependency graph for this repository, or a commit it does not know)" ;;
+            *)   record_error "HTTP $code, \"${message:-no message}\"" ;;
+          esac
+
+          # The endpoint documents no pagination; a next page would mean the
+          # first one is not the whole diff, and a partial diff is not read.
+          if grep -qiE '^link:.*rel="next"' "$hdr"; then
+            record_error "the answer is paginated, which this step does not follow, so the diff it holds is partial"
+          fi
+          # An incomplete head snapshot can list a package as removed that is
+          # still there, and that reads as a fix.
+          warnings=$(grep -i -m1 '^x-github-dependency-graph-snapshot-warnings:' "$hdr" \
+            | sed 's/^[^:]*: *//' | tr -d '\r') || warnings=""
+          if [ -n "$warnings" ]; then
+            decoded=$(printf '%s' "$warnings" | base64 -d 2>/dev/null) || decoded="$warnings"
+            record_error "GitHub reported the dependency snapshot incomplete: $(printf '%s' "$decoded" | tr '\n' ' ')"
+          fi
+
+          # An added version whose `vulnerabilities` is absent would read as
+          # carrying none, so every field the match reads is asserted present.
+          jq -e 'type == "array" and all(.[];
+              (.change_type | type) == "string" and (.manifest | type) == "string"
+              and (.name | type) == "string" and (.vulnerabilities | type) == "array"
+              and all(.vulnerabilities[]; (.advisory_ghsa_id | type) == "string"))' "$body" >/dev/null 2>&1 \
+            || record_error "HTTP 200, but the answer is not an array of changes that each carry a manifest, a name and a vulnerabilities list"
+
+          jq '{changes: .}' "$body" >"$COMPARE_JSON" || record_error "the answer could not be recorded"
+          echo "read $(jq '.changes | length' "$COMPARE_JSON") dependency change(s) between $BASE_SHA and $HEAD_SHA"
+
       - name: Judge the open advisories against the deferral list
         env:
           ALERTS_JSON: ${{ runner.temp }}/dependabot-alerts.json
+          COMPARE_JSON: ${{ runner.temp }}/dependency-compare.json
+          EVENT_NAME: ${{ github.event_name }}
           SEVERITY_FLOOR: ${{ inputs.severity_floor }}
           FAIL_ON_DEVELOPMENT: ${{ inputs.fail_on_development }}
           DEFERRALS_PATH: ${{ inputs.deferrals_path }}
@@ -201,6 +281,18 @@ jobs:
             *) refuse "fail_on_development is \"$FAIL_ON_DEVELOPMENT\"; it must be true or false." ;;
           esac
           [ -r "$ALERTS_JSON" ] || refuse "the alert inventory at $ALERTS_JSON is missing, so nothing was judged."
+
+          # Only a pull request has changes of its own; every other event is
+          # judged on the default branch's alerts alone, exactly as before.
+          compare=$(mktemp)
+          if [ "$EVENT_NAME" != pull_request ]; then
+            printf '{"changes":[]}\n' >"$compare"
+          elif ! jq -e 'type == "object" and ((.error | type) == "string" or (.changes | type) == "array")' \
+              "$COMPARE_JSON" >/dev/null 2>&1; then
+            jq -n --arg f "$COMPARE_JSON" '{error: "the compare step left no readable record at \($f)"}' >"$compare"
+          else
+            cp "$COMPARE_JSON" "$compare"
+          fi
 
           # --- the deferral list ---------------------------------------------
           #
@@ -274,10 +366,21 @@ jobs:
           verdict=$(jq -n \
             --slurpfile alerts "$ALERTS_JSON" \
             --slurpfile deferrals "$deferrals" \
+            --slurpfile compare "$compare" \
             --arg floor "$SEVERITY_FLOOR" \
             --argjson faildev "$FAIL_ON_DEVELOPMENT" '
             def rank: {"low": 1, "medium": 2, "high": 3, "critical": 4}[.] // 0;
-            ($alerts[0] // []) as $a
+            # PEP 503 folding, so a pip alert for Foo_Bar meets the change to foo-bar.
+            def norm: ascii_downcase | gsub("[-_.]+"; "-");
+            # Whether the pull request makes a $type change, at this alert own
+            # manifest, to a version of its package that carries its advisory.
+            def touches($chg; $x; $type):
+              any($chg[]; .change_type == $type and .manifest == $x.manifest
+                          and (.name | norm) == ($x.pkg | norm)
+                          and any(.vulnerabilities[]; .advisory_ghsa_id == $x.ghsa));
+            ($compare[0].error // null) as $cerr
+            | ($compare[0].changes // []) as $chg
+            | ($alerts[0] // []) as $a
             | ($deferrals[0].deferrals // []) as $d
             | ($a | map({
                 ghsa: .security_advisory.ghsa_id,
@@ -289,16 +392,19 @@ jobs:
                 pkg: .dependency.package.name,
                 manifest: (.dependency.manifest_path // "?"),
                 url: (.html_url // "")
-              })) as $open
+              }) | map(. + {fixed: (touches($chg; .; "removed") and (touches($chg; .; "added") | not))})) as $open
             | ($open | map(select((.sev | rank) >= ($floor | rank))
                                   | select($faildev or .scope != "development"))) as $atfloor
             | ($d | map(.ghsa)) as $dghsa
+            | ($atfloor | map(select(.ghsa as $g | ($dghsa | index($g)) | not))) as $undeferred
             | {
                 open: $open,
                 counts: ($open | group_by(.sev) | map({sev: .[0].sev, n: length})
                          | sort_by(.sev | rank) | reverse),
                 deferred: ($atfloor | map(select(.ghsa as $g | $dghsa | index($g)))),
-                failing:  ($atfloor | map(select(.ghsa as $g | ($dghsa | index($g)) | not))),
+                fixed: ($open | map(select(.fixed))),
+                failing: ($undeferred | map(select(.fixed | not))),
+                compare_error: $cerr,
                 # A deferral naming a GHSA with no open alert is dead text, not a
                 # false verdict: it is keyed on the exact advisory, so it can
                 # never widen to cover a new one. Reported, never fatal - a
@@ -338,6 +444,12 @@ jobs:
             echo "| severity | scope | package | GHSA | manifest |"
             echo "| --- | --- | --- | --- | --- |"
             get '.open | sort_by(.sev) | reverse | .[] | "| \(.sev) | \(.scope) | \(.pkg) | \(.ghsa) | \(.manifest) |"'
+            if [ "$(get '.fixed | length')" != 0 ]; then
+              echo
+              echo "Fixed in this pull request, so not failing: it removes the vulnerable version at the alert's manifest and adds none still affected."
+              echo
+              get '.fixed[] | "- \(.sev) \(.pkg) \(.ghsa) (\(.manifest))"'
+            fi
           } | tee -a "${GITHUB_STEP_SUMMARY:-/dev/null}"
           echo
 
@@ -355,10 +467,15 @@ jobs:
           fi
 
           failing_n=$(get '.failing | length')
+          compare_error=$(get '.compare_error // empty')
           if [ "$failing_n" = 0 ]; then
+            [ -z "$compare_error" ] \
+              || echo "::warning::the dependency compare for this pull request could not be read, and no alert needed it: $compare_error"
             echo "no open advisory at or above \`$SEVERITY_FLOOR\` is undeferred; $(get '.open | length') open alert(s) inventoried"
             exit 0
           fi
 
           get '.failing[] | "::error::\(.sev) advisory in \(.pkg) (\(.scope) scope, \(.manifest)): \(.ghsa) \(.url)"' >&2
+          [ -z "$compare_error" ] \
+            || refuse "$failing_n open advisory(ies) at or above \`$SEVERITY_FLOOR\` are open on the default branch, and whether this pull request fixes them COULD NOT BE ESTABLISHED: the dependency compare failed with $compare_error"
           refuse "$failing_n open advisory(ies) at or above \`$SEVERITY_FLOOR\` are neither fixed nor recorded in $DEFERRALS_PATH. Upgrade the dependency, or add the GHSA id there with the reason it stands and the condition that ends it."
