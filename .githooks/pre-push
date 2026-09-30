@@ -17,6 +17,10 @@
 #
 # Install (once per clone, because core.hooksPath is not a tracked file):
 #     git config core.hooksPath .githooks
+#
+# This file is a byte-pinned canonical copy, so a repository extends it with an
+# executable, git-tracked .githooks/pre-push.local, run last with the same
+# arguments and ref list and only once every check here has passed.
 set -uo pipefail
 
 HOOK_DIR=$(cd "$(dirname "$0")" && pwd -P)
@@ -173,5 +177,27 @@ next=$(git config --get --global core.hooksPath 2>/dev/null)
 case "$next" in '~/'*) next="$HOME/${next#\~/}" ;; esac
 [ -n "$next" ] || next="$(git rev-parse --git-common-dir)/hooks"
 if [ -x "$next/pre-push" ] && [ "$(cd "$next" 2>/dev/null && pwd -P)" != "$HOOK_DIR" ]; then
-    "$next/pre-push" "$@" < "$STDIN_FILE"
+    "$next/pre-push" "$@" < "$STDIN_FILE" || exit $?
 fi
+
+# The repository's own extension, last, so it runs only once the secret scan and
+# the chained watermark gate have passed. Only this repository's own copy of the
+# hook runs it: the machine-wide deployment runs this file from ~/.git-hooks and
+# executes nothing out of a pushed repository (system-maintenance/git-hooks/README.md).
+LOCAL_HOOK=.githooks/pre-push.local
+[ "$(cd .githooks 2>/dev/null && pwd -P)" = "$HOOK_DIR" ] || exit 0
+[ -e "$LOCAL_HOOK" ] || [ -L "$LOCAL_HOOK" ] || exit 0
+# A tracked symlink is refused too: git tracks only its target path, so what it
+# would run is code git does not track.
+if [ -L "$LOCAL_HOOK" ]; then
+    why="is a symlink, so what it runs is not tracked by git"
+elif ! git ls-files --error-unmatch -- "$LOCAL_HOOK" >/dev/null 2>&1; then
+    why="is not tracked by git; commit it or delete it"
+elif [ ! -x "$LOCAL_HOOK" ]; then
+    why="is not executable; chmod +x and commit the mode"
+else
+    "$toplevel/$LOCAL_HOOK" "$@" < "$STDIN_FILE"
+    exit $?
+fi
+echo "gitleaks-pre-push: $LOCAL_HOOK $why. It was not run. Push refused." >&2
+exit 1

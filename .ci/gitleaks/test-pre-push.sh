@@ -456,6 +456,99 @@ forked "$TMP/fork8"
 PATH="$TMP/stub:$PATH" git -C "$TMP/fork8" push "$TMP/fork8-github.git" HEAD:refs/heads/pr-1 >/dev/null 2>&1
 check "a scan reporting 0 commits still refuses on the narrowed new-branch range" refuse $?
 
+# --- .githooks/pre-push.local: the repository's own extension -----------------
+#
+# The canonical hook is byte-pinned, so a repository extends it only through a
+# tracked, executable pre-push.local, run last. The chained hook stands in for
+# the machine-wide watermark gate: with no global config it is .git/hooks/pre-push.
+git init --quiet --bare "$TMP/x-remote.git"
+git init --quiet -b main "$TMP/x"
+cd "$TMP/x" || exit 2
+git config user.name test
+git config user.email test@example.invalid
+git remote add origin "$TMP/x-remote.git"
+mkdir -p .githooks
+cp "$HOOK" .githooks/pre-push
+chmod +x .githooks/pre-push
+cp "$CONFIG" .gitleaks.toml
+git config core.hooksPath .githooks
+echo "print('x')" > app.py
+git add -A && git commit --quiet -m base
+git push --quiet origin main >/dev/null 2>&1
+
+# X1. Absent: the push lands and the hook prints nothing, as it did before.
+echo "print('x1')" > x1.py
+git add x1.py && git commit --quiet -m x1
+out=$(git push --quiet origin main 2>&1)
+check "with no pre-push.local a clean push lands" pass $?
+[ -z "$out" ] || { printf '\033[31mFAIL\033[0m with no pre-push.local the push printed: %s\n' "$out" >&2; failed=$((failed + 1)); }
+
+# The extension records its arguments and its stdin, and exits with $X_RC.
+cat > .githooks/pre-push.local <<STUB
+#!/bin/sh
+printf '%s|%s\n' "\$1" "\$2" > "$TMP/x-args"
+cat > "$TMP/x-stdin"
+exit "\${X_RC:-0}"
+STUB
+chmod +x .githooks/pre-push.local
+git add .githooks/pre-push.local && git commit --quiet -m "add pre-push.local"
+
+# X2. It runs, with git's arguments and the ref list byte for byte.
+OLD=$(git rev-parse origin/main) NEW=$(git rev-parse HEAD)
+git push --quiet origin main >/dev/null 2>&1
+check "a tracked executable pre-push.local lets a clean push land" pass $?
+[ "$(cat "$TMP/x-args" 2>/dev/null)" = "origin|$TMP/x-remote.git" ] ||
+    { printf '\033[31mFAIL\033[0m pre-push.local got arguments %s\n' "$(cat "$TMP/x-args" 2>/dev/null)" >&2; failed=$((failed + 1)); }
+[ "$(cat "$TMP/x-stdin" 2>/dev/null)" = "refs/heads/main $NEW refs/heads/main $OLD" ] ||
+    { printf '\033[31mFAIL\033[0m pre-push.local got stdin %s\n' "$(cat "$TMP/x-stdin" 2>/dev/null)" >&2; failed=$((failed + 1)); }
+
+# X3. Its failure is the push's failure, with its own exit status.
+echo "print('x3')" > x3.py
+git add x3.py && git commit --quiet -m x3
+REFLINE="refs/heads/main $(git rev-parse HEAD) refs/heads/main $(git rev-parse origin/main)"
+printf '%s\n' "$REFLINE" | X_RC=7 ./.githooks/pre-push origin "$TMP/x-remote.git" >/dev/null 2>&1
+rc=$?
+[ "$rc" -eq 7 ] || { printf '\033[31mFAIL\033[0m a pre-push.local exiting 7 made the hook exit %s\n' "$rc" >&2; failed=$((failed + 1)); }
+X_RC=7 git push origin main >/dev/null 2>&1
+check "a failing pre-push.local refuses the push" refuse $?
+[ "$(git rev-parse origin/main)" = "$(git rev-parse HEAD)" ] &&
+    { printf '\033[31mFAIL\033[0m the push refused by pre-push.local reached the remote\n' >&2; failed=$((failed + 1)); }
+
+# X4. Never before, never instead of: a secret is refused although the extension
+# would pass, and the extension does not run at all.
+rm -f "$TMP/x-args"
+printf 'MODELS = {"kimi": "%s"}\n' "$SECRET" > leak.py
+git add leak.py && git commit --quiet -m "carries a secret"
+git push origin main >/dev/null 2>&1
+check "a secret is refused even when pre-push.local would pass" refuse $?
+[ -e "$TMP/x-args" ] && { printf '\033[31mFAIL\033[0m pre-push.local ran although the secret scan refused\n' >&2; failed=$((failed + 1)); }
+git reset --quiet --hard HEAD~1
+
+# X5. Nor after a chained gate refuses: the watermark gate's place in the chain.
+printf '#!/bin/sh\nexit 1\n' > .git/hooks/pre-push
+chmod +x .git/hooks/pre-push
+git push origin main >/dev/null 2>&1
+check "a refusal by the chained hook refuses the push" refuse $?
+[ -e "$TMP/x-args" ] && { printf '\033[31mFAIL\033[0m pre-push.local ran although the chained hook refused\n' >&2; failed=$((failed + 1)); }
+rm -f .git/hooks/pre-push
+
+# X6-X8. Refused, not run, when it is not code git tracks as an executable.
+refused_unrun() { # description message-fragment
+    rm -f "$TMP/x-args"
+    err=$(git push origin main 2>&1 >/dev/null)
+    check "$1" refuse $?
+    [ -e "$TMP/x-args" ] && { printf '\033[31mFAIL\033[0m %s: it ran anyway\n' "$1" >&2; failed=$((failed + 1)); }
+    case "$err" in *"$2"*) ;; *) printf '\033[31mFAIL\033[0m %s: no "%s" in: %s\n' "$1" "$2" "$err" >&2; failed=$((failed + 1)) ;; esac
+}
+git rm --quiet --cached .githooks/pre-push.local && git commit --quiet -m "untrack pre-push.local"
+refused_unrun "an untracked pre-push.local refuses the push" "is not tracked by git"
+chmod -x .githooks/pre-push.local && git add .githooks/pre-push.local && git commit --quiet -m "track it, not executable"
+refused_unrun "a non-executable pre-push.local refuses the push" "is not executable"
+chmod +x .githooks/pre-push.local && mv .githooks/pre-push.local "$TMP/x-outside"
+ln -s "$TMP/x-outside" .githooks/pre-push.local
+git add .githooks/pre-push.local && git commit --quiet -m "track a symlink"
+refused_unrun "a tracked symlink as pre-push.local refuses the push" "is a symlink"
+
 if [ "$failed" -ne 0 ]; then
     printf '\033[31m%d pre-push checks failed\033[0m\n' "$failed" >&2
     exit 1

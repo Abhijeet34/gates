@@ -8,7 +8,7 @@ Licensed under the Apache License 2.0; see `LICENSE` and `NOTICE`.
 
 | Path | What it is |
 | --- | --- |
-| `.githooks/pre-push`, `.gitleaks.toml` | The repository-local secret gate and the canonical rules. Callers carry byte copies, distributed by `.ci/gitleaks/sync.sh`. |
+| `.githooks/pre-push`, `.gitleaks.toml` | The repository-local secret gate and the canonical rules. Callers carry byte copies, distributed by `.ci/gitleaks/sync.sh`, and extend the gate through a tracked, executable `.githooks/pre-push.local`, which it runs last. |
 | `system-maintenance/git-hooks/` | The machine-wide hooks deployed to `~/.git-hooks` by `install.sh`, including `watermark-scan.py`. Its `README.md` owns the design and the measurements. |
 | `.github/workflows/shared-*.yml` | Reusable workflows: `secret-scan`, `watermark-scan`, `dependency-advisories`, `guard-generated-files`, `no-mistakes-required`. |
 | `.ci/` | The contract test for each workflow's step body, the gitleaks rule and allowlist suites, and `check.sh`, which runs all of them. |

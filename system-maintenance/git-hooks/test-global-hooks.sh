@@ -178,6 +178,23 @@ git -C "$TMP/hostile" push origin main >/dev/null 2>&1
 check "allowlisted repo: the push is refused for the secret in range" refuse $?
 [ -e "$TMP/PWNED" ] && fail "allowlisted repo: its .githooks/pre-push EXECUTED - the allowlist must gate scanning, not trust repo code"
 
+# The deployed scanner is a byte copy of the canonical hook, which runs a
+# repository's tracked .githooks/pre-push.local - but only as that repository's
+# own hook. Run from ~/.git-hooks on a clean push it scans and runs nothing else.
+seed "$TMP/extlocal"
+allow "${TMP}/extlocal"
+mkdir -p "$TMP/extlocal/.githooks"
+cat > "$TMP/extlocal/.githooks/pre-push.local" <<STUB
+#!/bin/sh
+: > "$TMP/LOCAL_RAN"
+exit 0
+STUB
+chmod +x "$TMP/extlocal/.githooks/pre-push.local"
+git -C "$TMP/extlocal" add -A && git -C "$TMP/extlocal" commit --quiet -m "a tracked pre-push.local"
+git -C "$TMP/extlocal" push --quiet origin main >/dev/null 2>&1
+check "allowlisted repo carrying pre-push.local: a clean push lands" pass $?
+[ -e "$TMP/LOCAL_RAN" ] && fail "allowlisted repo: the deployed scanner EXECUTED its .githooks/pre-push.local - the machine-wide hook must run no repository code"
+
 # ==============================================================================
 # 3. A repository with no origin at all is left alone (the local-notes case).
 # ==============================================================================

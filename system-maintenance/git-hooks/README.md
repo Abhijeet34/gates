@@ -23,6 +23,18 @@ So the scanner is always `~/.git-hooks/gitleaks-pre-push`, a byte copy of `.gith
 Nothing out of a pushed repository is executed or read as configuration, allowlisted or not.
 `test-global-hooks.sh` proves it with a throwaway repository whose own `.githooks/pre-push` writes a marker file: the marker must not exist, both before and after that repository is allowlisted.
 
+## The repository's own extension: `.githooks/pre-push.local`
+
+A caller cannot edit its `.githooks/pre-push`, because `shared-secret-scan.yml` pins its digest and `.ci/gitleaks/sync.sh` overwrites it.
+So the canonical hook runs one repository-owned extension: an executable, git-tracked `.githooks/pre-push.local`, given the hook's own arguments and the buffered ref list on stdin.
+It runs last, only after the secret scan and the chained hook - the watermark and exposure gates on a machine with these hooks deployed - have passed, and its exit status is the push's.
+With no such file the hook behaves exactly as it did before.
+An untracked, non-executable or symlinked `pre-push.local` refuses the push without running, because a symlink's target is code git does not track.
+
+This does not reopen the hazard above.
+The extension runs only when the hook executing is the repository's own `.githooks/pre-push`, armed by that repository's `core.hooksPath`, which is already code out of that repository run by the person who armed it.
+The deployed `~/.git-hooks/gitleaks-pre-push` is the same bytes but lives outside the repository, so it never runs `pre-push.local`; `test-global-hooks.sh` pins that with an allowlisted repository whose `pre-push.local` writes a marker.
+
 ## The allowlist
 
 The allowlist is therefore about blast radius, not about code execution.
@@ -422,7 +434,7 @@ The opt-in networked case clones `Abhijeet34/papertrace` and is deliberately not
 
 ## Related
 
-- `.githooks/pre-push` - the canonical secret scanner, deployed here as `gitleaks-pre-push`. It fails closed and does not trust gitleaks' exit code alone; its header carries the measurement.
+- `.githooks/pre-push` - the canonical secret scanner, deployed here as `gitleaks-pre-push`. It fails closed and does not trust gitleaks' exit code alone; its header carries the measurement. It runs a repository's `.githooks/pre-push.local` last, and only as that repository's own hook.
 - `watermark-scan.py`, `watermark-allow.conf`, `watermark-optout.conf` - the no-watermarking gate and its two rule files, all three deployed by `install.sh`.
 - `exposure-scan.py`, `test-exposure-scan.sh` - the exposure gate and its suite.
 - `test-watermark-scan.py` - the gate's own suite: a fixture per rule, each re-graded once neutralised, the three legitimate contexts, both rule files' contracts, the `clean`/`verify` verbs, and the refusal when exiftool is gone. `test-global-hooks.sh` pins the dispatch around it.
