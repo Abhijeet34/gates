@@ -41,3 +41,4 @@
 ^test/server-attachments\.test\.js$	test/server-attachments.test.js	const key = "0123456789abcdef";	@r2-secret-keyword
 ^test/server-whiteboard\.test\.js$	test/server-whiteboard.test.js	const sessionKey = "0123456789abcdef";	@r2-secret-keyword
 ^test/whiteboard-store\.test\.js$	test/whiteboard-store.test.js	const KEY = "0123456789abcdef";	@r2-secret-keyword
+^site\.config\.json$	site.config.json	  "analyticsToken": "3f9a1c7e5b2d4086a9e1f7c35b0d82e4",	  "apiToken": "3f9a1c7e5b2d4086a9e1f7c35b0d82e4",
