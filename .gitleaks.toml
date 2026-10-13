@@ -218,3 +218,15 @@ paths = [
     '''^test/whiteboard-store\.test\.js$''',
 ]
 regexes = ['''^(?:0123456789abcdef|fedcba9876543210)$''']
+
+# Anchored to the whole line, not just the key: a minified site.config.json that
+# put another key on the same line would otherwise be excused along with it.
+[[allowlists]]
+description = "A website's Cloudflare Web Analytics token (analyticsToken, 32 hex) in site.config.json. Cloudflare's own snippet prints it in every page as data-cf-beacon, so it is a public client identifier. Not a credential."
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = [
+    '''^site\.config\.json$''',
+]
+regexes = ['''^\s*"analyticsToken"\s*:\s*"[0-9a-f]{32}"\s*,?\s*$''']
+regexTarget = "line"
