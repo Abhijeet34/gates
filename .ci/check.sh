@@ -81,6 +81,7 @@ check_shell() {
     bash .ci/test-suite-coverage.sh || rc=1
     # The exposure gate, through real pushes into throwaway repositories.
     bash system-maintenance/git-hooks/test-exposure-scan.sh || rc=1
+    bash system-maintenance/git-hooks/test-commit-msg.sh || rc=1
     return $rc
 }
 

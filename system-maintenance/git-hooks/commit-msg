@@ -1,3 +1,17 @@
 #!/bin/sh
-sed -i.bak "/^Co-Authored-By: .*warp\.dev>$/Id" "$1"
-rm -f "$1.bak"
+# Refuse a commit message that credits an AI agent as co-author or generator.
+# Warp's trailer used to be stripped here; it is refused with the rest now.
+# Vendor words need a non-letter boundary before them; after them they allow
+# a non-letter boundary or one of a short bot-suffix list, so ClaudeAI and
+# CopilotBot are caught without flagging substrings inside human names like
+# Raider or Grokowski.
+vendors='claude|anthropic|codex|openai|chatgpt|gpt|gemini|cursor|copilot|warp|kimi|moonshot|deepseek|qwen|glm|zhipu|zhipuai|grok|xai|x\.ai|opencode|devin|aider|bard|windsurf|codeium'
+suffix='AI|Bot|Agent|Code|CLI'
+vendor_tail='[^[:alnum:]]('"$vendors"')('"$suffix"')?([^[:alnum:]]|$)'
+# Comment lines are dropped by git, so they are not attribution.
+bad=$(grep -v '^#' "$1" | grep -Ei \
+    -e "^[[:space:]]*co-authored-by:.*${vendor_tail}" \
+    -e "^[^[:alnum:]]*generated (with|by)[^[:alnum:]]*.*${vendor_tail}" | head -n 1)
+[ -z "$bad" ] && exit 0
+echo "commit-msg: refusing agent attribution line: $bad" >&2
+exit 1

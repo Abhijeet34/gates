@@ -62,7 +62,7 @@ It can only ever cause more repositories to be scanned, never fewer.
 Measured 2026-08-17 with a global `commit-msg` that prints a marker: it fires before the repository sets `core.hooksPath=.githooks` and does not fire after.
 `.ci/gitleaks/sync.sh` sets that config in every repository it installs into, so this is live in every working tree that carries it.
 
-What it actually costs, measured the same day: nothing for git-lfs, because none of the gated clones had an LFS-tracked file; and the co-author stripper in `commit-msg`.
+What it actually costs, measured the same day: nothing for git-lfs, because none of the gated clones had an LFS-tracked file; and the agent-attribution refusal in `commit-msg` (any vendor's `Co-authored-by:` or `Generated with/by` line; `test-commit-msg.sh` pins it).
 
 This predates the machine-wide hook and is not fixed by it.
 It is now *fixable*, because the scan no longer needs the repository-local `core.hooksPath` on a machine where these hooks are deployed - but unsetting it would silently ungate any machine that has not run `install.sh deploy`, so making that trade is a fleet decision, not a side effect of this change.
