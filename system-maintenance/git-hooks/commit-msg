@@ -1,10 +1,11 @@
 #!/bin/sh
 # Refuse a commit message that credits an AI agent as co-author or generator.
 # Warp's trailer used to be stripped here; it is refused with the rest now.
-# Vendor words match whole words, case-insensitively, in the name or the email.
+# Vendor words match case-insensitively, fused with adjacent letters too
+# (ClaudeAI, CopilotBot), so -w's whole-match boundary can't be relied on.
 vendors='claude|anthropic|codex|openai|chatgpt|gpt|gemini|cursor|copilot|warp|kimi|moonshot|deepseek|qwen|glm|zhipu|zhipuai|grok|xai|x\.ai|opencode|devin|aider|bard|windsurf|codeium'
 # Comment lines are dropped by git, so they are not attribution.
-bad=$(grep -v '^#' "$1" | grep -Eiw \
+bad=$(grep -v '^#' "$1" | grep -Ei \
     -e "^[[:space:]]*co-authored-by:.*($vendors)" \
     -e "^[^[:alnum:]]*generated (with|by)[^[:alnum:]]*.*($vendors)" | head -n 1)
 [ -z "$bad" ] && exit 0
