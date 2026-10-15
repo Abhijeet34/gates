@@ -45,10 +45,11 @@ Deploying is one way on purpose.
 ## Checks
 
 ```bash
-.ci/check.sh                  # shell, python and secrets
+.ci/check.sh                  # shell, python, secrets and gates-proof
 .ci/check.sh shell            # one suite
 ```
 
 `shell` includes `.ci/test-workflow-policy.sh`, which fails on `pull_request_target`, `workflow_run`, `issue_comment` or `self-hosted` anywhere in a workflow file, and on any secret other than `GITHUB_TOKEN`, because anyone can call these workflows once the repository is public.
+`gates-proof` fails on a workflow, hook or `.ci` script missing from `.ci/gate-registry.toml`, and on a registered red or clean case that is no longer in its test.
 `secrets` needs `gitleaks`, `exiftool`, `qpdf`, `ffmpeg` and ImageMagick, and refuses rather than skipping when one is missing.
 A gate that skipped what it could not run would report a pass over something it never measured.
