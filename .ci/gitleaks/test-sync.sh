@@ -19,6 +19,7 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P) || exit 2
 SYNC="$ROOT/.ci/gitleaks/sync.sh"
 CONFIG="$ROOT/.gitleaks.toml"
 HOOK="$ROOT/.githooks/pre-push"
+COMMIT_MSG="$ROOT/system-maintenance/git-hooks/commit-msg"
 [ -x "$SYNC" ] || { echo "test-sync: cannot execute $SYNC" >&2; exit 2; }
 
 TMP=$(mktemp -d) || exit 2
@@ -85,6 +86,36 @@ for target in "$TMP/checkout" "$TMP/worktree"; do
     check "--check reports a hook that is not executable in a $kind" 1 $?
     chmod +x "$target/.githooks/pre-push"
 
+    # commit-msg rides the same path as pre-push, because core.hooksPath=.githooks
+    # replaces the global hooks directory and so silences ~/.git-hooks/commit-msg.
+    # The behaviour is asserted, not just the bytes: an agent co-author line is
+    # refused and a human one is not.
+    printf 'x\n' >"$target/change.txt"
+    git -C "$target" add change.txt
+    git -C "$target" -c user.name=test -c user.email=test@example.invalid commit --quiet \
+        -m 'refuse me' -m 'Co-authored-by: Codex <codex@openai.com>' >/dev/null 2>&1
+    check "an agent co-author commit is refused in a $kind" 1 $?
+    git -C "$target" -c user.name=test -c user.email=test@example.invalid commit --quiet \
+        -m 'accept me' -m 'Co-authored-by: Jane Doe <jane@example.invalid>' >/dev/null 2>&1
+    check "a human co-author commit succeeds in a $kind" 0 $?
+
+    printf '\n# drift\n' >>"$target/.githooks/commit-msg"
+    "$SYNC" --check "$target" >/dev/null 2>&1
+    check "--check reports an edited commit-msg in a $kind" 1 $?
+    "$SYNC" "$target" >/dev/null 2>&1
+    "$SYNC" --check "$target" >/dev/null 2>&1
+    check "re-syncing a $kind restores the canonical commit-msg" 0 $?
+
+    rm "$target/.githooks/commit-msg"
+    "$SYNC" --check "$target" >/dev/null 2>&1
+    check "--check reports a missing commit-msg in a $kind" 1 $?
+    "$SYNC" "$target" >/dev/null 2>&1
+
+    chmod -x "$target/.githooks/commit-msg"
+    "$SYNC" --check "$target" >/dev/null 2>&1
+    check "--check reports a commit-msg that is not executable in a $kind" 1 $?
+    chmod +x "$target/.githooks/commit-msg"
+
     git -C "$target" config --unset core.hooksPath
     "$SYNC" --check "$target" >/dev/null 2>&1
     check "--check reports core.hooksPath unset in a $kind" 1 $?
@@ -117,6 +148,11 @@ check "--digest hook exits clean with no target" 0 $?
 check "--digest hook prints the canonical hook's sha256" 0 "$rc"
 [ "$hook_digest" != "$digest" ] && rc=0 || rc=1
 check "the two digests are of different files" 0 "$rc"
+
+cm_digest=$("$SYNC" --digest commit-msg)
+check "--digest commit-msg exits clean with no target" 0 $?
+[ "$cm_digest" = "$(shasum -a 256 "$COMMIT_MSG" | cut -d' ' -f1)" ] && rc=0 || rc=1
+check "--digest commit-msg prints the canonical commit-msg's sha256" 0 "$rc"
 
 "$SYNC" --digest nonsense >/dev/null 2>&1
 check "--digest refuses a name that is neither file" 2 $?

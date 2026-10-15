@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Push the canonical secret-scan config and pre-push hook out to a sibling
+# Push the canonical secret-scan config, pre-push hook and commit-msg hook out to a sibling
 # repository, or report drift.
 #
 #   .ci/gitleaks/sync.sh <repo> [<repo> ...]           install or update
 #   .ci/gitleaks/sync.sh --check <repo> [<repo> ...]   report drift, exit 1 if any
-#   .ci/gitleaks/sync.sh --digest [config|hook]        print a canonical digest
+#   .ci/gitleaks/sync.sh --digest [config|hook|commit-msg]  print a canonical digest
 #
 # `--digest` is what `.github/workflows/shared-secret-scan.yml` pins, once per
 # synced file: a caller's CI compares against those pins rather than cloning
@@ -23,17 +23,22 @@ set -uo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P) || exit 2
 CONFIG="$ROOT/.gitleaks.toml"
 HOOK="$ROOT/.githooks/pre-push"
+# core.hooksPath=.githooks replaces the global hooks directory, so without its
+# own copy here the attribution refusal in commit-msg never runs in a caller.
+COMMIT_MSG="$ROOT/system-maintenance/git-hooks/commit-msg"
 
 digest() { shasum -a 256 "$1" | cut -d' ' -f1; }
 
 [ -r "$CONFIG" ] || { echo "sync: cannot read $CONFIG" >&2; exit 2; }
 [ -x "$HOOK" ] || { echo "sync: $HOOK is missing or not executable" >&2; exit 2; }
+[ -x "$COMMIT_MSG" ] || { echo "sync: $COMMIT_MSG is missing or not executable" >&2; exit 2; }
 
 if [ "${1:-}" = "--digest" ]; then
     case "${2:-config}" in
         config) digest "$CONFIG" ;;
         hook)   digest "$HOOK" ;;
-        *) echo "sync: --digest takes 'config' or 'hook', not '$2'" >&2; exit 2 ;;
+        commit-msg) digest "$COMMIT_MSG" ;;
+        *) echo "sync: --digest takes 'config', 'hook' or 'commit-msg', not '$2'" >&2; exit 2 ;;
     esac
     exit 0
 fi
@@ -48,7 +53,7 @@ for target in "$@"; do
     # linked worktree, so the `-d` test this replaces refused every worktree -
     # and every fleet task runs in one, which left the documented one-command
     # re-sync unrunnable exactly where it is needed. An empty `--show-prefix`
-    # accepts a worktree and still refuses a subdirectory, where the two synced
+    # accepts a worktree and still refuses a subdirectory, where the synced
     # files would sit unread; the plain `-e "$target/.git"` used elsewhere in
     # this repo would take both. It is empty in a BARE repository too - measured
     # on git 2.55, it prints nothing and exits 0 there - so the second question
@@ -64,7 +69,7 @@ for target in "$@"; do
     # that would only ever report a false drift.
     [ "$(cd "$target" && pwd -P)" = "$ROOT" ] && continue
 
-    for pair in "$CONFIG:.gitleaks.toml" "$HOOK:.githooks/pre-push"; do
+    for pair in "$CONFIG:.gitleaks.toml" "$HOOK:.githooks/pre-push" "$COMMIT_MSG:.githooks/commit-msg"; do
         src="${pair%%:*}" rel="${pair#*:}"
         dst="$target/$rel"
         if [ "$CHECK" = 1 ]; then
@@ -74,7 +79,7 @@ for target in "$@"; do
             elif [ "$(digest "$src")" != "$(digest "$dst")" ]; then
                 echo "DRIFT $target/$rel: differs from canonical"
                 rc=1
-            elif [ "$rel" = ".githooks/pre-push" ] && [ ! -x "$dst" ]; then
+            elif [ "$rel" != ".gitleaks.toml" ] && [ ! -x "$dst" ]; then
                 # git skips a hook that is not executable, silently. Identical
                 # content with the wrong mode is a gate that does not run.
                 echo "DRIFT $target/$rel: not executable, so git will not run it"
@@ -83,7 +88,7 @@ for target in "$@"; do
         else
             mkdir -p "$(dirname "$dst")"
             cp "$src" "$dst"
-            [ "$rel" = ".githooks/pre-push" ] && chmod +x "$dst"
+            [ "$rel" != ".gitleaks.toml" ] && chmod +x "$dst"
             echo "synced $target/$rel"
         fi
     done
