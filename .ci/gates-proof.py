@@ -9,8 +9,10 @@ that the red and clean cases are still in the test, and that check.sh runs the
 test; then that no gate file on disk is missing from the registry.
 """
 
+import io
 import re
 import sys
+import tokenize
 import tomllib
 from pathlib import Path
 
@@ -48,11 +50,34 @@ def discovered():
     return found
 
 
+def code_only(path, text):
+    """The file's text with comments removed, so a commented-out case proves nothing."""
+    if path.endswith(".py"):
+        try:
+            toks = list(tokenize.generate_tokens(io.StringIO(text).readline))
+        except (tokenize.TokenError, SyntaxError):
+            return text
+        lines = text.splitlines(keepends=True)
+        for t in reversed(toks):
+            if t.type == tokenize.COMMENT:
+                row, col = t.start
+                lines[row - 1] = lines[row - 1][:col] + "\n"
+        return "".join(lines)
+    return "\n".join(
+        line for line in text.splitlines() if not line.lstrip().startswith("#")
+    )
+
+
 def suite_body(check_sh, suite):
     m = re.search(
         rf"^check_{re.escape(suite)}\(\) \{{\n(.*?)^\}}", check_sh, re.S | re.M
     )
     return m.group(1) if m else None
+
+
+def runs(body, test):
+    pat = rf"^\s*(?:(?:bash|sh|python3?)\s+)?(?:\./)?{re.escape(test)}(?:\s|$)"
+    return re.search(pat, body, re.M) is not None
 
 
 data = tomllib.loads(registry.read_text())
@@ -83,14 +108,14 @@ for g in data.get("gate", []):
     if not test.is_file():
         fail(f"{gid}: test {g['test']} does not exist")
     else:
-        text = test.read_text()
+        text = code_only(g["test"], test.read_text())
         for kind in ("red", "clean"):
             if g[kind] not in text:
                 fail(f"{gid}: {kind} case {g[kind]!r} is no longer in {g['test']}")
-    body = suite_body(check_sh, g["suite"])
+    body = suite_body(code_only(".ci/check.sh", check_sh), g["suite"])
     if body is None:
         fail(f"{gid}: check.sh has no suite function for {g['suite']!r}")
-    elif g["test"] not in body:
+    elif not runs(body, g["test"]):
         fail(f"{gid}: suite {g['suite']} in check.sh never runs {g['test']}")
 
 for e in data.get("exempt", []):

@@ -46,7 +46,9 @@ refuses "a deleted clean case" "sed -i.orig 's/allows GITHUB_TOKEN/zzz/' .ci/tes
 refuses "a deleted test file" 'rm .ci/test-no-mistakes-required.sh'
 refuses "a test that check.sh no longer runs" "sed -i.orig '/test-no-mistakes-required.sh/d' .ci/check.sh && rm .ci/check.sh.orig"
 refuses "a registered gate file that is gone" 'rm .github/workflows/shared-guard-generated-files.yml'
-refuses "a red case equal to the clean case" "sed -i.orig 's/^red = \"all skipped\"/red = \"pull request, every job ran\"/' .ci/gate-registry.toml && rm .ci/gate-registry.toml.orig"
+refuses "a red case equal to the clean case" "sed -i.orig 's/^red = \"expect .all skipped. 1\"/red = \"pull request, every job ran\"/' .ci/gate-registry.toml && rm .ci/gate-registry.toml.orig"
+refuses "a red case left only in a comment" "sed -i.orig \"s/^expect 'all skipped' 1/# expect 'all skipped' 1/\" .ci/test-checks-verdict.sh && rm .ci/test-checks-verdict.sh.orig"
+refuses "a suite invocation left only in a comment" "sed -i.orig 's|^\( *\)bash .ci/test-no-mistakes-required.sh|\1# bash .ci/test-no-mistakes-required.sh|' .ci/check.sh && rm .ci/check.sh.orig"
 refuses "an empty registry" ': > .ci/gate-registry.toml'
 
 ((failed)) && { printf '\ngates-proof regression tests FAILED\n' >&2; exit 1; }

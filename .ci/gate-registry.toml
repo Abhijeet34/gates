@@ -6,7 +6,9 @@
 # `suite` names the check.sh suite that runs `test`; gates-proof fails if that
 # suite does not invoke it. A gate file found on disk and named neither in a
 # `gates` list nor in `[[exempt]]` fails too. Anchors are matched as text, so a
-# comment can satisfy one: the test run is what proves the case executes.
+# comment cannot: comments are stripped from the test and from check.sh before
+# matching, and the suite must invoke the test at a command position. Whether a
+# case executes is still proved only by running the test.
 
 [[gate]]
 id = "checks-verdict"
@@ -14,7 +16,7 @@ surface = "PR checks"
 gates = [".ci/checks-verdict.sh", ".github/workflows/ci.yml"]
 test = ".ci/test-checks-verdict.sh"
 suite = "shell"
-red = "all skipped"
+red = "expect 'all skipped' 1"
 clean = "pull request, every job ran"
 
 [[gate]]
@@ -77,8 +79,8 @@ surface = "Security"
 gates = [".gitleaks.toml"]
 test = ".ci/gitleaks/test-rules.sh"
 suite = "secrets"
-red = "rules fired"
-clean = "The fixture must not trip the scanner"
+red = "expected rule '$rule', got"
+clean = "fixture is not allowlisted"
 
 [[gate]]
 id = "gitleaks-sync"
@@ -123,7 +125,7 @@ gates = ["system-maintenance/git-hooks/watermark-scan.py"]
 test = "system-maintenance/git-hooks/test-watermark-scan.py"
 suite = "secrets"
 red = "fires on its fixture"
-clean = "plain_repo"
+clean = "a repository with plain names and messages still passes"
 
 [[gate]]
 id = "global-pre-push"
