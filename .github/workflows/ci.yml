@@ -86,12 +86,20 @@ jobs:
 
       - run: .ci/check.sh secrets
 
+  gates-proof:
+    name: gates proof
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: .ci/check.sh gates-proof
+
   # The one status the branch ruleset requires. It always runs, and it passes
   # only when every job above succeeded. Every job in this workflow must be
   # listed in `needs`; .ci/test-checks-verdict.sh fails when one is not.
   checks:
     name: checks
-    needs: [shell, python, secrets]
+    needs: [shell, python, secrets, gates-proof]
     if: ${{ always() && github.event_name != 'schedule' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5

@@ -1,0 +1,160 @@
+# Every gate this repository ships, the surface it guards, and the two cases
+# that prove it: `red` is a seeded defect the gate must refuse, `clean` is an
+# input it must let through. Both are fixed strings that must appear in `test`,
+# so deleting either case from the test turns `.ci/check.sh gates-proof` red.
+#
+# `suite` names the check.sh suite that runs `test`; gates-proof fails if that
+# suite does not invoke it. A gate file found on disk and named neither in a
+# `gates` list nor in `[[exempt]]` fails too. Anchors are matched as text, so a
+# comment can satisfy one: the test run is what proves the case executes.
+
+[[gate]]
+id = "checks-verdict"
+surface = "PR checks"
+gates = [".ci/checks-verdict.sh", ".github/workflows/ci.yml"]
+test = ".ci/test-checks-verdict.sh"
+suite = "shell"
+red = "all skipped"
+clean = "pull request, every job ran"
+
+[[gate]]
+id = "workflow-policy"
+surface = "Infra and CI config"
+gates = [".ci/test-workflow-policy.sh"]
+test = ".ci/test-workflow-policy.sh"
+suite = "shell"
+red = "pull_request_target trigger"
+clean = "allows GITHUB_TOKEN"
+
+[[gate]]
+id = "dependency-advisories"
+surface = "Dependencies"
+gates = [".github/workflows/shared-dependency-advisories.yml"]
+test = ".ci/test-dependency-advisories.sh"
+suite = "shell"
+red = "an open high advisory fails"
+clean = "no advisory at or above the floor passes"
+
+[[gate]]
+id = "guard-generated-files"
+surface = "PR checks"
+gates = [".github/workflows/shared-guard-generated-files.yml"]
+test = ".ci/test-guard-generated-files.sh"
+suite = "shell"
+red = "first add of an unlisted path fails"
+clean = "first add of an allowed path passes"
+
+[[gate]]
+id = "no-mistakes-required"
+surface = "PR checks"
+gates = [".github/workflows/shared-no-mistakes-required.yml"]
+test = ".ci/test-no-mistakes-required.sh"
+suite = "shell"
+red = "a body that never carries the marker fails"
+clean = "a marker written by an upstream build passes"
+
+[[gate]]
+id = "secret-scan-workflow"
+surface = "Security"
+gates = [".github/workflows/shared-secret-scan.yml"]
+test = ".ci/test-secret-scan.sh"
+suite = "secrets"
+red = "a drifted pre-push hook fails, naming the file"
+clean = "a caller carrying both canonical copies passes"
+
+[[gate]]
+id = "watermark-scan-workflow"
+surface = "Security"
+gates = [".github/workflows/shared-watermark-scan.yml", ".github/workflows/watermark-scan.yml"]
+test = ".ci/test-watermark-scan-workflow.sh"
+suite = "shell"
+red = "a tree carrying detective provenance fails"
+clean = "a clean tree passes and says how many files it read"
+
+[[gate]]
+id = "gitleaks-rules"
+surface = "Security"
+gates = [".gitleaks.toml"]
+test = ".ci/gitleaks/test-rules.sh"
+suite = "secrets"
+red = "rules fired"
+clean = "The fixture must not trip the scanner"
+
+[[gate]]
+id = "gitleaks-sync"
+surface = "Security"
+gates = [".ci/gitleaks/sync.sh"]
+test = ".ci/gitleaks/test-sync.sh"
+suite = "shell"
+red = "reports an edited hook"
+clean = "is clean right after installing"
+
+[[gate]]
+id = "repo-pre-push"
+surface = "Pre-push"
+gates = [".githooks/pre-push"]
+test = ".ci/gitleaks/test-pre-push.sh"
+suite = "secrets"
+red = "a secret pushed alongside a binary-only commit is still refused"
+clean = "a clean push lands"
+
+[[gate]]
+id = "commit-msg"
+surface = "Pre-commit"
+gates = ["system-maintenance/git-hooks/commit-msg"]
+test = "system-maintenance/git-hooks/test-commit-msg.sh"
+suite = "shell"
+red = "Co-authored-by: Claude <noreply@anthropic.com>"
+clean = "human co-author"
+
+[[gate]]
+id = "exposure-scan"
+surface = "Pre-push"
+gates = ["system-maintenance/git-hooks/exposure-scan.py"]
+test = "system-maintenance/git-hooks/test-exposure-scan.sh"
+suite = "shell"
+red = "a non-noreply AUTHOR and committer are refused"
+clean = "clean push to a public destination lands"
+
+[[gate]]
+id = "watermark-scan"
+surface = "Pre-push"
+gates = ["system-maintenance/git-hooks/watermark-scan.py"]
+test = "system-maintenance/git-hooks/test-watermark-scan.py"
+suite = "secrets"
+red = "fires on its fixture"
+clean = "plain_repo"
+
+[[gate]]
+id = "global-pre-push"
+surface = "Pre-push"
+gates = [
+  "system-maintenance/git-hooks/pre-push",
+  "system-maintenance/git-hooks/check-orphan-dirs",
+  "system-maintenance/git-hooks/install.sh",
+]
+test = "system-maintenance/git-hooks/test-global-hooks.sh"
+suite = "secrets"
+red = "fresh clone: a push carrying a secret is refused, with no per-repo setup"
+clean = "fresh clone: a clean push lands"
+
+[[gate]]
+id = "gates-proof"
+surface = "Gate of the gates"
+gates = [".ci/gates-proof.py"]
+test = ".ci/test-gates-proof.sh"
+suite = "gates-proof"
+red = "an unregistered gate"
+clean = "the live registry"
+
+[[exempt]]
+path = "system-maintenance/git-hooks/post-checkout"
+reason = "git-lfs shim; gates nothing"
+
+[[exempt]]
+path = "system-maintenance/git-hooks/post-commit"
+reason = "git-lfs shim; gates nothing"
+
+[[exempt]]
+path = "system-maintenance/git-hooks/post-merge"
+reason = "git-lfs shim; gates nothing"
