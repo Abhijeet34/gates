@@ -104,6 +104,7 @@ pin() { # env-key canonical-path sync-argument
 }
 pin CONFIG_SHA256 .gitleaks.toml     config
 pin HOOK_SHA256   .githooks/pre-push hook
+pin COMMIT_MSG_SHA256 system-maintenance/git-hooks/commit-msg commit-msg
 
 # --- the gate-verify step body, actually executed ----------------------------
 #
@@ -124,18 +125,21 @@ grep -q 'has DRIFTED' "$gate_step" || {
 
 CONFIG_PIN=$(./.ci/gitleaks/sync.sh --digest config)
 HOOK_PIN=$(./.ci/gitleaks/sync.sh --digest hook)
+COMMIT_MSG_PIN=$(./.ci/gitleaks/sync.sh --digest commit-msg)
 
 caller="$workdir/caller"
 mkdir -p "$caller/.githooks"
 cp "$CONFIG" "$caller/.gitleaks.toml"
 cp .githooks/pre-push "$caller/.githooks/pre-push"
 chmod +x "$caller/.githooks/pre-push"
+cp system-maintenance/git-hooks/commit-msg "$caller/.githooks/commit-msg"
+chmod +x "$caller/.githooks/commit-msg"
 
 gate() { # name expected-rc substring-the-output-must-contain (or -)
     local name="$1" want="$2" must="$3" got ok=1
     (
         cd "$caller" || exit 2
-        CONFIG_SHA256="$CONFIG_PIN" HOOK_SHA256="$HOOK_PIN" bash -e "$gate_step"
+        CONFIG_SHA256="$CONFIG_PIN" HOOK_SHA256="$HOOK_PIN" COMMIT_MSG_SHA256="$COMMIT_MSG_PIN" bash -e "$gate_step"
     ) >"$workdir/out" 2>&1
     got=$?
     if [ "$got" -ne "$want" ]; then
@@ -175,6 +179,17 @@ chmod +x "$caller/.githooks/pre-push"
 mv "$caller/.githooks/pre-push" "$caller/.githooks/pre-push.away"
 gate 'a caller with no pre-push hook at all fails' 1 '.githooks/pre-push is missing'
 mv "$caller/.githooks/pre-push.away" "$caller/.githooks/pre-push"
+
+printf '\n# drift\n' >>"$caller/.githooks/commit-msg"
+gate 'a drifted commit-msg hook fails, naming the file' 1 '.githooks/commit-msg has DRIFTED'
+cp system-maintenance/git-hooks/commit-msg "$caller/.githooks/commit-msg"
+chmod -x "$caller/.githooks/commit-msg"
+gate 'a commit-msg hook that is not executable fails' 1 '.githooks/commit-msg is not executable'
+chmod +x "$caller/.githooks/commit-msg"
+mv "$caller/.githooks/commit-msg" "$caller/.githooks/commit-msg.away"
+gate 'a caller with no commit-msg hook at all fails' 1 '.githooks/commit-msg is missing'
+mv "$caller/.githooks/commit-msg.away" "$caller/.githooks/commit-msg"
+gate 'restoring the canonical commit-msg passes again' 0 -
 
 # The half that already existed must survive the rewrite that added the other.
 printf '\n# drift\n' >>"$caller/.gitleaks.toml"

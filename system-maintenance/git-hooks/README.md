@@ -56,16 +56,15 @@ Keyed on the owner rather than a list of names because a new repository of his s
 `~/.git-hooks/pre-push-allow` extends the list, one glob per line, `#` comments allowed.
 It can only ever cause more repositories to be scanned, never fewer.
 
-### Known, and not fixed here: `core.hooksPath` swallows the other five hooks
+### `core.hooksPath` swallows the other hooks, so `commit-msg` is synced
 
-`core.hooksPath` replaces the hooks directory outright, so a repository pointed at its own `.githooks` - which holds `pre-push` and nothing else - runs **no** `commit-msg`, `post-checkout`, `post-commit` or `post-merge` at all.
+`core.hooksPath` replaces the hooks directory outright, so a repository pointed at its own `.githooks` runs **no** global `commit-msg`, `post-checkout`, `post-commit` or `post-merge`.
 Measured 2026-08-17 with a global `commit-msg` that prints a marker: it fires before the repository sets `core.hooksPath=.githooks` and does not fire after.
-`.ci/gitleaks/sync.sh` sets that config in every repository it installs into, so this is live in every working tree that carries it.
+The cost was the agent-attribution refusal in `commit-msg` (any vendor's `Co-authored-by:` or `Generated with/by` line; `test-commit-msg.sh` pins it) and nothing for git-lfs, because none of the gated clones had an LFS-tracked file.
 
-What it actually costs, measured the same day: nothing for git-lfs, because none of the gated clones had an LFS-tracked file; and the agent-attribution refusal in `commit-msg` (any vendor's `Co-authored-by:` or `Generated with/by` line; `test-commit-msg.sh` pins it).
-
-This predates the machine-wide hook and is not fixed by it.
-It is now *fixable*, because the scan no longer needs the repository-local `core.hooksPath` on a machine where these hooks are deployed - but unsetting it would silently ungate any machine that has not run `install.sh deploy`, so making that trade is a fleet decision, not a side effect of this change.
+`.ci/gitleaks/sync.sh` now installs this directory's `commit-msg` as `.githooks/commit-msg` beside `pre-push`, with the same digest pin in `shared-secret-scan.yml` and the same `--check` drift report (missing, edited, not executable).
+A clone synced before that change shows `DRIFT ... .githooks/commit-msg: missing` until `sync.sh <clone>` is re-run.
+`post-checkout`, `post-commit` and `post-merge` are still swallowed; no gated clone uses them.
 
 ## The no-watermarking gate
 

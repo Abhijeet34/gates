@@ -11,8 +11,8 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 - **Every shared-workflow step body runs on the runner as `bash -e {0}`, so its contract test runs the extracted body with `bash -e`.**
   Under `-e` a failing command substitution aborts on the assignment, so an `rc=$?` on the following line never runs, and a `grep` that matches nothing takes the step down under `pipefail`.
   Each `.ci/test-*.sh` extracts its `run:` block by indentation and asserts a marker at both ends, because a continuation line at a shallower indent truncates the body silently.
-- **`.gitleaks.toml` and `.githooks/pre-push` are pinned by digest in `shared-secret-scan.yml`, and `.ci/test-secret-scan.sh` fails when a pin goes stale.**
-  Changing either file means changing its pin in the same commit and re-running `.ci/gitleaks/sync.sh` over every clone, or every caller goes red on its next pull request.
+- **`.gitleaks.toml`, `.githooks/pre-push` and `system-maintenance/git-hooks/commit-msg` (synced as `.githooks/commit-msg`) are pinned by digest in `shared-secret-scan.yml`, and `.ci/test-secret-scan.sh` fails when a pin goes stale.**
+  Changing any of them means changing its pin in the same commit and re-running `.ci/gitleaks/sync.sh` over every clone, or every caller goes red on its next pull request.
   A caller extends the hook through a tracked, executable `.githooks/pre-push.local`, never by editing its copy; `system-maintenance/git-hooks/README.md` owns the contract.
 - **`shared-watermark-scan.yml` reads its scanner from a checkout of `job.workflow_repository` at `job.workflow_sha`, never from the caller's tree.**
   From a private repository that checkout answers `Not Found` with the caller's token (measured 2026-09-16), so the workflow needs this repository to be public for any other repository to use it.
