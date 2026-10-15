@@ -64,6 +64,10 @@ expect pass 'human co-author' "$body
 Co-authored-by: Jane Doe <jane@example.com>"
 expect pass 'human co-author, mixed case trailer' "$body
 Co-Authored-By: Sam Lee <sam@example.org>"
+expect pass 'human co-author, name contains aider/xai substrings' "$body
+Co-authored-by: Dave Raider <dave@praxair.com>"
+expect pass 'human co-author, name contains grok substring' "$body
+Co-authored-by: Jane Grokowski <jane@example.com>"
 expect pass 'plain message' "$body"
 expect pass 'comment line naming an agent' "$body
 # Co-authored-by: Claude <noreply@anthropic.com>"
