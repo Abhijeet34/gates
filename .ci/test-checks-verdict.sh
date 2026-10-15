@@ -38,7 +38,7 @@ needs() {
     printf '%s}' "${out%,}"
 }
 
-ALL_SUITES=(shell=success python=success secrets=success)
+ALL_SUITES=(shell=success python=success secrets=success gates-proof=success)
 
 # Every job runs on every pull request now that the conditional macOS job is
 # gone, so this is the only shape a green run takes.
@@ -46,7 +46,7 @@ expect 'pull request, every job ran' 0 "$(needs "${ALL_SUITES[@]}")"
 
 # The false green this file exists to pin.
 expect 'all skipped' 1 \
-    "$(needs shell=skipped python=skipped secrets=skipped)"
+    "$(needs shell=skipped python=skipped secrets=skipped gates-proof=skipped)"
 
 # No suite has a legitimate skip any more, so one skipping means the gate
 # silently stopped covering it.

@@ -2,7 +2,7 @@
 # Repo-wide checks. CI runs these exact commands, so there is exactly one
 # definition of "clean".
 #
-#   .ci/check.sh [suite ...]    suites: shell python secrets all
+#   .ci/check.sh [suite ...]    suites: shell python secrets gates-proof all
 #
 # Every requested suite runs even when an earlier one fails, so one pass
 # reports every problem; the exit code is nonzero if any failed.
@@ -129,18 +129,30 @@ check_secrets() {
     return $rc
 }
 
+# --- gates-proof ---------------------------------------------------------------
+
+# Every gate carries a seeded defect that must turn it red; the registry names
+# it and this proves the name still resolves. Static, so it costs under a second.
+check_gates-proof() {
+    local rc=0
+    python3 .ci/gates-proof.py || rc=1
+    bash .ci/test-gates-proof.sh || rc=1
+    return $rc
+}
+
 # --- entry point -------------------------------------------------------------
 
 run_suite() {
     case "$1" in
-        shell | python | secrets) run "$1" "check_$1" ;;
+        shell | python | secrets | gates-proof) run "$1" "check_$1" ;;
         all)
             run shell check_shell
             run python check_python
             run secrets check_secrets
+            run gates-proof check_gates-proof
             ;;
         *)
-            printf 'unknown suite: %s (shell|python|secrets|all)\n' "$1" >&2
+            printf 'unknown suite: %s (shell|python|secrets|gates-proof|all)\n' "$1" >&2
             exit 2
             ;;
     esac

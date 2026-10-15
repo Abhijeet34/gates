@@ -29,7 +29,7 @@ fail() {
 # The `case` arm in run_suite() is the declaration of what suites exist. Read it
 # rather than a hand-kept list, so a new suite is covered the moment it is added.
 declared_suites() {
-    sed -n 's/^ *\(\([a-z]* | \)*[a-z]*\)) run "\$1" "check_\$1" ;;$/\1/p' "$1" | tr -d ' ' | tr '|' '\n'
+    sed -n 's/^ *\(\([a-z-]* | \)*[a-z-]*\)) run "\$1" "check_\$1" ;;$/\1/p' "$1" | tr -d ' ' | tr '|' '\n'
 }
 
 # The gate's lint value, as words: `.ci/check.sh shell python secrets` -> the
