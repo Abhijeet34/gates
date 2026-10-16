@@ -475,6 +475,7 @@ refused(
 
 for label, switch, finding in [
     ("a commit GitHub did not sign", "unsigned", "is not verified"),
+    ("a pull request GitHub would not open", "pulls-fail", "Validation Failed"),
     (
         "a commit whose tree differs from the one checked",
         "drop-modes",

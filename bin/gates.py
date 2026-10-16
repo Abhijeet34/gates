@@ -318,14 +318,14 @@ class Caller:
                 raise Refused(
                     f"{self.name}: {oid} is not the commit that was checked (its tree differs)"
                 )
+            pr = self.api(
+                f"repos/{self.full}/pulls",
+                "POST",
+                {"title": headline, "head": branch, "base": self.branch, "body": body},
+            )
         except Refused:
             self.delete(branch)
             raise
-        pr = self.api(
-            f"repos/{self.full}/pulls",
-            "POST",
-            {"title": headline, "head": branch, "base": self.branch, "body": body},
-        )
         notes = [line for line in verdict.splitlines() if line.startswith("rollback:")]
         return " ".join(["opened", pr["html_url"], *notes])
 

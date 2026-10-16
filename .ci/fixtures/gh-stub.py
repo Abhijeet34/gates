@@ -221,6 +221,8 @@ def main(argv):
             ]
         )
     if sub == "pulls" and method == "POST":
+        if (state / "pulls-fail").exists():
+            error("Validation Failed (HTTP 422)")
         n = len(prs) + 1
         pr = {
             "repo": f"{owner}/{name}",

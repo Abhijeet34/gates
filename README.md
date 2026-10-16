@@ -81,7 +81,7 @@ bin/gates.py rollback quoth    # move one caller's lock back one step
 A stage opens once every repository of the stage before it has the release merged on its default branch, with every check run on that merge commit passing, and that stage's `hold_days` have passed since the last of those merges: canaries on day 0, the fleet from day 2, products from day 7.
 It is safe to re-run: a caller already at or past the release is reported, an open bump pull request is left alone, and a stage still holding prints when it opens.
 
-For each caller it opens, it mints the builder App's token for that one repository (`app-token builder --repo <r>`), clones the default branch, and builds the bump commit locally in two steps.
+For each caller it opens, it mints the builder App's token for that one repository (`app-token builder --repo <r>`), scoped to contents and pull requests write, checks read, never workflows, clones the default branch, and builds the bump commit locally in two steps.
 First the lock alone, judged by `run/lock.sh` from the caller's own bootstrap pin exactly as the pull request's CI will judge it, so nothing from the release runs until it is proved on gates `main` with a green `checks` run and the token's identity is the bump identity.
 Then the release's `.ci/gitleaks/sync.sh`, run without any token, and `run/lock.sh` and `run/secret-scan/verify.sh` again, which refuse a release that writes more than the lock and the copies.
 Only then does it write to GitHub: a branch `gates-lock/<commit>` at the base, one `createCommitOnBranch` commit carrying exactly those files, and the pull request.
