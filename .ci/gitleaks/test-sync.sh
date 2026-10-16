@@ -133,10 +133,10 @@ git init --quiet --bare "$TMP/bare.git"
 "$SYNC" --check "$TMP/bare.git" >/dev/null 2>&1
 check "a bare repository is refused" 1 $?
 
-# The digests are what shared-secret-scan.yml pins, one per synced file, so each
-# must answer without a target and answer its own canonical file. A `--digest`
-# that printed the wrong file's hash would pin the workflow to a value no caller
-# can ever match, so the pairing is asserted rather than the format.
+# The digests are one per synced file, so each must answer without a target
+# and answer its own canonical file. A `--digest` that printed the wrong file's
+# hash would send a comparison by hand to the wrong file, so the pairing is
+# asserted rather than the format.
 digest=$("$SYNC" --digest)
 check "--digest exits clean with no target" 0 $?
 [ "$digest" = "$(shasum -a 256 "$CONFIG" | cut -d' ' -f1)" ] && rc=0 || rc=1

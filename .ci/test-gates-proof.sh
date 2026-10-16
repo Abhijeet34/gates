@@ -69,8 +69,8 @@ refuses "an empty registry" --static ': > .ci/gate-registry.toml'
 refuses "a red input equal to the clean input" --static "row same \"$AGENT\" \"$AGENT\" 'sh \"\$GATE\" msg' '$FINDING'"
 refuses "a command that is not one of its gates" --static "sed -i.orig 's|^command = \"system-maintenance/git-hooks/commit-msg\"\$|command = \".githooks/pre-push\"|' .ci/gate-registry.toml && rm .ci/gate-registry.toml.orig" \
     "command .githooks/pre-push is not one of its gates"
-refuses "a workflow step that no longer exists" --static "sed -i.orig 's/- name: Verify no-mistakes signature in PR body/- name: Renamed/' .github/workflows/shared-no-mistakes-required.yml && rm .github/workflows/shared-no-mistakes-required.yml.orig" \
-    "no single step named 'Verify no-mistakes signature in PR body'"
+refuses "an unregistered script a bootstrap could run" --static 'printf "#!/bin/sh\n" > run/secret-scan/extra.sh' \
+    "run/secret-scan/extra.sh: an unregistered gate"
 
 refuses "a run that decides the verdict without its gate" '--gate fake' \
     "row fake \"$AGENT\" \"$HUMAN\" 'grep -q Claude msg && echo \"$FINDING\" && exit 1; exit 0' '$FINDING'" \

@@ -10,7 +10,12 @@ name: no-mistakes required (shared)
 #     concurrency group and the bot-author exemption, because all four are
 #     per-repository policy and each repository's test suite asserts them in
 #     its own workflow file;
-#   - this file owns the check itself.
+#   - gates owns the check itself, run/no-mistakes-required.sh.
+#
+# This file is a BOOTSTRAP: the trigger, the token's permissions, the runner
+# and the checkouts, which must live in a workflow file. The gate itself runs
+# from the gates commit the caller's .github/gates.lock names, or from this
+# file's own commit when there is no lock; README.md, "Pinning", owns the design.
 #
 # `on: workflow_call` is the only trigger, so this workflow never runs for
 # `gates` on its own - it exists to be called.
@@ -43,6 +48,46 @@ jobs:
     # a harmless ceiling.
     timeout-minutes: 5
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Read only for .github/gates.lock; the check reads the live body.
+          fetch-depth: 1
+
+      # gates itself, at this workflow's own commit, beside the caller's
+      # checkout. Nothing from it runs until the step below has named its
+      # source, so an empty context that falls back to the caller's repository
+      # is refused before the caller could supply the judge.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .gates
+          # The whole of main, so run/lock.sh can decide ancestry on it.
+          fetch-depth: 0
+          persist-credentials: false
+
+      # Out of the caller's tree, which the gate reads, then checked out at the
+      # commit the caller's .github/gates.lock names once run/lock.sh has
+      # proved it may run; README.md, "Pinning", owns the controls.
+      # `job` is not an allowed context in job-level `env`, only in a step's.
+      - name: Resolve the locked gates commit
+        env:
+          GATES_REPOSITORY: ${{ job.workflow_repository }}
+          BOOTSTRAP_SHA: ${{ job.workflow_sha }}
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR_AUTHOR_ID: ${{ github.event.pull_request.user.id }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          [ -n "$GATES_REPOSITORY" ] && [ -n "$BOOTSTRAP_SHA" ] || {
+            echo "::error::job.workflow_repository or job.workflow_sha is empty, so the gates source cannot be named." >&2
+            exit 1
+          }
+          mv .gates "$RUNNER_TEMP/gates"
+          echo "GATES_DIR=$RUNNER_TEMP/gates" >>"$GITHUB_ENV"
+          GATES_DIR="$RUNNER_TEMP/gates" bash -e "$RUNNER_TEMP/gates/run/lock.sh"
+
       - name: Verify no-mistakes signature in PR body
         env:
           GH_TOKEN: ${{ github.token }}
@@ -50,72 +95,4 @@ jobs:
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PIPELINE_STEPS: ${{ inputs.pipeline_steps }}
-        run: |
-          set -eu
-          # These are not our strings to choose: each is the literal a
-          # no-mistakes build writes into a PR body, and the URL in it is the
-          # repository that build came from. Our mirror build writes the first
-          # (measured 2026-09-17); an upstream build writes the second. Both are
-          # signatures, so both match - dropping either reds every pull request
-          # raised by that build in every caller.
-          marker_mirror='Updates from [git push no-mistakes](https://github.com/Abhijeet34/no-mistakes)'
-          marker_upstream='Updates from [git push no-mistakes](https://github.com/kunchenguid/no-mistakes)'
-
-          # no-mistakes creates the pull request and only then writes the
-          # `## Pipeline` section, so the event payload's body can describe a
-          # pull request that no longer exists - measured on a caller's pull
-          # request, where the `edited` payload was stale too, not just
-          # `opened`. Read the body live, and retry so a write landing seconds
-          # after creation is still seen; a write that takes longer than this
-          # arrives with its own `edited` event, which this same live read then
-          # passes.
-          attempts=6
-          delay=10
-          read_ok=0
-
-          for attempt in $(seq 1 "$attempts"); do
-            if body=$(gh api "repos/${PR_REPO}/pulls/${PR_NUMBER}" --jq '.body // ""'); then
-              read_ok=1
-              if printf '%s' "$body" | grep -qF -e "$marker_mirror" -e "$marker_upstream"; then
-                echo "Found no-mistakes signature in PR #${PR_NUMBER} body (attempt ${attempt})."
-                exit 0
-              fi
-              echo "No signature in PR #${PR_NUMBER} body yet (attempt ${attempt}/${attempts})."
-            else
-              echo "Could not read PR #${PR_NUMBER} body (attempt ${attempt}/${attempts})." >&2
-            fi
-            if [ "$attempt" -lt "$attempts" ]; then
-              sleep "$delay"
-            fi
-          done
-
-          # Never read the body at all: report that, and do not pass. "Could
-          # not determine" is not "compliant".
-          if [ "$read_ok" -eq 0 ]; then
-            {
-              echo "::error::Could not establish whether this PR was raised through no-mistakes."
-              echo
-              echo "All ${attempts} attempts to read the body of PR #${PR_NUMBER} in ${PR_REPO} failed."
-              echo "This is not a verdict on the PR - the check could not reach the API."
-              echo "Usual causes: the caller granted no 'pull-requests: read' permission,"
-              echo "a rate limit, or a GitHub outage. Re-run this check once it is resolved."
-              echo
-              echo "This check fails closed: an unreadable body never passes."
-            } >&2
-            exit 1
-          fi
-
-          {
-            echo "::error::This PR was not raised through no-mistakes."
-            echo
-            echo "Contributions to this repository must be submitted via 'git push no-mistakes'."
-            echo "That pipeline runs the required ${PIPELINE_STEPS} steps and writes a"
-            echo "deterministic '## Pipeline' section into the PR body containing:"
-            echo
-            echo "    $marker_mirror"
-            echo
-            echo "See CONTRIBUTING.md for setup and the full workflow."
-            echo
-            echo "PR author: ${PR_AUTHOR}"
-          } >&2
-          exit 1
+        run: bash -e "$GATES_DIR/run/no-mistakes-required.sh"

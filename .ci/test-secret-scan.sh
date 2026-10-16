@@ -1,14 +1,11 @@
 #!/usr/bin/env bash
-# Regression tests for the scan bodies inside
-# .github/workflows/shared-secret-scan.yml.
+# Regression tests for the secret scan shared-secret-scan.yml runs,
+# run/secret-scan.sh and its parts under run/secret-scan/.
 #
 #   .ci/test-secret-scan.sh
 #
-# The third shared workflow, and the last one to get a contract test. Same
-# reason as the other two: a reusable workflow's steps run in the CALLER's
-# checkout, where no file of this repository exists, so the logic lives inline
-# in YAML where no linter reaches it.
-# Without this file a broken body reaches main and every caller silently loses
+# The parts run in the CALLER's checkout from the gates commit its lock names.
+# Without this file a broken part reaches main and every caller silently loses
 # secret scanning - a scan that reports clean because it never ran is worse
 # than no scan at all.
 #
@@ -21,19 +18,18 @@
 # only tested: `gitleaks git` exits 0 on a repository it could not read.
 #
 # Shape follows test-pre-push.sh (a real throwaway repository, the real
-# canonical config, real gitleaks) and test-no-mistakes-required.sh (the body
-# extracted from the YAML, with a stub gitleaks on PATH for the cases real
-# gitleaks cannot be made to produce).
+# canonical config, real gitleaks) and test-no-mistakes-required.sh (a stub
+# gitleaks on PATH for the cases real gitleaks cannot be made to produce).
 
 set -uo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 
-WORKFLOW=.github/workflows/shared-secret-scan.yml
+PARTS="$PWD/run/secret-scan"
 CONFIG=.gitleaks.toml
 FIXTURE=.ci/gitleaks/fixtures/known-secrets.tsv
 
-for f in "$WORKFLOW" "$CONFIG" "$FIXTURE"; do
+for f in "$PARTS/verify.sh" "$CONFIG" "$FIXTURE"; do
     [ -r "$f" ] || { echo "test-secret-scan: cannot read $f" >&2; exit 2; }
 done
 command -v gitleaks >/dev/null 2>&1 || { echo "test-secret-scan: gitleaks not installed" >&2; exit 2; }
@@ -43,89 +39,18 @@ trap 'rm -rf "$workdir"' EXIT
 
 failed=0
 
-# --- extract the step bodies -------------------------------------------------
+history_scan="$PARTS/history.sh"
+tree_scan="$PARTS/tree.sh"
+gate_step="$PARTS/verify.sh"
 
-# Print the `run:` payload of the step named $2, dedented. Handles both a `run: |`
-# block and a single-line `run: cmd`; ends at the first non-blank line indented
-# less than the block.
-extract() { # workflow step-name outfile
-    awk -v step="name: $2" '
-        index($0, step) { found = 1; next }
-        found && !inblock && /^[[:space:]]*run:[[:space:]]*\|[[:space:]]*$/ {
-            match($0, /^ */); indent = RLENGTH + 2; inblock = 1; next
-        }
-        found && !inblock && /^[[:space:]]*run:[[:space:]]*[^|[:space:]]/ {
-            sub(/^[[:space:]]*run:[[:space:]]*/, ""); print; exit
-        }
-        inblock {
-            if ($0 ~ /^[[:space:]]*$/) { print ""; next }
-            match($0, /^ */)
-            if (RLENGTH < indent) exit
-            print substr($0, indent + 1)
-        }
-    ' "$1" >"$3"
-}
-
-history_scan="$workdir/history.sh"
-tree_scan="$workdir/tree.sh"
-extract "$WORKFLOW" 'Scan the full history' "$history_scan"
-extract "$WORKFLOW" 'Scan the working tree' "$tree_scan"
-
-# Extraction failing is the one defect that would make every case below pass
-# vacuously, so it is asserted rather than assumed.
-grep -q 'COULD NOT ESTABLISH' "$history_scan" || {
-    printf 'FAIL could not extract the history-scan body from %s\n' "$WORKFLOW"
-    exit 1
-}
-grep -q 'gitleaks dir' "$tree_scan" || {
-    printf 'FAIL could not extract the working-tree scan body from %s\n' "$WORKFLOW"
-    exit 1
-}
-
-# --- the two digests are pins, and a pin drifts ------------------------------
+# --- the copies, compared with the gates checkout ----------------------------
 #
-# .gitleaks.toml (the rules) and .githooks/pre-push (the gate) are both synced
-# from this repository by .ci/gitleaks/sync.sh, and both are pinned in the
-# workflow. What breaks the fleet is a pin going stale - edit either canonical
-# file, forget its line, and all four callers go red for the wrong reason - so
-# each is asserted against the command that prints the value to paste.
-pin() { # env-key canonical-path sync-argument
-    local pinned actual
-    pinned=$(sed -n "s/^ *$1: *\"\([0-9a-f]*\)\".*/\1/p" "$WORKFLOW" | head -n 1)
-    actual=$(./.ci/gitleaks/sync.sh --digest "$3")
-    if [ "$pinned" != "$actual" ]; then
-        printf 'FAIL %s in %s is %s, but %s digests to %s\n' \
-            "$1" "$WORKFLOW" "${pinned:-<unset>}" "$2" "$actual"
-        printf '       fix: update that line to the value .ci/gitleaks/sync.sh --digest %s prints\n' "$3"
-        failed=1
-    else
-        printf 'ok   %s matches canonical %s\n' "$1" "$2"
-    fi
-}
-pin CONFIG_SHA256 .gitleaks.toml     config
-pin HOOK_SHA256   .githooks/pre-push hook
-pin COMMIT_MSG_SHA256 system-maintenance/git-hooks/commit-msg commit-msg
-
-# --- the gate-verify step body, actually executed ----------------------------
-#
-# The pin above only says the number is current. This runs the step that READS
-# it, against a fixture standing in for a caller's checkout, because a pin whose
-# checker never runs is the defect one layer up - and it is the defect that
-# happened: only the config was pinned, four repositories sat 27 lines behind
-# canonical on the hook, and every check stayed green until a task tripped over
-# it. The body is written with a string comparison rather than `sha256sum
-# --check --strict` precisely so it is runnable here as well as on the runner;
-# the two scan bodies below still cannot be, and that asymmetry is the reason.
-gate_step="$workdir/gate.sh"
-extract "$WORKFLOW" 'Verify this repository carries the canonical gate' "$gate_step"
-grep -q 'has DRIFTED' "$gate_step" || {
-    printf 'FAIL could not extract the gate-verify body from %s\n' "$WORKFLOW"
-    exit 1
-}
-
-CONFIG_PIN=$(./.ci/gitleaks/sync.sh --digest config)
-HOOK_PIN=$(./.ci/gitleaks/sync.sh --digest hook)
-COMMIT_MSG_PIN=$(./.ci/gitleaks/sync.sh --digest commit-msg)
+# This runs the part that compares a caller's copies with gates as checked out
+# for the run, against a fixture standing in for a caller's checkout. Only the
+# config was compared until 2026-09-01: four repositories sat 27 lines behind
+# canonical on the hook, and every check stayed green until a task tripped
+# over it.
+GATES="$PWD"
 
 caller="$workdir/caller"
 mkdir -p "$caller/.githooks"
@@ -139,7 +64,7 @@ gate() { # name expected-rc substring-the-output-must-contain (or -)
     local name="$1" want="$2" must="$3" got ok=1
     (
         cd "$caller" || exit 2
-        CONFIG_SHA256="$CONFIG_PIN" HOOK_SHA256="$HOOK_PIN" COMMIT_MSG_SHA256="$COMMIT_MSG_PIN" bash -e "$gate_step"
+        GATES_DIR="$GATES" bash -e "$gate_step"
     ) >"$workdir/out" 2>&1
     got=$?
     if [ "$got" -ne "$want" ]; then
@@ -196,6 +121,20 @@ printf '\n# drift\n' >>"$caller/.gitleaks.toml"
 gate 'a drifted .gitleaks.toml still fails' 1 '.gitleaks.toml has DRIFTED'
 cp "$CONFIG" "$caller/.gitleaks.toml"
 gate 'both copies canonical again passes' 0 -
+
+# The lock may name a commit whose copies differ from the bootstrap's, and the
+# copies are judged against the commit the run checked out, never a digest
+# pinned in the workflow. A caller still carrying this tree's rules fails
+# against gates checked out where the rules have moved on.
+moved="$workdir/gates-moved"
+mkdir -p "$moved/.githooks" "$moved/system-maintenance/git-hooks"
+cp .githooks/pre-push "$moved/.githooks/pre-push"
+cp system-maintenance/git-hooks/commit-msg "$moved/system-maintenance/git-hooks/commit-msg"
+{ cat "$CONFIG"; printf '\n# a later release\n'; } >"$moved/.gitleaks.toml"
+GATES="$moved" gate 'copies canonical at one commit fail against a checkout at another' 1 '.gitleaks.toml has DRIFTED'
+rm "$moved/.gitleaks.toml"
+GATES="$moved" gate 'a checkout carrying no canonical copy refuses' 1 'COULD NOT ESTABLISH'
+GATES='' gate 'an unset gates checkout refuses' 1 'GATES_DIR'
 
 # --- a repository to scan ----------------------------------------------------
 

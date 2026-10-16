@@ -44,14 +44,14 @@ name: shared dependency advisories
 # annotation - the same trap shared-no-mistakes-required.yml's callers hit over
 # `pull-requests: read` (.ci/shared-workflows.md).
 #
-# Propagation: callers reference @main, with no digest pin, so a change here is
-# live in every caller on its next run and a caller cannot hold an older
-# behaviour. That is the shared-guard-generated-files.yml model rather than the
-# shared-secret-scan.yml one, and deliberately: secret-scan pins because it
-# distributes files that live in the caller's tree, and nothing here does - the
-# deferral list is the caller's own policy, not a synced canonical copy. The
-# only thing standing against a bad change reaching everyone at once is
-# .ci/test-dependency-advisories.sh running inside `checks`.
+# run/dependency-advisories.sh is the gate, and .ci/test-dependency-advisories.sh
+# its contract test. Nothing here is a synced copy: the deferral list is the
+# caller's own policy.
+#
+# This file is a BOOTSTRAP: the trigger, the token's permissions, the runner
+# and the checkouts, which must live in a workflow file. The gate itself runs
+# from the gates commit the caller's .github/gates.lock names, or from this
+# file's own commit when there is no lock; README.md, "Pinning", owns the design.
 on:
   workflow_call:
     inputs:
@@ -98,384 +98,50 @@ jobs:
           # Only the deferral list is read from the tree, and it is one file.
           fetch-depth: 1
 
-      # Separated from the verdict below because this step is the only part that
-      # touches the network, and the split is what lets .ci/test-dependency-advisories.sh
-      # drive the verdict against fixture inventories with no API at all - and
-      # drive this step against a stub curl for every way the read can fail.
-      - name: Read this repository's open Dependabot alerts
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          ALERTS_JSON: ${{ runner.temp }}/dependabot-alerts.json
-        run: |
-          set -uo pipefail
+      # gates itself, at this workflow's own commit, beside the caller's
+      # checkout. Nothing from it runs until the step below has named its
+      # source, so an empty context that falls back to the caller's repository
+      # is refused before the caller could supply the judge.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .gates
+          # The whole of main, so run/lock.sh can decide ancestry on it.
+          fetch-depth: 0
+          persist-credentials: false
 
-          # A visibility gate that goes quiet when it cannot see is the exact
-          # defect this workflow exists to prevent, so every path out of this
-          # step that is not a complete read is a refusal. Same wording, same
-          # reason, as shared-secret-scan.yml's history scan.
-          fail() {
-            echo "::error::$1 COULD NOT ESTABLISH this repository's advisory state." >&2
+      # Out of the caller's tree, which the gate reads, then checked out at the
+      # commit the caller's .github/gates.lock names once run/lock.sh has
+      # proved it may run; README.md, "Pinning", owns the controls.
+      # `job` is not an allowed context in job-level `env`, only in a step's.
+      - name: Resolve the locked gates commit
+        env:
+          GATES_REPOSITORY: ${{ job.workflow_repository }}
+          BOOTSTRAP_SHA: ${{ job.workflow_sha }}
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR_AUTHOR_ID: ${{ github.event.pull_request.user.id }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          [ -n "$GATES_REPOSITORY" ] && [ -n "$BOOTSTRAP_SHA" ] || {
+            echo "::error::job.workflow_repository or job.workflow_sha is empty, so the gates source cannot be named." >&2
             exit 1
           }
+          mv .gates "$RUNNER_TEMP/gates"
+          echo "GATES_DIR=$RUNNER_TEMP/gates" >>"$GITHUB_ENV"
+          GATES_DIR="$RUNNER_TEMP/gates" bash -e "$RUNNER_TEMP/gates/run/lock.sh"
 
-          api="${GITHUB_API_URL:-https://api.github.com}"
-          tmp="${RUNNER_TEMP:-.}"
-          : >"$tmp/pages.list"
-
-          # Cursor pagination, not `page=`. Measured: this endpoint answers
-          # HTTP 400 to a `page` parameter - it is one of the few REST endpoints
-          # that paginates only by the Link header's before/after cursors, so
-          # the ordinary page-counting loop refuses everything. The loop was
-          # exercised live at per_page=25 across 3 pages, merging to the same
-          # count `gh api --paginate` reports (2026-09-02). A loop that silently
-          # stopped at page 1 would report the rest of a repository clean.
-          url="$api/repos/$GITHUB_REPOSITORY/dependabot/alerts?state=open&per_page=100"
-          page=0
-          # 100 alerts a page. A repository past 3000 open alerts is a different
-          # problem, but the cap refuses rather than truncating: a silent ceiling
-          # reads exactly like a clean tail.
-          max_pages=30
-          while [ -n "$url" ]; do
-            page=$((page + 1))
-            if [ "$page" -gt "$max_pages" ]; then
-              fail "this repository has more than $((max_pages * 100)) open alerts, which this check will not silently truncate."
-            fi
-            body="$tmp/alerts-page-$page.json"
-            hdr="$tmp/alerts-page-$page.head"
-            # `curl_rc=$?` on the next line would never run: the runner's shell
-            # is `bash -e`, which aborts on the failing assignment itself, so the
-            # refusal has to be attached to the assignment.
-            curl_rc=0
-            code=$(curl -sS -D "$hdr" -o "$body" -w '%{http_code}' \
-              -H "Authorization: Bearer $GITHUB_TOKEN" \
-              -H "Accept: application/vnd.github+json" \
-              -H "X-GitHub-Api-Version: 2022-11-28" \
-              "$url") || curl_rc=$?
-            [ "$curl_rc" -eq 0 ] || fail "the request for page $page did not complete (curl exit $curl_rc)."
-
-            case "$code" in
-              200) ;;
-              403)
-                # Two different causes, one status. Naming which one is what
-                # turns this refusal into something a reader can act on.
-                if grep -qi 'disabled' "$body" 2>/dev/null; then
-                  fail "Dependabot alerts are DISABLED on this repository (HTTP 403). Enable them in Settings -> Advanced Security, or stop calling this workflow;"
-                fi
-                fail "the token was refused (HTTP 403, \"$(jq -r '.message? // "no message"' "$body" 2>/dev/null)\"). The CALLER must grant \`vulnerability-alerts: read\` - a called workflow cannot widen the caller's GITHUB_TOKEN;"
-                ;;
-              404) fail "the alerts endpoint answered HTTP 404, so this repository has no dependency graph or no alerts feature;" ;;
-              *)   fail "the alerts endpoint answered HTTP $code;" ;;
-            esac
-
-            jq -e 'type == "array"' "$body" >/dev/null 2>&1 \
-              || fail "page $page was HTTP 200 but is not a JSON array (the endpoint answered with something else);"
-
-            printf '%s\n' "$body" >>"$tmp/pages.list"
-            # No Link header, or one with no `next`, is the normal last page and
-            # both make this pipeline exit non-zero under pipefail, so the empty
-            # result has to be spelled rather than inherited.
-            url=$(tr -d '\r' <"$hdr" | grep -i '^link:' | tr ',' '\n' \
-              | grep 'rel="next"' | sed -n 's/.*<\(.*\)>.*/\1/p' | head -1) || url=""
-          done
-
-          # shellcheck disable=SC2046
-          jq -s 'add' $(tr '\n' ' ' <"$tmp/pages.list") >"$ALERTS_JSON" \
-            || fail "the pages could not be merged;"
-
-          # An alert whose severity or ghsa id is absent cannot be judged, and
-          # judging it as clean is the failure mode this file exists to prevent.
-          unjudgeable=$(jq '[.[] | select(
-              (.security_advisory.severity | type) != "string"
-              or (.security_advisory.ghsa_id | type) != "string"
-              or (.dependency.package.name | type) != "string"
-            )] | length' "$ALERTS_JSON") \
-            || fail "the merged inventory could not be inspected;"
-          [ "${unjudgeable:-1}" = 0 ] \
-            || fail "$unjudgeable of the alerts returned are missing a severity, a GHSA id or a package name, so they cannot be judged;"
-
-          echo "read $(jq 'length' "$ALERTS_JSON") open alerts over $page page(s)"
-
-      # Never exits non-zero: it records either the changes or the reason it
-      # could not read them, and the verdict decides whether that reason
-      # matters (the header says when). A missing record is itself a refusal.
-      - name: Read the dependency changes this pull request makes
-        if: github.event_name == 'pull_request'
+      - name: Judge
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          COMPARE_JSON: ${{ runner.temp }}/dependency-compare.json
-        run: |
-          set -uo pipefail
-
-          record_error() {
-            jq -n --arg e "$1" '{error: $e}' >"$COMPARE_JSON"
-            echo "the dependency compare COULD NOT BE READ: $1"
-            exit 0
-          }
-
-          api="${GITHUB_API_URL:-https://api.github.com}"
-          tmp="${RUNNER_TEMP:-.}"
-          body="$tmp/compare.json"
-          hdr="$tmp/compare.head"
-          curl_rc=0
-          code=$(curl -sS -D "$hdr" -o "$body" -w '%{http_code}' \
-            -H "Authorization: Bearer $GITHUB_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "$api/repos/$GITHUB_REPOSITORY/dependency-graph/compare/$BASE_SHA...$HEAD_SHA") || curl_rc=$?
-          [ "$curl_rc" -eq 0 ] || record_error "the request did not complete (curl exit $curl_rc)"
-
-          message=$(jq -r '.message? // empty' "$body" 2>/dev/null) || message=""
-          case "$code" in
-            200) ;;
-            403) record_error "HTTP 403, \"${message:-no message}\" (GitHub answers 403 here for a private repository without Advanced Security, and for a token without \`contents: read\`)" ;;
-            404) record_error "HTTP 404, \"${message:-no message}\" (no dependency graph for this repository, or a commit it does not know)" ;;
-            *)   record_error "HTTP $code, \"${message:-no message}\"" ;;
-          esac
-
-          # The endpoint documents no pagination; a next page would mean the
-          # first one is not the whole diff, and a partial diff is not read.
-          if grep -qiE '^link:.*rel="next"' "$hdr"; then
-            record_error "the answer is paginated, which this step does not follow, so the diff it holds is partial"
-          fi
-          # An incomplete head snapshot can list a package as removed that is
-          # still there, and that reads as a fix.
-          warnings=$(grep -i -m1 '^x-github-dependency-graph-snapshot-warnings:' "$hdr" \
-            | sed 's/^[^:]*: *//' | tr -d '\r') || warnings=""
-          if [ -n "$warnings" ]; then
-            decoded=$(printf '%s' "$warnings" | base64 -d 2>/dev/null) || decoded="$warnings"
-            record_error "GitHub reported the dependency snapshot incomplete: $(printf '%s' "$decoded" | tr '\n' ' ')"
-          fi
-
-          # An added version whose `vulnerabilities` is absent would read as
-          # carrying none, so every field the match reads is asserted present.
-          jq -e 'type == "array" and all(.[];
-              (.change_type | type) == "string" and (.manifest | type) == "string"
-              and (.name | type) == "string" and (.vulnerabilities | type) == "array"
-              and all(.vulnerabilities[]; (.advisory_ghsa_id | type) == "string"))' "$body" >/dev/null 2>&1 \
-            || record_error "HTTP 200, but the answer is not an array of changes that each carry a manifest, a name and a vulnerabilities list"
-
-          jq '{changes: .}' "$body" >"$COMPARE_JSON" || record_error "the answer could not be recorded"
-          echo "read $(jq '.changes | length' "$COMPARE_JSON") dependency change(s) between $BASE_SHA and $HEAD_SHA"
-
-      - name: Judge the open advisories against the deferral list
-        env:
           ALERTS_JSON: ${{ runner.temp }}/dependabot-alerts.json
           COMPARE_JSON: ${{ runner.temp }}/dependency-compare.json
           EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           SEVERITY_FLOOR: ${{ inputs.severity_floor }}
           FAIL_ON_DEVELOPMENT: ${{ inputs.fail_on_development }}
           DEFERRALS_PATH: ${{ inputs.deferrals_path }}
-        run: |
-          set -uo pipefail
-
-          refuse() { echo "::error::$1" >&2; exit 1; }
-
-          case "$SEVERITY_FLOOR" in
-            critical | high | medium | low) ;;
-            *) refuse "severity_floor is \"$SEVERITY_FLOOR\"; it must be one of critical, high, medium, low." ;;
-          esac
-          case "$FAIL_ON_DEVELOPMENT" in
-            true | false) ;;
-            *) refuse "fail_on_development is \"$FAIL_ON_DEVELOPMENT\"; it must be true or false." ;;
-          esac
-          [ -r "$ALERTS_JSON" ] || refuse "the alert inventory at $ALERTS_JSON is missing, so nothing was judged."
-
-          # Only a pull request has changes of its own; every other event is
-          # judged on the default branch's alerts alone, exactly as before.
-          compare=$(mktemp)
-          if [ "$EVENT_NAME" != pull_request ]; then
-            printf '{"changes":[]}\n' >"$compare"
-          elif ! jq -e 'type == "object" and ((.error | type) == "string" or (.changes | type) == "array")' \
-              "$COMPARE_JSON" >/dev/null 2>&1; then
-            jq -n --arg f "$COMPARE_JSON" '{error: "the compare step left no readable record at \($f)"}' >"$compare"
-          else
-            cp "$COMPARE_JSON" "$compare"
-          fi
-
-          # --- the deferral list ---------------------------------------------
-          #
-          # Read from the repository rather than from GitHub's dismiss button,
-          # which records the decision where no diff shows it and no reviewer
-          # meets it. Real YAML, parsed with yq into JSON and validated with jq,
-          # so a malformed file is a named refusal rather than a silently empty
-          # list. yq missing is itself a refusal: an unreadable deferral list
-          # that defaults to empty would fail LOUDLY here, but one that defaults
-          # to empty on a repository with no failing alerts would pass while
-          # having read nothing.
-          deferrals=$(mktemp)
-          # GitHub's escaping for a workflow-command property value.
-          DEFERRALS_FILE_PROP=${DEFERRALS_PATH//%/%25}
-          DEFERRALS_FILE_PROP=${DEFERRALS_FILE_PROP//$'\r'/%0D}
-          DEFERRALS_FILE_PROP=${DEFERRALS_FILE_PROP//$'\n'/%0A}
-          DEFERRALS_FILE_PROP=${DEFERRALS_FILE_PROP//:/%3A}
-          DEFERRALS_FILE_PROP=${DEFERRALS_FILE_PROP//,/%2C}
-          if [ -e "$DEFERRALS_PATH" ]; then
-            command -v yq >/dev/null 2>&1 \
-              || refuse "$DEFERRALS_PATH exists but yq is not installed, so the deferral list could not be read."
-            yq -o=json '.' "$DEFERRALS_PATH" >"$deferrals" 2>"$deferrals.err" \
-              || refuse "$DEFERRALS_PATH is not valid YAML: $(tr '\n' ' ' <"$deferrals.err")"
-          else
-            printf '{"deferrals":[]}\n' >"$deferrals"
-          fi
-
-          # Every rule the file has to satisfy, as one list of named errors.
-          # All four keys are required and an unknown key is an error, for the
-          # reason .ci/shared-workflows.md gives for the generated-file
-          # exceptions: `until` stated separately from `reason` is what stops a
-          # standing exemption reading as a one-off, and it is the one field no
-          # check can grade - the parser asserts it is answered, a reviewer
-          # asserts the answer is true. No expiry DATE, deliberately and for the
-          # same reason recorded there: a date is the runner's clock rather than
-          # a property of the decision, it permits everything until it passes,
-          # and it is renewed by editing one line.
-          errors=$(jq -r '
-            def required: ["ghsa", "package", "reason", "until"];
-            def nonempty($v): ($v | type) == "string" and (($v | gsub("\\s"; "")) | length) > 0;
-            ( if type != "object" then ["the file must be a mapping with a `deferrals:` key"]
-              else
-                ( (keys_unsorted - ["deferrals"]) | map("unknown top-level key `\(.)`") )
-                + ( if has("deferrals") | not then ["no `deferrals:` key"]
-                    elif (.deferrals | type) != "array" then ["`deferrals:` must be a list"]
-                    else
-                      ( [ .deferrals | to_entries[]
-                          | .key as $i | .value as $e
-                          | if ($e | type) != "object" then "deferral \($i + 1): must be a mapping"
-                            else
-                              ( ($e | keys_unsorted) - required | map("deferral \($i + 1): unknown key `\(.)`") )
-                              + ( required - ($e | keys_unsorted) | map("deferral \($i + 1): missing required key `\(.)`") )
-                              + ( required | map(select($e[.] != null and (nonempty($e[.]) | not))
-                                                 | "deferral \($i + 1): `\(.)` is empty") )
-                              + ( if ($e.ghsa | type) == "string"
-                                    and (($e.ghsa | test("^GHSA-[0-9a-z]{4}-[0-9a-z]{4}-[0-9a-z]{4}$")) | not)
-                                  then ["deferral \($i + 1): `ghsa` is \"\($e.ghsa)\", which is not a GHSA id"] else [] end )
-                              | .[]
-                            end ] )
-                      + ( [ .deferrals | map(select(type == "object") | .ghsa) | group_by(.)[]
-                            | select(length > 1) | "`\(.[0])` is listed \(length) times" ] )
-                    end )
-              end ) | .[]' "$deferrals" 2>&1) \
-            || refuse "$DEFERRALS_PATH could not be validated: $errors"
-          [ -z "$errors" ] || {
-            printf '%s\n' "$errors" | while IFS= read -r e; do echo "::error file=$DEFERRALS_FILE_PROP::$e" >&2; done
-            refuse "$DEFERRALS_PATH is malformed; every deferral needs ghsa, package, reason and until."
-          }
-
-          # --- the verdict ----------------------------------------------------
-          verdict=$(jq -n \
-            --slurpfile alerts "$ALERTS_JSON" \
-            --slurpfile deferrals "$deferrals" \
-            --slurpfile compare "$compare" \
-            --arg floor "$SEVERITY_FLOOR" \
-            --argjson faildev "$FAIL_ON_DEVELOPMENT" '
-            def rank: {"low": 1, "medium": 2, "high": 3, "critical": 4}[.] // 0;
-            # PEP 503 folding, so a pip alert for Foo_Bar meets the change to foo-bar.
-            def norm: ascii_downcase | gsub("[-_.]+"; "-");
-            # Whether the pull request makes a $type change, at this alert own
-            # manifest, to a version of its package that carries its advisory.
-            def touches($chg; $x; $type):
-              any($chg[]; .change_type == $type and .manifest == $x.manifest
-                          and (.name | norm) == ($x.pkg | norm)
-                          and any(.vulnerabilities[]; .advisory_ghsa_id == $x.ghsa));
-            ($compare[0].error // null) as $cerr
-            | ($compare[0].changes // []) as $chg
-            | ($alerts[0] // []) as $a
-            | ($deferrals[0].deferrals // []) as $d
-            | ($a | map({
-                ghsa: .security_advisory.ghsa_id,
-                sev: .security_advisory.severity,
-                # A null scope is NOT development. GitHub omits the label when
-                # it cannot tell, and treating unknown as exempt is the scope
-                # label being trusted one layer further down.
-                scope: (.dependency.scope // "unknown"),
-                pkg: .dependency.package.name,
-                manifest: (.dependency.manifest_path // "?"),
-                url: (.html_url // "")
-              }) | map(. + {fixed: (touches($chg; .; "removed") and (touches($chg; .; "added") | not))})) as $open
-            | ($open | map(select((.sev | rank) >= ($floor | rank))
-                                  | select($faildev or .scope != "development"))) as $atfloor
-            | ($d | map(.ghsa)) as $dghsa
-            | ($atfloor | map(select(.ghsa as $g | ($dghsa | index($g)) | not))) as $undeferred
-            | {
-                open: $open,
-                counts: ($open | group_by(.sev) | map({sev: .[0].sev, n: length})
-                         | sort_by(.sev | rank) | reverse),
-                deferred: ($atfloor | map(select(.ghsa as $g | $dghsa | index($g)))),
-                fixed: ($open | map(select(.fixed))),
-                failing: ($undeferred | map(select(.fixed | not))),
-                compare_error: $cerr,
-                # A deferral naming a GHSA with no open alert is dead text, not a
-                # false verdict: it is keyed on the exact advisory, so it can
-                # never widen to cover a new one. Reported, never fatal - a
-                # repository that FIXED the advisory must not go red for it.
-                stale: ($d | map(select(.ghsa as $g | ($open | map(.ghsa) | index($g)) | not))),
-                # Mis-keyed, though, is a real error: the deferral names an open
-                # advisory but the wrong package, so the reviewer approved a
-                # sentence about something else.
-                miskeyed: ($d | map(. as $e
-                            | select(($open | map(.ghsa) | index($e.ghsa)) != null)
-                            | select(($open | map(select(.ghsa == $e.ghsa) | .pkg) | index($e.package)) == null)
-                            | {ghsa: $e.ghsa, claimed: $e.package,
-                               actual: ($open | map(select(.ghsa == $e.ghsa) | .pkg) | unique | join(", "))})),
-                reasons: ($d | map({key: .ghsa, value: {reason, until}}) | from_entries)
-              }') \
-            || refuse "the verdict could not be computed from $ALERTS_JSON."
-          [ -n "$verdict" ] || refuse "the verdict could not be computed from $ALERTS_JSON."
-
-          # The path is passed as data, never spliced into jq program text: a
-          # `"` in it broke the program, and a `::` or newline in a workflow
-          # command property is read as the command's own syntax.
-          get() { printf '%s' "$verdict" | jq -r --arg file "$DEFERRALS_FILE_PROP" "$1"; }
-
-          # The standing count, in the log and in the run summary, so low and
-          # medium are visible as a trend rather than invisible until one of
-          # them becomes high. Printed on every run, including the green ones.
-          {
-            echo "### Dependency advisories"
-            echo
-            echo "Floor \`$SEVERITY_FLOOR\`; development-scoped alerts $([ "$FAIL_ON_DEVELOPMENT" = true ] && echo 'can fail' || echo 'are exempt')."
-            echo
-            echo "| severity | open |"
-            echo "| --- | --- |"
-            get '.counts[] | "| \(.sev) | \(.n) |"'
-            [ "$(get '.open | length')" = 0 ] && echo "| _none_ | 0 |"
-            echo
-            echo "| severity | scope | package | GHSA | manifest |"
-            echo "| --- | --- | --- | --- | --- |"
-            get '.open | sort_by(.sev) | reverse | .[] | "| \(.sev) | \(.scope) | \(.pkg) | \(.ghsa) | \(.manifest) |"'
-            if [ "$(get '.fixed | length')" != 0 ]; then
-              echo
-              echo "Fixed in this pull request, so not failing: it removes the vulnerable version at the alert's manifest and adds none still affected."
-              echo
-              get '.fixed[] | "- \(.sev) \(.pkg) \(.ghsa) (\(.manifest))"'
-            fi
-          } | tee -a "${GITHUB_STEP_SUMMARY:-/dev/null}"
-          echo
-
-          get '.miskeyed[] | "::error file=\($file)::deferral for \(.ghsa) names package `\(.claimed)`, but the open alert for it is `\(.actual)`"' >&2
-          [ "$(get '.miskeyed | length')" = 0 ] \
-            || refuse "$DEFERRALS_PATH mis-names the package of an advisory it defers."
-
-          get '.stale[] | "::warning file=\($file)::deferral for \(.ghsa) (\(.package)) matches no open alert; the decision it records has outlived its reason and the entry can go"' >&2
-
-          deferred_n=$(get '.deferred | length')
-          if [ "$deferred_n" != 0 ]; then
-            echo "$deferred_n advisory(ies) at or above \`$SEVERITY_FLOOR\` are deferred by $DEFERRALS_PATH:"
-            get '.deferred[] as $x | .reasons[$x.ghsa] as $r
-                 | "  \($x.sev) \($x.pkg) \($x.ghsa)\n    reason: \($r.reason | gsub("\\s+"; " "))\n    until:  \($r.until | gsub("\\s+"; " "))"'
-          fi
-
-          failing_n=$(get '.failing | length')
-          compare_error=$(get '.compare_error // empty')
-          if [ "$failing_n" = 0 ]; then
-            [ -z "$compare_error" ] \
-              || echo "::warning::the dependency compare for this pull request could not be read, and no alert needed it: $compare_error"
-            echo "no open advisory at or above \`$SEVERITY_FLOOR\` is undeferred; $(get '.open | length') open alert(s) inventoried"
-            exit 0
-          fi
-
-          get '.failing[] | "::error::\(.sev) advisory in \(.pkg) (\(.scope) scope, \(.manifest)): \(.ghsa) \(.url)"' >&2
-          [ -z "$compare_error" ] \
-            || refuse "$failing_n open advisory(ies) at or above \`$SEVERITY_FLOOR\` are open on the default branch, and whether this pull request fixes them COULD NOT BE ESTABLISHED: the dependency compare failed with $compare_error"
-          refuse "$failing_n open advisory(ies) at or above \`$SEVERITY_FLOOR\` are neither fixed nor recorded in $DEFERRALS_PATH. Upgrade the dependency, or add the GHSA id there with the reason it stands and the condition that ends it."
+        run: bash -e "$GATES_DIR/run/dependency-advisories.sh"

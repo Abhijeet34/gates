@@ -1,16 +1,15 @@
 # Every gate this repository ships, the surface it guards, and the inputs that
 # prove it by execution; .ci/gates-proof.py runs them.
 #
-# `command` is the gate itself: a file, or `workflow#step name` for the
-# `run: |` body of one workflow step. `red` and `clean` are bash that build an
+# `command` is the gate itself, a file. `red` and `clean` are bash that build an
 # input in an empty working directory; `run` then invokes the gate on it, and
 # its exit status is the verdict. The proof requires red to exit non-zero with
 # `finding` in its output and clean to exit 0, then replaces `command` with
 # one that exits 0 and requires red to pass, so a `run` that decides the
 # verdict without the gate is refused. Each case sees ROOT (the tree under
-# proof), GATE (the command's executable path in it; a step body runs as
-# `bash -e "$GATE"`, as on the runner) and a git with no global or system
-# config and a noreply identity.
+# proof), GATE (the command's path in it; a run/ script runs as
+# `bash -e "$GATE"`, as its workflow runs it) and a git with no global or
+# system config and a noreply identity.
 #
 # `test` is the gate's fuller regression suite and `suite` the check.sh suite
 # that must run it. A gate file found on disk and named neither in a `gates`
@@ -43,10 +42,14 @@ finding = "ci.yml:2:  pull_request_target:"
 [[gate]]
 id = "dependency-advisories"
 surface = "Dependencies"
-gates = [".github/workflows/shared-dependency-advisories.yml"]
+gates = [
+  ".github/workflows/shared-dependency-advisories.yml", "run/dependency-advisories.sh",
+  "run/dependency-advisories/alerts.sh", "run/dependency-advisories/compare.sh",
+  "run/dependency-advisories/judge.sh",
+]
 test = ".ci/test-dependency-advisories.sh"
 suite = "shell"
-command = ".github/workflows/shared-dependency-advisories.yml#Judge the open advisories against the deferral list"
+command = "run/dependency-advisories/judge.sh"
 red = '''
 echo '[{"security_advisory": {"ghsa_id": "GHSA-aaaa-bbbb-cccc", "severity": "high"},
   "dependency": {"scope": "runtime", "package": {"name": "left-pad"}, "manifest_path": "package-lock.json"}}]' > alerts.json
@@ -64,10 +67,10 @@ finding = "are neither fixed nor recorded in deferrals.yml"
 [[gate]]
 id = "guard-generated-files"
 surface = "PR checks"
-gates = [".github/workflows/shared-guard-generated-files.yml"]
+gates = [".github/workflows/shared-guard-generated-files.yml", "run/guard-generated-files.sh"]
 test = ".ci/test-guard-generated-files.sh"
 suite = "shell"
-command = ".github/workflows/shared-guard-generated-files.yml#Check PR does not modify release-please-generated files"
+command = "run/guard-generated-files.sh"
 red = '''
 git init -q -b main && echo '# Changelog' > CHANGELOG.md && echo hi > README.md
 git add -A && git commit -qm base && git tag base
@@ -84,10 +87,10 @@ finding = "This PR modifies release-please-generated files: CHANGELOG.md"
 [[gate]]
 id = "no-mistakes-required"
 surface = "PR checks"
-gates = [".github/workflows/shared-no-mistakes-required.yml"]
+gates = [".github/workflows/shared-no-mistakes-required.yml", "run/no-mistakes-required.sh"]
 test = ".ci/test-no-mistakes-required.sh"
 suite = "shell"
-command = ".github/workflows/shared-no-mistakes-required.yml#Verify no-mistakes signature in PR body"
+command = "run/no-mistakes-required.sh"
 # `gh` serves the body the step reads live; `sleep` is stubbed so the retries are instant.
 red = '''
 mkdir bin && printf '#!/bin/sh\nexit 0\n' > bin/sleep
@@ -107,10 +110,10 @@ finding = "This PR was not raised through no-mistakes."
 [[gate]]
 id = "secret-scan-workflow"
 surface = "Security"
-gates = [".github/workflows/shared-secret-scan.yml"]
+gates = [".github/workflows/shared-secret-scan.yml", "run/secret-scan.sh", "run/secret-scan/verify.sh"]
 test = ".ci/test-secret-scan.sh"
 suite = "secrets"
-command = ".github/workflows/shared-secret-scan.yml#Verify this repository carries the canonical gate"
+command = "run/secret-scan/verify.sh"
 red = '''
 mkdir .githooks && cp "$ROOT/.gitleaks.toml" . && cp "$ROOT/.githooks/pre-push" .githooks/
 cp "$ROOT/system-maintenance/git-hooks/commit-msg" .githooks/ && echo '# local edit' >> .githooks/pre-push
@@ -119,22 +122,37 @@ clean = '''
 mkdir .githooks && cp "$ROOT/.gitleaks.toml" . && cp "$ROOT/.githooks/pre-push" .githooks/
 cp "$ROOT/system-maintenance/git-hooks/commit-msg" .githooks/
 '''
-# The pins are the job's env in the workflow, read from it rather than restated.
-run = '''
-for pin in CONFIG HOOK COMMIT_MSG; do
-  export "${pin}_SHA256=$(yq -r ".jobs[\"secret-scan\"].env.${pin}_SHA256" "$ROOT/.github/workflows/shared-secret-scan.yml")"
-done
-bash -e "$GATE"
-'''
+# The tree under proof stands in for the gates checkout the copies are compared with.
+run = 'GATES_DIR="$ROOT" bash -e "$GATE"'
 finding = ".githooks/pre-push has DRIFTED from gates' canonical copy"
+
+[[gate]]
+id = "secret-scan-history"
+surface = "Security"
+gates = ["run/secret-scan/history.sh", "run/secret-scan/tree.sh"]
+test = ".ci/test-secret-scan.sh"
+suite = "secrets"
+command = "run/secret-scan/history.sh"
+# A secret committed and then deleted: the tree is clean, the history is not.
+red = '''
+git init -q -b main && cp "$ROOT/.gitleaks.toml" . && echo "print('hello')" > app.py
+awk -F'\t' '$2 == "moonshot-kimi" { print $3 }' "$ROOT/.ci/gitleaks/fixtures/known-secrets.tsv" > models.py
+git add -A && git commit -qm 'carries a secret' && git rm -q models.py && git commit -qm 'deletes it'
+'''
+clean = '''
+git init -q -b main && cp "$ROOT/.gitleaks.toml" . && echo "print('hello')" > app.py
+git add -A && git commit -qm clean
+'''
+run = 'bash -e "$GATE"'
+finding = "secrets found in this repository's history"
 
 [[gate]]
 id = "watermark-scan-workflow"
 surface = "Security"
-gates = [".github/workflows/shared-watermark-scan.yml", ".github/workflows/watermark-scan.yml"]
+gates = [".github/workflows/shared-watermark-scan.yml", ".github/workflows/watermark-scan.yml", "run/watermark-scan.sh"]
 test = ".ci/test-watermark-scan-workflow.sh"
 suite = "shell"
-command = ".github/workflows/shared-watermark-scan.yml#Scan the working tree"
+command = "run/watermark-scan.sh"
 # A zero-width space, written as bytes so this file carries none.
 red = '''git init -q -b main && printf 'one\xe2\x80\x8btwo\n' > notes.txt && git add -A'''
 clean = '''git init -q -b main && printf 'one two\n' > notes.txt && git add -A'''
@@ -143,6 +161,84 @@ SCANNER="$ROOT/system-maintenance/git-hooks/watermark-scan.py" \
   ALLOWLIST="$ROOT/system-maintenance/git-hooks/watermark-allow.conf" bash -e "$GATE"
 '''
 finding = "DETECTIVE PROVENANCE is in this repository's tree"
+
+# The bootstrap's controls on a caller's .github/gates.lock (README.md, "Pinning").
+# .ci/fixtures/lock-fixture.sh builds a gates origin A -> B -> C with C the
+# bootstrap's commit, a fork-only commit F, and a caller in the named scenario.
+
+[[gate]]
+id = "lock-imposter"
+surface = "Gate pinning"
+gates = ["run/lock.sh", "run/bump-identity"]
+test = ".ci/test-lock.sh"
+suite = "shell"
+command = "run/lock.sh"
+red = 'bash "$ROOT/.ci/fixtures/lock-fixture.sh" imposter'
+clean = 'bash "$ROOT/.ci/fixtures/lock-fixture.sh" locked'
+run = '. ./env.sh && cd caller && bash -e "$GATE"'
+finding = "which is not on gates main"
+
+[[gate]]
+id = "lock-checks"
+surface = "Gate pinning"
+gates = ["run/lock.sh"]
+test = ".ci/test-lock.sh"
+suite = "shell"
+command = "run/lock.sh"
+red = 'bash "$ROOT/.ci/fixtures/lock-fixture.sh" unchecked'
+clean = 'bash "$ROOT/.ci/fixtures/lock-fixture.sh" locked'
+run = '. ./env.sh && cd caller && bash -e "$GATE"'
+finding = "which has no green checks run from GitHub Actions (app 15368)"
+
+[[gate]]
+id = "lock-downgrade"
+surface = "Gate pinning"
+gates = ["run/lock.sh"]
+test = ".ci/test-lock.sh"
+suite = "shell"
+command = "run/lock.sh"
+red = 'bash "$ROOT/.ci/fixtures/lock-fixture.sh" downgrade'
+clean = 'bash "$ROOT/.ci/fixtures/lock-fixture.sh" bump'
+run = '. ./env.sh && cd caller && bash -e "$GATE"'
+finding = "which does not descend from it (a downgrade)"
+
+[[gate]]
+id = "lock-bundled"
+surface = "Gate pinning"
+gates = ["run/lock.sh"]
+test = ".ci/test-lock.sh"
+suite = "shell"
+command = "run/lock.sh"
+red = 'bash "$ROOT/.ci/fixtures/lock-fixture.sh" bundled'
+clean = 'bash "$ROOT/.ci/fixtures/lock-fixture.sh" bump'
+run = '. ./env.sh && cd caller && bash -e "$GATE"'
+finding = "changes .github/gates.lock together with other content: app.py"
+
+[[gate]]
+id = "lock-author"
+surface = "Gate pinning"
+gates = ["run/lock.sh"]
+test = ".ci/test-lock.sh"
+suite = "shell"
+command = "run/lock.sh"
+red = 'bash "$ROOT/.ci/fixtures/lock-fixture.sh" author'
+clean = 'bash "$ROOT/.ci/fixtures/lock-fixture.sh" bump'
+run = '. ./env.sh && cd caller && bash -e "$GATE"'
+finding = "its author someone (1) is not the bump identity"
+
+# The copies are compared with gates at the locked commit: a caller whose copies
+# are the bootstrap's or an older release's, under a lock that moved on, drifts.
+[[gate]]
+id = "lock-drift"
+surface = "Gate pinning"
+gates = ["run/secret-scan/verify.sh"]
+test = ".ci/test-secret-scan.sh"
+suite = "secrets"
+command = "run/secret-scan/verify.sh"
+red = 'bash "$ROOT/.ci/fixtures/lock-fixture.sh" drift'
+clean = 'bash "$ROOT/.ci/fixtures/lock-fixture.sh" locked'
+run = '. ./env.sh && cd caller && bash -e "$ROOT/run/lock.sh" && bash -e "$GATE"'
+finding = ".gitleaks.toml has DRIFTED from gates' canonical copy"
 
 [[gate]]
 id = "gitleaks-rules"
@@ -320,3 +416,7 @@ reason = "git-lfs shim; gates nothing"
 [[exempt]]
 path = "system-maintenance/git-hooks/post-merge"
 reason = "git-lfs shim; gates nothing"
+
+[[exempt]]
+path = "run/install-gitleaks.sh"
+reason = "installer; its checksum refusal runs in every job that installs gitleaks"

@@ -70,13 +70,15 @@ check_shell() {
     # refused in every workflow file rather than remembered at review.
     bash .ci/test-workflow-policy.sh || rc=1
     # Each suite below is a network-free exercise of one gate's rule, run
-    # against the extracted step body or a throwaway repository.
+    # against its run/ script or a throwaway repository.
     bash .ci/test-checks-verdict.sh || rc=1
     bash .ci/test-guard-generated-files.sh || rc=1
     bash .ci/test-dependency-advisories.sh || rc=1
     bash .ci/gitleaks/test-sync.sh || rc=1
     bash .ci/test-no-mistakes-required.sh || rc=1
     bash .ci/test-watermark-scan-workflow.sh || rc=1
+    # The bootstrap's lock controls, against fixture gates and caller repositories.
+    bash .ci/test-lock.sh || rc=1
     bash .ci/test-upstream-owner-refs.sh || rc=1
     bash .ci/test-suite-coverage.sh || rc=1
     # The exposure gate, through real pushes into throwaway repositories.

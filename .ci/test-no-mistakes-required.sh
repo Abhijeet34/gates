@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Regression tests for the check body inside
-# .github/workflows/shared-no-mistakes-required.yml.
+# Regression tests for run/no-mistakes-required.sh, the check body
+# .github/workflows/shared-no-mistakes-required.yml runs.
 #
 # The gate exists to be believed, so its three properties are pinned rather
 # than argued: a pull request that satisfies it must not be left red, one that
@@ -10,18 +10,12 @@
 # no-mistakes pipeline's own body write. That read is what these cases stub:
 # `gh` and `sleep` are replaced on PATH, so a retry sequence runs in
 # milliseconds and the attempt count is observable.
-#
-# Same extraction trick and same reason as test-guard-generated-files.sh: a
-# reusable workflow's steps run in the caller's checkout, where no file of this
-# repository exists, so the logic lives inline in the YAML where no linter
-# reaches it.
 
 set -uo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 
-WORKFLOW=.github/workflows/shared-no-mistakes-required.yml
-STEP='name: Verify no-mistakes signature in PR body'
+SCRIPT=run/no-mistakes-required.sh
 
 UPSTREAM_MARKER='Updates from [git push no-mistakes](https://github.com/kunchenguid/no-mistakes)'
 MIRROR_MARKER='Updates from [git push no-mistakes](https://github.com/Abhijeet34/no-mistakes)'
@@ -36,35 +30,21 @@ check="$workdir/check.sh"
 stub="$workdir/stub"
 mkdir -p "$stub"
 
-# Print the `run: |` block that follows $STEP, dedented. Ends at the first
-# non-blank line indented less than the block.
-awk -v step="$STEP" '
-    index($0, step) { found = 1 }
-    found && !inblock && /^[[:space:]]*run: \|[[:space:]]*$/ {
-        match($0, /^ */); indent = RLENGTH + 2; inblock = 1; next
-    }
-    inblock {
-        if ($0 ~ /^[[:space:]]*$/) { print ""; next }
-        match($0, /^ */)
-        if (RLENGTH < indent) exit
-        print substr($0, indent + 1)
-    }
-' "$WORKFLOW" >"$check"
+cp "$SCRIPT" "$check"
 
 failed=0
 
-# Extraction is the one failure that would make every case below pass
-# vacuously, so it is asserted rather than assumed.
+# A body without its read loop would make every case below pass vacuously.
 if ! grep -q 'read_ok' "$check"; then
-    printf 'FAIL could not extract the check body from %s\n' "$WORKFLOW"
+    printf 'FAIL %s carries no read loop\n' "$SCRIPT"
     exit 1
 fi
 
-# The retry budget is read from the step, not restated here, so a case that
+# The retry budget is read from the script, not restated here, so a case that
 # asserts "the loop exhausted" keeps meaning that when the budget changes.
 attempts=$(sed -n 's/^attempts=\([0-9][0-9]*\).*/\1/p' "$check" | head -n 1)
 if [[ -z $attempts ]]; then
-    printf 'FAIL could not read the attempt budget from the extracted body\n'
+    printf 'FAIL could not read the attempt budget from %s\n' "$SCRIPT"
     exit 1
 fi
 
