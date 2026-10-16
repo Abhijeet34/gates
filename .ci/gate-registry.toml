@@ -162,6 +162,18 @@ SCANNER="$ROOT/system-maintenance/git-hooks/watermark-scan.py" \
 '''
 finding = "DETECTIVE PROVENANCE is in this repository's tree"
 
+[[gate]]
+id = "instruction-path-truth"
+surface = "Instruction files"
+gates = [".github/workflows/shared-instruction-truth.yml", "run/instruction-truth/path-truth.py"]
+test = ".ci/test-instruction-path-truth.sh"
+suite = "shell"
+command = "run/instruction-truth/path-truth.py"
+red = '''mkdir src && : > src/real.sh && printf 'Run `src/real.sh` or `.ci/gitleaks/sync.sh`.\n' > AGENTS.md'''
+clean = '''mkdir src && : > src/real.sh && printf 'Run `src/real.sh`.\n' > AGENTS.md'''
+run = 'python3 "$GATE" .'
+finding = "AGENTS.md:1: `.ci/gitleaks/sync.sh` does not exist"
+
 # The bootstrap's controls on a caller's .github/gates.lock (README.md, "Pinning").
 # .ci/fixtures/lock-fixture.sh builds a gates origin A -> B -> C with C the
 # bootstrap's commit, a fork-only commit F, and a caller in the named scenario.
