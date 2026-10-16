@@ -6,11 +6,10 @@
 #   .ci/gitleaks/sync.sh --check <repo> [<repo> ...]   report drift, exit 1 if any
 #   .ci/gitleaks/sync.sh --digest [config|hook|commit-msg]  print a canonical digest
 #
-# `--digest` is what `.github/workflows/shared-secret-scan.yml` pins, once per
-# synced file: a caller's CI compares against those pins rather than cloning
-# the canonical, so the digests travel inside the shared workflow, and a
-# repository whose copy has drifted fails there. Update both in the same commit;
-# .ci/test-secret-scan.sh fails if either pin goes stale.
+# A caller's CI compares its copies byte for byte with gates checked out at
+# the commit its .github/gates.lock names (run/secret-scan/verify.sh), so a
+# lock bump moves the copies and the lock in one commit. `--digest` prints a
+# copy's sha256 for comparing one by hand.
 #
 # `--check` also answers what CI structurally cannot: whether core.hooksPath
 # points at the hook. That is repository config rather than tracked content, so

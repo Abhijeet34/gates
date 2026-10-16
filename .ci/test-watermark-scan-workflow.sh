@@ -5,9 +5,8 @@
 #
 #   .ci/test-watermark-scan-workflow.sh
 #
-# Same reason as the other four shared-workflow suites: the logic lives inline
-# in YAML where no linter reaches it, and callers reference @main with no digest
-# pin - a broken body is live in every caller at once.
+# A broken body is live in every caller whose lock reaches it, and at once in
+# every caller still on @main.
 #
 # Run under `bash -e`, the way the runner runs it (`bash -e {0}`). That is not a
 # detail: under -e a failing command SUBSTITUTION aborts on the assignment, so

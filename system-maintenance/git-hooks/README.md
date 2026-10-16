@@ -25,7 +25,7 @@ Nothing out of a pushed repository is executed or read as configuration, allowli
 
 ## The repository's own extension: `.githooks/pre-push.local`
 
-A caller cannot edit its `.githooks/pre-push`, because `shared-secret-scan.yml` pins its digest and `.ci/gitleaks/sync.sh` overwrites it.
+A caller cannot edit its `.githooks/pre-push`, because `shared-secret-scan.yml` compares it byte for byte with gates' copy at the locked commit and `.ci/gitleaks/sync.sh` overwrites it.
 So the canonical hook runs one repository-owned extension: an executable, git-tracked `.githooks/pre-push.local`, given the hook's own arguments and the buffered ref list on stdin.
 It runs last, only after the secret scan and the chained hook - the watermark and exposure gates on a machine with these hooks deployed - have passed, and its exit status is the push's.
 With no such file the hook behaves exactly as it did before.
@@ -62,7 +62,7 @@ It can only ever cause more repositories to be scanned, never fewer.
 Measured 2026-08-17 with a global `commit-msg` that prints a marker: it fires before the repository sets `core.hooksPath=.githooks` and does not fire after.
 The cost was the agent-attribution refusal in `commit-msg` (any vendor's `Co-authored-by:` or `Generated with/by` line; `test-commit-msg.sh` pins it) and nothing for git-lfs, because none of the gated clones had an LFS-tracked file.
 
-`.ci/gitleaks/sync.sh` now installs this directory's `commit-msg` as `.githooks/commit-msg` beside `pre-push`, with the same digest pin in `shared-secret-scan.yml` and the same `--check` drift report (missing, edited, not executable).
+`.ci/gitleaks/sync.sh` now installs this directory's `commit-msg` as `.githooks/commit-msg` beside `pre-push`, with the same comparison in `shared-secret-scan.yml` and the same `--check` drift report (missing, edited, not executable).
 A clone synced before that change shows `DRIFT ... .githooks/commit-msg: missing` until `sync.sh <clone>` is re-run.
 `post-checkout`, `post-commit` and `post-merge` are still swallowed; no gated clone uses them.
 
@@ -279,7 +279,7 @@ Its scope is the **tree**, not history, which is the one place it differs from t
 A credential committed and later deleted is still published, so that scan must read every commit; a watermark deleted at HEAD is genuinely gone from the artefact anyone downloads.
 
 It refuses rather than passing whenever it cannot establish a verdict: a caller not carrying the scanner, a missing allowlist, a checkout git lists no file in, or a scanner that exits 0 having printed nothing.
-`.ci/test-watermark-scan-workflow.sh` runs the extracted step body under `bash -e`, the way the runner runs it, and that is what caught a `grep -c` matching nothing aborting the whole step on the assignment - so the case the count exists to catch refused with no message at all.
+`.ci/test-watermark-scan-workflow.sh` runs the scan body, `run/watermark-scan.sh`, under `bash -e`, the way the runner runs it, and that is what caught a `grep -c` matching nothing aborting the whole step on the assignment - so the case the count exists to catch refused with no message at all.
 
 ## The exposure gate
 
@@ -422,7 +422,7 @@ GLOBAL_HOOKS_E2E=1 system-maintenance/git-hooks/test-global-hooks.sh   # adds on
 system-maintenance/git-hooks/test-watermark-scan.py            # ~11s, offline; needs exiftool, ffmpeg, qpdf, magick
 system-maintenance/git-hooks/test-exposure-scan.sh             # ~8s, offline; real pushes through the exposure gate
 system-maintenance/git-hooks/exposure-scan.py needles           # which identifier classes this machine yields, never the values
-.ci/test-watermark-scan-workflow.sh                            # ~6s, offline; the CI backstop's step body under bash -e
+.ci/test-watermark-scan-workflow.sh                            # ~6s, offline; the CI backstop's scan body under bash -e
 ```
 
 Those four binaries are `need`ed rather than skipped by `.ci/check.sh secrets`, and CI installs all four.
