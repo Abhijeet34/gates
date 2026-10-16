@@ -1,0 +1,33 @@
+# Who a gates release reaches, and when. bin/gates.py reads this and nothing
+# else; README.md, "Bumping", owns the design.
+#
+# A stage opens once every repository of the stage before it has the release
+# merged on its default branch, with green checks on that merge, and that
+# stage's hold_days have passed since the last of those merges. Stages and
+# holds are factory gates g2 section 2.4: canaries on day 0, the fleet on day 2,
+# products on day 7.
+owner = "Abhijeet34"
+gates = "gates"
+git_url = "https://github.com"
+# Prints the builder App's token for the repository appended to it.
+mint = ["app-token", "builder", "--quiet", "--repo"]
+
+# gates itself is not a canary: its CI runs its gates from its own tree, so a
+# lock there would judge nothing.
+[[stage]]
+name = "canary"
+hold_days = 2
+repos = ["automation", "firstmate"]
+
+[[stage]]
+name = "fleet"
+hold_days = 5
+repos = [
+  "papertrace", "foliot", "foliot-bench-corpus", "halderworks-design", "halderworks-site",
+  "fleet-records", "chrome-devtools-axi", "gh-axi", "quota-axi", "tasks-axi",
+]
+
+[[stage]]
+name = "products"
+hold_days = 0
+repos = ["quoth", "pointback", "no-mistakes"]

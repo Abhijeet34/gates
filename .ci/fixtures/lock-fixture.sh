@@ -75,13 +75,18 @@ case $scenario in
     bump | bundled | author | impersonated) event=pull_request && copies "$A" && lock "$A" ;;
     downgrade | removed) event=pull_request && copies "$B" && lock "$B" ;;
     added | pr-legacy) event=pull_request && copies "$C" ;;
+    # A rollback's base carries the history its lock moved along.
+    rollback) event=pull_request && copies "$A" && lock "$A" && commit caller "lock A" >/dev/null &&
+        copies "$B" && lock "$B" ;;
+    rollback-skip) event=pull_request && copies "$A" && lock "$A" && commit caller "lock A" >/dev/null &&
+        copies "$B" && lock "$B" && commit caller "lock B" >/dev/null && copies "$C" && lock "$C" ;;
     *) echo "lock-fixture: unknown scenario $scenario" >&2 && exit 2 ;;
 esac
 base=$(commit caller base)
 case $scenario in
     bump | author | impersonated) copies "$B" && lock "$B" ;;
     bundled) copies "$B" && lock "$B" && echo "print('and more')" >>caller/app.py ;;
-    downgrade) copies "$A" && lock "$A" ;;
+    downgrade | rollback | rollback-skip) copies "$A" && lock "$A" ;;
     added) lock "$C" ;;
     removed) copies "$C" && unlock ;;
     pr-legacy) echo "print('a feature')" >>caller/app.py ;;

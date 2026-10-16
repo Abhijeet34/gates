@@ -202,6 +202,20 @@ clean = 'bash "$ROOT/.ci/fixtures/lock-fixture.sh" bump'
 run = '. ./env.sh && cd caller && bash -e "$GATE"'
 finding = "which does not descend from it (a downgrade)"
 
+# A rollback is the one non-descending move a pull request may make: back to
+# exactly the lock the base's lock replaced, never a step further.
+[[gate]]
+id = "lock-rollback"
+surface = "Gate pinning"
+gates = ["run/lock.sh"]
+test = ".ci/test-lock.sh"
+suite = "shell"
+command = "run/lock.sh"
+red = 'bash "$ROOT/.ci/fixtures/lock-fixture.sh" rollback-skip'
+clean = 'bash "$ROOT/.ci/fixtures/lock-fixture.sh" rollback'
+run = '. ./env.sh && cd caller && bash -e "$GATE"'
+finding = "is not the lock the base's lock replaced (a rollback)"
+
 [[gate]]
 id = "lock-bundled"
 surface = "Gate pinning"

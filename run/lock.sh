@@ -80,8 +80,27 @@ if [ -n "$head_lock" ]; then
         || fail "$LOCK names $head_lock, which has no green checks run from GitHub Actions (app $ACTIONS_APP_ID)."
 fi
 
-# A pull request may change the lock only as a bump: forward on main, nothing
-# but the lock and the synced copies, opened by the bump identity.
+# True when <head lock> is the lock the base's own lock replaced on its
+# first-parent history: one step back, so a rollback cannot be repeated to walk
+# a caller further back than the release it last ran. Empty means no lock.
+rollback_to() { # <head lock>
+    local c raw prev
+    if [ "$(git rev-parse --is-shallow-repository)" != false ]; then
+        git fetch --quiet --no-tags --unshallow origin "$BASE_SHA" \
+            || fail "could not fetch the history of the pull request's base $BASE_SHA."
+    fi
+    c=$(git log --first-parent -1 --format=%H "$BASE_SHA" -- "$LOCK")
+    [ -n "$c" ] || return 1
+    # Absent at the parent, or a root commit's parent, is no lock.
+    raw=$(git show "$c^:$LOCK" 2>/dev/null || true)
+    prev=$(parse_lock "the lock $c replaced" <<<"$raw") || exit 1
+    [ "$prev" = "$1" ] \
+        && echo "rollback: $LOCK returns to ${1:-no lock}, the lock that $c replaced."
+}
+
+# A pull request may change the lock only as a bump: forward on main, or back
+# by exactly one step, nothing but the lock and the synced copies, opened by the
+# bump identity.
 if [ "${EVENT_NAME:-}" = pull_request ]; then
     : "${BASE_SHA:?BASE_SHA is unset on a pull_request event}"
     git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null \
@@ -106,7 +125,8 @@ if [ "${EVENT_NAME:-}" = pull_request ]; then
             || fail "this pull request changes $LOCK, and its author ${PR_AUTHOR:-<unset>} (${PR_AUTHOR_ID:-<unset>}) is not the bump identity."
 
         g merge-base --is-ancestor "$from" "$target" 2>/dev/null \
-            || fail "this pull request moves $LOCK from $from to $target, which does not descend from it (a downgrade)."
+            || rollback_to "$head_lock" \
+            || fail "this pull request moves $LOCK from $from to $target, which does not descend from it (a downgrade) and is not the lock the base's lock replaced (a rollback)."
     fi
 fi
 
