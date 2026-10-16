@@ -38,6 +38,10 @@ This file is the project's committed home for project-intrinsic agent knowledge:
   `createCommitOnBranch` keeps a modified file's mode but adds every new file `100644` (measured 2026-10-16), so a caller missing a synced hook is refused and needs one `sync.sh` push first.
   `.ci/test-bump.py` runs the tool against fixture callers through `.ci/fixtures/gh-stub.py`, which models that behaviour; change both together.
 
+- **The machine-wide pre-push starts its four gates together and prints each one's output whole; a new gate is a `start` line in `system-maintenance/git-hooks/pre-push` plus a `PAYLOAD` row in `install.sh`, with a shared module before its importers and the dispatcher last.**
+  `signature-check` refuses an unsigned commit pushed to `refs/heads/main` only, so a fixture that pushes `main` through the deployed hooks must sign its commits (`test-global-hooks.sh` sets `commit.gpgsign`) and a gates-proof input pushes a branch.
+  `system-maintenance/git-hooks/README.md`, "The gates run together" and "The signature check", owns the design.
+
 ## Maintaining this file
 
 Keep this file for knowledge useful to almost every future agent session in this project.

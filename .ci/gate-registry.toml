@@ -346,15 +346,15 @@ finding = "IDENTITY OR MACHINE EXPOSURE"
 [[gate]]
 id = "signature-check"
 surface = "Pre-push"
-gates = ["system-maintenance/git-hooks/signature-check", "system-maintenance/git-hooks/pushrange.py"]
+gates = ["system-maintenance/git-hooks/signature-check.py", "system-maintenance/git-hooks/pushrange.py"]
 test = "system-maintenance/git-hooks/test-signature-check.sh"
 suite = "shell"
-command = "system-maintenance/git-hooks/signature-check"
+command = "system-maintenance/git-hooks/signature-check.py"
 # The same unsigned commit; only the destination ref differs. Main refuses it, a branch does not.
 red = '''git init -q -b main && echo hi > a.txt && git add -A && git commit -qm unsigned && echo refs/heads/main > ref'''
 clean = '''git init -q -b main && echo hi > a.txt && git add -A && git commit -qm unsigned && echo refs/heads/work > ref'''
 run = '''
-printf '%s %s %s %040d\n' "$(cat ref)" "$(git rev-parse HEAD)" "$(cat ref)" 0 | "$GATE" push origin "$PWD/none"
+printf '%s %s %s %040d\n' "$(cat ref)" "$(git rev-parse HEAD)" "$(cat ref)" 0 | python3 "$GATE" push origin "$PWD/none"
 '''
 finding = "carry no signature"
 

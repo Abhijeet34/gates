@@ -11,7 +11,7 @@ the headers is one `git cat-file --batch` (20 ms over 223 commits) where
 `git log --format=%G?` verifies each signature (3,441 ms).
 
 Usage: signature-check push <remote> <url>    # ref lines on stdin, as git sends them
-Source of truth: system-maintenance/git-hooks/signature-check in the gates repo.
+Source of truth: system-maintenance/git-hooks/signature-check.py in the gates repo.
 """
 
 import subprocess
@@ -57,7 +57,9 @@ def unsigned(shas):
         # Headers end at the first blank line; a message that quotes `gpgsig`
         # is not a signature.
         head, _, message = body.partition(b"\n\n")
-        if not any(ln.startswith((b"gpgsig ", b"gpgsig-sha256 ")) for ln in head.split(b"\n")):
+        if not any(
+            ln.startswith((b"gpgsig ", b"gpgsig-sha256 ")) for ln in head.split(b"\n")
+        ):
             found.append((sha, message.split(b"\n", 1)[0].decode("utf-8", "replace")))
     return found
 
@@ -80,7 +82,9 @@ def cmd_push(argv):
                     shas.append(sha)
         bad = unsigned(shas) if shas else []
     except (RuntimeError, OSError, ValueError) as exc:
-        return refuse("cannot read the commits of this push to %s: %s" % (PROTECTED, exc))
+        return refuse(
+            "cannot read the commits of this push to %s: %s" % (PROTECTED, exc)
+        )
     if not bad:
         return 0
     sys.stderr.write(

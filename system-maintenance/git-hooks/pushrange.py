@@ -67,6 +67,7 @@ def ranges_from(stdin, remote, url):
     destination.
     """
     ranges = []
+    seen = set()
     advert = None
     for line in stdin.splitlines():
         parts = line.split()
@@ -74,14 +75,19 @@ def ranges_from(stdin, remote, url):
             continue
         local_sha, remote_sha = parts[1], parts[3]
         if remote_sha != ZERO:
-            ranges.append([remote_sha + ".." + local_sha])
-            continue
-        if advert is None:
-            advert = advertised(url, remote)
-            if (url or "").startswith(
-                os.path.join(os.environ.get("HOME", ""), ".no-mistakes/repos/")
-            ):
-                advert.append("--remotes")
-        # Exactly one `--not`: a second reverses the sense rather than adding to it.
-        ranges.append([local_sha, "--not", *advert] if advert else [local_sha])
+            spec = [remote_sha + ".." + local_sha]
+        else:
+            if advert is None:
+                advert = advertised(url, remote)
+                if (url or "").startswith(
+                    os.path.join(os.environ.get("HOME", ""), ".no-mistakes/repos/")
+                ):
+                    advert.append("--remotes")
+            # Exactly one `--not`: a second reverses the sense rather than adding to it.
+            spec = [local_sha, "--not", *advert] if advert else [local_sha]
+        # Many refs at one commit (`git push --all`, a tag per branch) are one
+        # range read once: 600 of them took 17 s here, reading one history 600 times.
+        if tuple(spec) not in seen:
+            seen.add(tuple(spec))
+            ranges.append(spec)
     return ranges

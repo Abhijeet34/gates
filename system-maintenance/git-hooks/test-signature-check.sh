@@ -11,7 +11,7 @@
 set -uo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P) || exit 2
-CHECK="$ROOT/system-maintenance/git-hooks/signature-check"
+CHECK="$ROOT/system-maintenance/git-hooks/signature-check.py"
 ZERO=0000000000000000000000000000000000000000
 command -v ssh-keygen >/dev/null 2>&1 || { echo "test-signature-check: ssh-keygen not installed" >&2; exit 2; }
 [ -x "$CHECK" ] || { printf '\033[31mFAIL\033[0m %s is missing or not executable\n' "$CHECK" >&2; exit 1; }

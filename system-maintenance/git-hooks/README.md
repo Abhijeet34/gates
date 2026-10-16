@@ -1,6 +1,6 @@
 # Machine-wide git hooks
 
-The six hooks git runs from `~/.git-hooks`, tracked here so the machine can be rebuilt from the repository, plus the three scan gates one of them chains.
+The six hooks git runs from `~/.git-hooks`, tracked here so the machine can be rebuilt from the repository, plus the four gates one of them runs.
 
 `install.sh deploy` writes them out; `install.sh check` reports drift and never absorbs it.
 
@@ -27,7 +27,7 @@ Nothing out of a pushed repository is executed or read as configuration, allowli
 
 A caller cannot edit its `.githooks/pre-push`, because `shared-secret-scan.yml` compares it byte for byte with gates' copy at the locked commit and `.ci/gitleaks/sync.sh` overwrites it.
 So the canonical hook runs one repository-owned extension: an executable, git-tracked `.githooks/pre-push.local`, given the hook's own arguments and the buffered ref list on stdin.
-It runs last, only after the secret scan and the chained hook - the watermark and exposure gates on a machine with these hooks deployed - have passed, and its exit status is the push's.
+It runs last, only after the secret scan and the chained hook - the watermark, exposure and signature gates on a machine with these hooks deployed - have passed, and its exit status is the push's.
 With no such file the hook behaves exactly as it did before.
 An untracked, non-executable or symlinked `pre-push.local` refuses the push without running, because a symlink's target is code git does not track.
 
@@ -366,6 +366,51 @@ Whether GitHub itself rejects a push carrying a secret depends on the repository
 Where server-side scanning is unavailable, CI is the only server-side backstop: `.github/workflows/shared-secret-scan.yml` re-scans full history after the push, which catches what was already published rather than preventing it.
 That backstop is a detector, not a gate.
 
+## The gates run together
+
+The secret scan, the watermark gate, the exposure gate and the signature check read the same buffered ref list and do not depend on one another, so the dispatcher starts all four at once and waits for them.
+Run one after another, a 223-commit first push took 29.1 s (gitleaks 11.96 s, watermark 10.78 s, exposure 5.78 s); together it takes about the slowest of them.
+`check-orphan-dirs` and `git lfs pre-push` stay after them, in order, because git-lfs uploads objects: a refused push must not have uploaded anything.
+
+Each gate writes to its own file, and the dispatcher prints each file whole, in a fixed order (gitleaks, watermark, exposure, signature), as that gate finishes.
+Two failures therefore read as two intact blocks and never as interleaved lines.
+Every gate runs even when an earlier one fails, so one push reports every problem rather than one per attempt.
+A gate that exits non-zero fails the push, and one killed by a signal fails it too and says so, because it printed nothing of its own.
+
+Every file a gate needs is checked before any gate starts, so a half-deployed machine refuses at once with `install.sh deploy` as the remedy instead of after the first scanner.
+A killed push leaves nothing behind: the dispatcher traps `HUP`, `INT` and `TERM`, kills each gate and its children, and removes its temp directory.
+The gates stay in the hook's own process group on purpose, so one that must prompt (an ssh passphrase for `git ls-remote`) still can; a background group that reads the terminal is stopped, which would hang the push.
+`test-global-hooks.sh`, section 12, pins all of this with stub scanners that only succeed when they see the others running beside them.
+
+The Python gates take their range from `pushrange.py`, one function that asks the destination what it advertises.
+The watermark gate used to read `--remotes=<name>` instead, which is empty for a push by URL, so it scanned a whole history (3,560 blobs, 7.7 s for a 12-commit push) while the other two read 12 commits.
+All three now report the same commit count for that push; `test-global-hooks.sh`, section 12c, asserts it.
+Refs that point at one commit are one range, so `git push --all` over 600 branches reads that history once: the whole hook took 17.2 s before and 8.7 s after, of which 4.6 s is `git lfs pre-push`.
+`.githooks/pre-push` keeps its own copy of the logic in shell, because it is byte-pinned across the fleet and cannot import a module.
+
+`install.sh` deploys the module before the files that import it and the dispatcher last, because a deploy is a series of renames and a push that lands in the middle runs whatever is there.
+A push mid-deploy meets an old dispatcher over new parts, never a new one over parts that are not there yet.
+
+## The signature check
+
+`signature-check.py` refuses a push to `refs/heads/main` that introduces a commit with no signature, and says nothing about any other ref.
+
+That is the signing policy decided in plan r5 (review r4, section 3.2), which supersedes the earlier "refuse every unsigned commit".
+SSH signing is kept over gitsign, because GitHub does not show gitsign signatures as verified.
+Signatures are enforced on main only, through GitHub-signed squash merges by the merger App.
+Branch commits may be unsigned, because a commit made with an App token is unsigned by design, so refusing them at push would fail every App-driven branch.
+A push to main is the one place where an unsigned commit is a violation rather than a fact about how the work was made.
+
+It asks only whether a `gpgsig` header is present, never whether it verifies.
+Presence is one `git cat-file --batch` over the pushed range, 60-70 ms for the 223-commit quoth history including interpreter start; verification is `git log --format=%G?`, which took 3,441 ms for the same range and needs an allowed-signers file.
+GitHub's required-signatures rule on main is what verifies; this check is the earlier, local tripwire for a commit nobody signed.
+The header block ends at the first blank line, so a commit message that quotes a `gpgsig` line is still an unsigned commit.
+
+The range is the commits the destination does not already hold, from `pushrange.py`, so an unsigned commit already on main does not block a later signed one.
+A range it cannot read refuses, as every gate here does.
+Only `main` is named: the fleet's default branch is `main` everywhere, and a second name is one more way to be wrong on a machine-wide hook.
+There is no bypass variable; `git push --no-verify` skips every hook, as it always has.
+
 ## Latency
 
 Measured 2026-08-17, five pushes each after a warm-up, throwaway repositories with a local bare remote:
@@ -380,6 +425,18 @@ Measured 2026-08-17, five pushes each after a warm-up, throwaway repositories wi
 The last row is what the byte comparison in the dispatcher avoids.
 When a repository routes git's hooks elsewhere, git did not invoke this file - the repository's own hook chained here - and if that hook is byte-identical to the deployed scanner, the scan has already run on this same ref list.
 The skip is inferred from `git config --local core.hooksPath` and a `cmp`, so a push cannot claim it: a repository can only skip the scan by having actually run it, and a drifted copy is scanned again by the canonical one.
+
+Measured 2026-10-16 on the 223-commit quoth history (median of three, a local bare destination, remote-tracking refs removed so the push is by URL as a delivery push is, `gh` stubbed to answer private so exposure warns instead of refusing):
+
+| Push | Serial dispatcher | Concurrent gates |
+|---|---|---|
+| 223-commit first push to an empty destination | 16.3 s | 9.2 s |
+| 12-commit new branch, base already at the destination | 1.96 s | 1.58 s |
+| 1-commit update of an existing branch | 0.97 s | 0.81 s |
+
+The earlier 29.1 s included two GitHub `ls-remote` round trips of 1.46 s each; this destination is local and has none, and the rest of the gap to the 16.3 s serial figure here is not explained.
+On a GitHub destination there are now three such round trips (the watermark gate asks too), made together, so they cost one trip's wall time rather than two.
+What is left of the 12-commit case is the watermark gate's exiftool start (0.7 s) and `git lfs pre-push` (0.6 s), which runs after the gates for the reason above.
 
 **The worst case is a first push of a branch to a destination that holds none of its history.**
 The whole branch is then genuinely being published there, and all of it is scanned.
@@ -421,6 +478,7 @@ GLOBAL_HOOKS_E2E=1 system-maintenance/git-hooks/test-global-hooks.sh   # adds on
 ```bash
 system-maintenance/git-hooks/test-watermark-scan.py            # ~11s, offline; needs exiftool, ffmpeg, qpdf, magick
 system-maintenance/git-hooks/test-exposure-scan.sh             # ~8s, offline; real pushes through the exposure gate
+system-maintenance/git-hooks/test-signature-check.sh           # ~1s, offline; main refuses an unsigned commit, a branch does not
 system-maintenance/git-hooks/exposure-scan.py needles           # which identifier classes this machine yields, never the values
 .ci/test-watermark-scan-workflow.sh                            # ~6s, offline; the CI backstop's scan body under bash -e
 ```
@@ -436,6 +494,8 @@ The opt-in networked case clones `Abhijeet34/papertrace` and is deliberately not
 - `.githooks/pre-push` - the canonical secret scanner, deployed here as `gitleaks-pre-push`. It fails closed and does not trust gitleaks' exit code alone; its header carries the measurement. It runs a repository's `.githooks/pre-push.local` last, and only as that repository's own hook.
 - `watermark-scan.py`, `watermark-allow.conf`, `watermark-optout.conf` - the no-watermarking gate and its two rule files, all three deployed by `install.sh`.
 - `exposure-scan.py`, `test-exposure-scan.sh` - the exposure gate and its suite.
+- `signature-check.py`, `test-signature-check.sh` - the signature check and its suite.
+- `pushrange.py` - the pushed range the three Python gates share.
 - `test-watermark-scan.py` - the gate's own suite: a fixture per rule, each re-graded once neutralised, the three legitimate contexts, both rule files' contracts, the `clean`/`verify` verbs, and the refusal when exiftool is gone. `test-global-hooks.sh` pins the dispatch around it.
 - `.ci/gitleaks/sync.sh` - copies that hook and `.gitleaks.toml` out to the sibling repositories, and sets `core.hooksPath` there.
 - `.ci/gitleaks/test-pre-push.sh` - pins the scanner's own refusal behaviour, where `test-global-hooks.sh` pins the machine-wide dispatch around it.

@@ -670,13 +670,20 @@ said "signature: the refusal is the signature check's" "$TMP/sig.log" "signature
 git -C "$TMP/sig" commit --quiet --amend --no-edit -S
 git -C "$TMP/sig" push --quiet origin main >/dev/null 2>&1
 check "the same change, signed, lands on main" pass $?
-mv "$HOME/.git-hooks/signature-check" "$TMP/sigcheck.away"
+mv "$HOME/.git-hooks/signature-check.py" "$TMP/sigcheck.away"
 echo "more" >> "$TMP/sig/u.txt"
 git -C "$TMP/sig" commit --quiet -am more
 git -C "$TMP/sig" push origin main >"$TMP/sig.log" 2>&1
 check "no deployed signature check refuses" refuse $?
-said "signature: a missing check names itself" "$TMP/sig.log" "signature-check is missing"
-mv "$TMP/sigcheck.away" "$HOME/.git-hooks/signature-check"
+said "signature: a missing check names itself" "$TMP/sig.log" "signature-check.py is missing"
+mv "$TMP/sigcheck.away" "$HOME/.git-hooks/signature-check.py"
+# The module three of the gates import. Refused up front with the remedy, rather
+# than as an ImportError traceback from inside a scanner.
+mv "$HOME/.git-hooks/pushrange.py" "$TMP/pushrange.away"
+git -C "$TMP/sig" push origin main >"$TMP/sig.log" 2>&1
+check "no deployed pushrange.py refuses" refuse $?
+said "pushrange: a missing module names itself" "$TMP/sig.log" "pushrange.py is missing"
+mv "$TMP/pushrange.away" "$HOME/.git-hooks/pushrange.py"
 
 # ==============================================================================
 # 12c. One push, one answer to "what does this push contain", from all three
@@ -718,6 +725,18 @@ ex=$(sed -n 's/^exposure-scan: examined \([0-9][0-9]*\) commit(s).*/\1/p' "$TMP/
 [ "$gl" = 3 ] || fail "gitleaks should be handed the 3 new commits, counted ${gl:-none}"
 [ "$wm" = 3 ] || fail "watermark should examine the 3 new commits, reported ${wm:-none}"
 [ "$ex" = 3 ] || fail "exposure should examine the 3 new commits, reported ${ex:-none}"
+
+# Several refs at one commit are one range and one set of commits, not one each.
+echo "feat 4" > "$TMP/mm/feat4.txt"
+git -C "$TMP/mm" add -A && git -C "$TMP/mm" commit --quiet -m "feat 4"
+git -C "$TMP/mm" branch feat2
+git -C "$TMP/mm" branch feat3
+PATH="$TMP/glbin:$PATH" GL_COUNT="$TMP/gl-count" git -C "$TMP/mm" push "$TMP/mm.git" feat2 feat3 >"$TMP/mm.log" 2>&1
+check "a push of two branches at one commit lands" pass $?
+for gate in watermark exposure; do
+    grep -q "^$gate-scan: examined 1 commit(s).* across 1 range(s)" "$TMP/mm.log" ||
+        fail "$gate should read the shared history once (got: $(grep "^$gate-scan:" "$TMP/mm.log" | cut -c1-120))"
+done
 
 if [ "$failed" -ne 0 ]; then
     printf '\033[31m%d global-hook checks failed\033[0m\n' "$failed" >&2

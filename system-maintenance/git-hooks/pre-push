@@ -205,7 +205,7 @@ fi
 [ -r "$HOOK_DIR/watermark-allow.conf" ] || refuse "$HOOK_DIR/watermark-allow.conf is missing (run system-maintenance/git-hooks/install.sh deploy)."
 [ -r "$HOOK_DIR/watermark-optout.conf" ] || refuse "$HOOK_DIR/watermark-optout.conf is missing (run system-maintenance/git-hooks/install.sh deploy)."
 [ -x "$HOOK_DIR/exposure-scan.py" ] || refuse "$HOOK_DIR/exposure-scan.py is missing or not executable (run system-maintenance/git-hooks/install.sh deploy)."
-[ -x "$HOOK_DIR/signature-check" ] || refuse "$HOOK_DIR/signature-check is missing or not executable (run system-maintenance/git-hooks/install.sh deploy)."
+[ -x "$HOOK_DIR/signature-check.py" ] || refuse "$HOOK_DIR/signature-check.py is missing or not executable (run system-maintenance/git-hooks/install.sh deploy)."
 [ -r "$HOOK_DIR/pushrange.py" ] || refuse "$HOOK_DIR/pushrange.py is missing (run system-maintenance/git-hooks/install.sh deploy)."
 
 # The gates are independent readers of the same buffered ref list, so they run
@@ -254,7 +254,7 @@ start watermark env WATERMARK_IDENTITY="$identity" \
 start exposure env PATH="$PATH:/usr/sbin:/sbin" "$HOOK_DIR/exposure-scan.py" push "$@"
 
 # Signatures are enforced on main only; every other ref passes untouched.
-start signature "$HOOK_DIR/signature-check" push "$@"
+start signature "$HOOK_DIR/signature-check.py" push "$@"
 
 verdict=0
 for _name in $ORDER; do

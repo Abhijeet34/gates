@@ -1491,7 +1491,7 @@ def enumerate_objects(ranges):
             % err.decode("utf-8", "replace").strip()
         )
     blobs, paths, names, commits = [], {}, [], []
-    tags = []
+    tags, seen_commits = [], set()
     for line in out.decode("utf-8", "replace").splitlines():
         parts = line.split(" ", 2)
         if len(parts) < 2:
@@ -1499,7 +1499,11 @@ def enumerate_objects(ranges):
         sha, kind = parts[0], parts[1]
         path = parts[2] if len(parts) == 3 else ""
         if kind == "commit":
-            commits.append(sha)
+            # Once per commit: overlapping ranges list it again, and the count is
+            # reported next to the other gates', which count each commit once.
+            if sha not in seen_commits:
+                seen_commits.add(sha)
+                commits.append(sha)
             continue
         if kind == "tag":
             # An ANNOTATED tag carries a message of its own, and it rides the

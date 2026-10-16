@@ -49,7 +49,7 @@ PAYLOAD=(
     "$SRC/watermark-allow.conf:watermark-allow.conf"
     "$SRC/watermark-optout.conf:watermark-optout.conf"
     "$SRC/exposure-scan.py:exposure-scan.py"
-    "$SRC/signature-check:signature-check"
+    "$SRC/signature-check.py:signature-check.py"
     "$SRC/pre-push:pre-push"
 )
 
