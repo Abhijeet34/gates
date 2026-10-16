@@ -244,6 +244,7 @@ class Caller:
         self.git("add", "-A")
         self.git(*commit, "-m", headline)
         self.judge(identity)
+        self.gates.git("checkout", "--quiet", "--detach", target)
         # The release's own scripts never see a token: they need none, and this
         # one can write to the caller.
         tokenless = {
