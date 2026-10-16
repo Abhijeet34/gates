@@ -34,6 +34,9 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 - **Every gate is registered in `.ci/gate-registry.toml` with executable `red` and `clean` inputs, a `run` and a `finding`, and `.ci/check.sh gates-proof` executes them: red must be refused naming the finding, clean must pass, and red must pass once the row's `command` is neutered.**
   It also fails on an unregistered gate file or a test no suite runs.
   Adding a workflow, hook, `run/` file or `.ci` script means adding its row in the same commit; a git-lfs shim or an installer goes under `[[exempt]]` with a reason.
+- **`bin/gates.py bump` and `rollback` move a caller's `.github/gates.lock`; README.md, "Bumping", owns the design and `bin/rollout.toml` the stages.**
+  `createCommitOnBranch` keeps a modified file's mode but adds every new file `100644` (measured 2026-10-16), so a caller missing a synced hook is refused and needs one `sync.sh` push first.
+  `.ci/test-bump.py` runs the tool against fixture callers through `.ci/fixtures/gh-stub.py`, which models that behaviour; change both together.
 
 ## Maintaining this file
 

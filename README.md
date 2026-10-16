@@ -12,6 +12,7 @@ Licensed under the Apache License 2.0; see `LICENSE` and `NOTICE`.
 | `system-maintenance/git-hooks/` | The machine-wide hooks deployed to `~/.git-hooks` by `install.sh`, including `watermark-scan.py`. Its `README.md` owns the design and the measurements. |
 | `.github/workflows/shared-*.yml` | Reusable workflows: `secret-scan`, `watermark-scan`, `dependency-advisories`, `guard-generated-files`, `no-mistakes-required`. Each is a bootstrap; see "Pinning". |
 | `run/` | What each bootstrap runs from the locked gates commit: `lock.sh`, which decides that commit, and one script per gate. |
+| `bin/gates.py`, `bin/rollout.toml` | `gates bump` and `gates rollback`, which move callers' locks; see "Bumping". |
 | `.ci/` | The contract test for each gate script, the gitleaks rule and allowlist suites, and `check.sh`, which runs all of them. |
 
 ## Calling a workflow
@@ -58,15 +59,47 @@ Nothing ancestry-checks the bootstrap pin itself, so a tag that moved would have
 | Green checks | the commit has no `checks` run from GitHub Actions (app 15368), or its latest one is not `success`. | `lock-checks` |
 | Bundling | a pull request changes the lock and anything but the lock and the synced copies. | `lock-bundled` |
 | Author | a pull request changes the lock and its author is not a `<login> <id>` line of `run/bump-identity` on gates `main`. | `lock-author` |
-| Downgrade | a pull request moves the lock to a commit that does not descend from the base's. | `lock-downgrade` |
+| Downgrade | a pull request moves the lock to a commit that does not descend from the base's, unless it is exactly the lock the base's lock replaced on its first-parent history (a rollback). | `lock-downgrade`, `lock-rollback` |
 | Drift | the caller's synced copies differ from gates at the locked commit (`run/secret-scan/verify.sh`). | `lock-drift` |
 
 Adding or removing the lock is a lock change: a removal moves the lock to the bootstrap's own commit, and passes only as a bump would.
 The bump identity is read from `main` rather than from the caller or the lock, because the pull request under judgement must not name its own author as authorised.
-It is bound by numeric id as well as login, because a login is claimed by whoever registers an App of that name first; until the bump App exists, `run/bump-identity` names nobody and every lock change is refused.
+It is bound by numeric id as well as login, because a login is claimed by whoever registers an App of that name first; with no line there, every lock change is refused.
+It names the builder App, `hw-bodhi[bot]`, which every factory branch push also uses, so the author control separates the factory from a person, Dependabot or a fork, not one factory task from another; the other controls and the merge review are what hold against a builder token used for the wrong lock.
 
 The green-checks call uses the caller's `GITHUB_TOKEN` against this public repository.
 That a caller's token granted only `contents: read` can read these check runs is not yet measured from another repository; if it cannot, the lock is refused, never trusted.
+
+## Bumping
+
+```bash
+bin/gates.py bump v2           # open each lock bump the rollout allows today
+bin/gates.py rollback quoth    # move one caller's lock back one step
+```
+
+`bump` walks the stages in `bin/rollout.toml`, which is the only place a caller list or a hold period is written.
+A stage opens once every repository of the stage before it has the release merged on its default branch, with every check run on that merge commit passing, and that stage's `hold_days` have passed since the last of those merges: canaries on day 0, the fleet from day 2, products from day 7.
+It is safe to re-run: a caller already at or past the release is reported, an open bump pull request is left alone, and a stage still holding prints when it opens.
+
+For each caller it opens, it mints the builder App's token for that one repository (`app-token builder --repo <r>`), clones the default branch, and builds the bump commit locally in two steps.
+First the lock alone, judged by `run/lock.sh` from the caller's own bootstrap pin exactly as the pull request's CI will judge it, so nothing from the release runs until it is proved on gates `main` with a green `checks` run and the token's identity is the bump identity.
+Then the release's `.ci/gitleaks/sync.sh`, run without any token, and `run/lock.sh` and `run/secret-scan/verify.sh` again, which refuse a release that writes more than the lock and the copies.
+Only then does it write to GitHub: a branch `gates-lock/<commit>` at the base, one `createCommitOnBranch` commit carrying exactly those files, and the pull request.
+The commit is GitHub's own, so it is signed by `web-flow` and verified, and its author is the builder App; it is fetched back and refused, with its branch deleted, unless it is verified, by that author, and has the tree that was judged.
+
+`rollback` moves a caller's lock to the one its last lock change replaced, with that commit's copies, through the same path; it refuses a second rollback, which would re-apply the release the first one removed.
+Rolling forward again is the next `bump`.
+
+Three properties of `createCommitOnBranch` shape this, measured on 2026-10-16 on a throwaway gates branch as the builder App:
+
+- A modified file keeps its mode, but an added file is always `100644`, and the mutation has no mode field. A caller that lacks a synced hook therefore cannot gain it through a bump, because `verify.sh` refuses a hook that is not executable; `bump` refuses that caller and names the file, and the remedy is one `sync.sh` push.
+- The commit is verified (`signature.state` `VALID`, `wasSignedByGitHub` true), which the signature-requiring rulesets accept.
+- A file under `.github/workflows/` is refused to the builder's default token (`Resource not accessible by integration`), so a bump cannot change the workflow that judges it.
+
+The release's `sync.sh` runs on the machine that bumps, as `install.sh deploy` does, and the same proof gates both: it is on `main`, its `checks` run is green, and it was reviewed there.
+
+Dependabot was the alternative for the lock and does not fit it: its `github-actions` updater reads only workflow files, so it cannot move `.github/gates.lock`, and it cannot run `sync.sh`, so even a bump of the workflow pin would arrive with drifted copies.
+It stays the writer for the rare bootstrap pin bump, which needs `workflows` write.
 
 ## Using the hooks on a machine
 
