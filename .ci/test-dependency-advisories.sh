@@ -1,14 +1,11 @@
 #!/usr/bin/env bash
-# Regression tests for the three step bodies inside
-# .github/workflows/shared-dependency-advisories.yml.
+# Regression tests for the three parts of the advisory gate under
+# run/dependency-advisories/, which .github/workflows/shared-dependency-advisories.yml runs.
 #
 #   .ci/test-dependency-advisories.sh
 #
-# Same reason as the other three shared-workflow suites: a reusable workflow's
-# steps run in the CALLER's checkout, where no file of this repository exists,
-# so the logic lives inline in YAML where no linter reaches it, and callers
-# reference @main with no digest pin - so a broken body is live in every caller
-# at once. This file is the only thing standing against that.
+# A broken part is live in every caller whose lock reaches it, and at once in
+# every caller still on @main. This file is the only thing standing against that.
 #
 # The properties, in the order that matters:
 #   1. an open high advisory FAILS,
@@ -26,7 +23,7 @@
 # uses for the gitleaks failures real gitleaks cannot be made to produce.
 #
 # The last three cases are mutation cases: each deletes one property from the
-# extracted body and fails unless the body then wrongly allows an input it
+# body and fails unless the body then wrongly allows an input it
 # refuses today. A property with no such case is a property nothing measures
 # (AGENTS.md, "a gate that certifies what it never measured").
 
@@ -34,8 +31,7 @@ set -uo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 
-WORKFLOW=.github/workflows/shared-dependency-advisories.yml
-[ -r "$WORKFLOW" ] || { echo "test-dependency-advisories: cannot read $WORKFLOW" >&2; exit 2; }
+PARTS=run/dependency-advisories
 for t in jq yq; do
     command -v "$t" >/dev/null 2>&1 || { echo "test-dependency-advisories: $t is not installed (brew install $t)" >&2; exit 2; }
 done
@@ -45,40 +41,18 @@ trap 'rm -rf "$workdir"' EXIT
 
 failed=0
 
-# --- extract the step bodies -------------------------------------------------
-
-# Print the `run: |` payload of the step named $2, dedented, ending at the first
-# non-blank line indented less than the block.
-extract() { # workflow step-name outfile
-    awk -v step="name: $2" '
-        index($0, step) { found = 1; next }
-        found && !inblock && /^[[:space:]]*run:[[:space:]]*\|[[:space:]]*$/ {
-            match($0, /^ */); indent = RLENGTH + 2; inblock = 1; next
-        }
-        inblock {
-            if ($0 ~ /^[[:space:]]*$/) { print ""; next }
-            match($0, /^ */)
-            if (RLENGTH < indent) exit
-            print substr($0, indent + 1)
-        }
-    ' "$1" >"$3"
-}
-
 READ_STEP="$workdir/read.sh"
 JUDGE_STEP="$workdir/judge.sh"
 COMPARE_STEP="$workdir/compare.sh"
-extract "$WORKFLOW" "Read this repository's open Dependabot alerts" "$READ_STEP"
-extract "$WORKFLOW" 'Read the dependency changes this pull request makes' "$COMPARE_STEP"
-extract "$WORKFLOW" 'Judge the open advisories against the deferral list' "$JUDGE_STEP"
+cp "$PARTS/alerts.sh" "$READ_STEP"
+cp "$PARTS/compare.sh" "$COMPARE_STEP"
+cp "$PARTS/judge.sh" "$JUDGE_STEP"
 
-# Extraction is the one failure that makes every case below pass vacuously, and
-# the awk stops at the first under-indented line - so a continuation written at
-# column 2 inside a multi-line string truncates the body silently. Asserted at
-# BOTH ends of each block, which is the correction
-# .ci/test-guard-generated-files.sh had to make.
+# A truncated part makes every case below pass vacuously, so each is asserted
+# at BOTH ends.
 assert_marker() { # file marker label
     grep -qF -- "$2" "$1" || {
-        printf 'FAIL the %s body extracted from %s is missing %s\n' "$3" "$WORKFLOW" "$2"
+        printf 'FAIL the %s body in %s is missing %s\n' "$3" "$PARTS" "$2"
         exit 1
     }
 }
@@ -566,7 +540,7 @@ said '  and the changes are recorded' '"changes"' record
 # --- mutations: each property, shown having teeth ----------------------------
 #
 # A registry cannot be its own oracle. Each case deletes one property from the
-# extracted body and fails unless the body then wrongly ALLOWS an input it
+# body and fails unless the body then wrongly ALLOWS an input it
 # refuses today.
 
 echo '--- mutations ---'

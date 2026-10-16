@@ -1,23 +1,18 @@
 #!/usr/bin/env bash
-# Regression tests for the check body inside
-# .github/workflows/shared-guard-generated-files.yml.
+# Regression tests for run/guard-generated-files.sh, the check body
+# .github/workflows/shared-guard-generated-files.yml runs.
 #
 # That body is the only copy of the guard logic for five repositories, and it
 # is a merge of four variants that had each been fixed differently. The cases
 # below are the union of what those variants pinned: tasks-axi carried them as
 # a vitest suite against a repo-local script, which the move to a shared
 # workflow removes, so they live here now.
-#
-# The logic is not a script in this repository: a reusable workflow's steps
-# run in the CALLER's checkout, where no file of this repository exists. So the
-# workflow holds the only copy and this test extracts it.
 
 set -uo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 
-WORKFLOW=.github/workflows/shared-guard-generated-files.yml
-STEP='name: Check PR does not modify release-please-generated files'
+SCRIPT=run/guard-generated-files.sh
 
 workdir=$(mktemp -d)
 trap 'rm -rf "$workdir"' EXIT
@@ -30,32 +25,15 @@ export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null
 
 guard="$workdir/guard.sh"
 
-# Print the `run: |` block that follows $STEP, dedented. Ends at the first
-# non-blank line indented less than the block.
-awk -v step="$STEP" '
-    index($0, step) { found = 1 }
-    found && !inblock && /^[[:space:]]*run: \|[[:space:]]*$/ {
-        match($0, /^ */); indent = RLENGTH + 2; inblock = 1; next
-    }
-    inblock {
-        if ($0 ~ /^[[:space:]]*$/) { print ""; next }
-        match($0, /^ */)
-        if (RLENGTH < indent) exit
-        print substr($0, indent + 1)
-    }
-' "$WORKFLOW" >"$guard"
+cp "$SCRIPT" "$guard"
 
 failed=0
 
-# Extraction is the one failure that would make every case below pass
-# vacuously, so it is asserted rather than assumed - at both ends. The awk above
-# stops at the first line indented less than the block, so a continuation line
-# written at column 2 inside a multi-line string truncates the body silently and
-# every case then fails on a syntax error at whatever line it stopped on.
-# Measured while writing this section, on the `notes=` assignment.
+# A body missing either end would make every case below pass vacuously, so
+# both are asserted rather than assumed.
 for marker in 'find-copies-harder' 'No release-please-generated files modified. OK.'; do
     if ! grep -qF "$marker" "$guard"; then
-        printf 'FAIL check body extracted from %s is missing %s\n' "$WORKFLOW" "$marker"
+        printf 'FAIL check body %s is missing %s\n' "$SCRIPT" "$marker"
         exit 1
     fi
 done
@@ -453,7 +431,7 @@ DECL
 # here. What is asserted is that each property has an input that turns green -
 # wrongly allowed - the moment the property leaves the workflow.
 #
-# The mutation is applied to the extracted body, not to the workflow, and every
+# The mutation is applied to a copy of the body, never to the script, and every
 # sed is checked for having changed something: a mutation that silently no-ops
 # certifies a property nobody measured, which is the defect this section exists
 # to refuse.

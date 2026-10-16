@@ -60,6 +60,9 @@ def discovered():
         )
         if gate and p.suffix not in (".conf", ".pyc"):
             found.add(str(p.relative_to(root)))
+    found.update(
+        str(p.relative_to(root)) for p in (root / "run").rglob("*") if p.is_file()
+    )
     for p in (root / ".ci").glob("*.sh"):
         if not p.name.startswith("test-") and p.name != "check.sh":
             found.add(str(p.relative_to(root)))
@@ -86,53 +89,10 @@ def runs(body, test):
     return re.search(pat, body, re.M) is not None
 
 
-def step_block(lines, step):
-    """(first, end) line indexes of the `run: |` body of the step named `step`."""
-    names = [i for i, line in enumerate(lines) if line.strip() == f"- name: {step}"]
-    if len(names) != 1:
-        return None
-    for i in range(names[0] + 1, len(lines)):
-        if lines[i].lstrip().startswith("- "):
-            return None
-        if re.fullmatch(r"\s*run: \|\s*", lines[i]):
-            break
-    else:
-        return None
-    first = i + 1
-    body = [ln for ln in lines[first:] if ln.strip()]
-    indent = len(body[0]) - len(body[0].lstrip()) if body else 0
-    end = first
-    while end < len(lines) and (
-        not lines[end].strip() or len(lines[end]) - len(lines[end].lstrip()) >= indent
-    ):
-        end += 1
-    while end > first and not lines[end - 1].strip():
-        end -= 1
-    return (first, end, indent) if end > first else None
-
-
-def resolve(tree, command, scratch):
-    """The executable path of `command` in `tree`: the file, or its extracted step body."""
-    path, _, step = command.partition("#")
-    if not step:
-        return tree / path
-    lines = (tree / path).read_text().splitlines()
-    first, end, indent = step_block(lines, step)
-    body = scratch / "step.sh"
-    body.write_text("\n".join(ln[indent:] for ln in lines[first:end]) + "\n")
-    return body
-
-
 def neuter(tree, command):
     """Replace `command` in `tree` with one that exits 0 having checked nothing."""
-    path, _, step = command.partition("#")
-    target = tree / path
-    if step:
-        lines = target.read_text().splitlines()
-        first, end, indent = step_block(lines, step)
-        lines[first:end] = [" " * indent + "true"]
-        target.write_text("\n".join(lines) + "\n")
-    elif target.suffix == ".py":
+    target = tree / command
+    if target.suffix == ".py":
         target.write_text("#!/usr/bin/env python3\nraise SystemExit(0)\n")
     elif target.suffix == ".toml":
         target.write_text("")
@@ -164,7 +124,7 @@ def execute(gate, kind, tree):
         noreply = "gates-proof@users.noreply.github.com"
         env.update(
             ROOT=str(tree),
-            GATE=str(resolve(tree, gate["command"], scratch)),
+            GATE=str(tree / gate["command"]),
             PROOF_SCRATCH=str(scratch),
             GIT_CONFIG_GLOBAL="/dev/null",
             GIT_CONFIG_SYSTEM="/dev/null",
@@ -257,14 +217,9 @@ for g in data.get("gate", []):
         registered.add(path)
         if not (root / path).is_file():
             fail(f"{gid}: gate file {path} does not exist")
-    path, _, step = g["command"].partition("#")
-    if path not in g["gates"]:
+    if g["command"] not in g["gates"]:
         fail(f"{gid}: command {g['command']} is not one of its gates")
-    elif not (root / path).is_file():
-        pass
-    elif step and not step_block((root / path).read_text().splitlines(), step):
-        fail(f"{gid}: no single step named {step!r} with a `run: |` body in {path}")
-    else:
+    elif (root / g["command"]).is_file():
         provable.append(g)
     if not (root / g["test"]).is_file():
         fail(f"{gid}: test {g['test']} does not exist")

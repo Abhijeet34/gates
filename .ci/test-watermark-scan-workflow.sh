@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Regression tests for the step body inside
-# .github/workflows/shared-watermark-scan.yml.
+# Regression tests for run/watermark-scan.sh, the scan
+# .github/workflows/shared-watermark-scan.yml runs, and for where that workflow
+# takes its scanner from.
 #
 #   .ci/test-watermark-scan-workflow.sh
 #
@@ -54,57 +55,48 @@ export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null
 pass() { printf 'ok   %s\n' "$1"; }
 fail() { printf 'FAIL %s\n' "$1"; failed=1; }
 
-# --- extract the step body ----------------------------------------------------
-
-extract() { # workflow step-name outfile
-    awk -v step="name: $2" '
-        index($0, step) { found = 1; next }
-        found && !inblock && /^[[:space:]]*run:[[:space:]]*\|[[:space:]]*$/ {
-            match($0, /^ */); indent = RLENGTH + 2; inblock = 1; next
-        }
-        inblock {
-            if ($0 ~ /^[[:space:]]*$/) { print ""; next }
-            match($0, /^ */)
-            if (RLENGTH < indent) exit
-            print substr($0, indent + 1)
-        }
-    ' "$1" >"$3"
-}
-
 STEP="$workdir/scan.sh"
-extract "$WORKFLOW" 'Scan the working tree' "$STEP"
+cp run/watermark-scan.sh "$STEP"
 
-# The paths the step reads, taken from the workflow rather than restated here,
-# so every case below runs the scanner location the runner would.
+# The paths the scan reads, taken from the workflow rather than restated here.
+# Each must sit in the gates checkout: the checkout of job.workflow_repository
+# at job.workflow_sha into .gates, which the resolve step moves to the GATES_DIR
+# it exports and run/lock.sh re-checks out at the locked commit. The cases below
+# stand that checkout in at .gates inside the caller's tree.
 JOB=.jobs.watermark-scan
-SCANNER_PATH=$(yq -r "$JOB.env.SCANNER" "$WORKFLOW")
-ALLOW_PATH=$(yq -r "$JOB.env.ALLOWLIST" "$WORKFLOW")
-CHECKOUT_DIR=$(yq -r "$JOB.steps[] | select(.with.repository == \"\${{ job.workflow_repository }}\") | .with.path" "$WORKFLOW")
-CHECKOUT_REF=$(yq -r "$JOB.steps[] | select(.with.repository == \"\${{ job.workflow_repository }}\") | .with.ref" "$WORKFLOW")
-if [ -n "$CHECKOUT_DIR" ] && [ "$CHECKOUT_DIR" != null ] \
-    && [ "$CHECKOUT_REF" = '${{ job.workflow_sha }}' ] \
-    && [ "${SCANNER_PATH#"$CHECKOUT_DIR"/}" != "$SCANNER_PATH" ] \
-    && [ "${ALLOW_PATH#"$CHECKOUT_DIR"/}" != "$ALLOW_PATH" ]; then
-    pass "scanner and allowlist resolve inside the checkout of this workflow's own repository at its own commit"
+SCAN_ENV="$JOB.steps[] | select(.name == \"Scan\") | .env"
+SCANNER_EXPR=$(yq -r "$SCAN_ENV.SCANNER" "$WORKFLOW")
+ALLOW_EXPR=$(yq -r "$SCAN_ENV.ALLOWLIST" "$WORKFLOW")
+GATES_CHECKOUT="$JOB.steps[] | select(.with.repository == \"\${{ job.workflow_repository }}\")"
+CHECKOUT_DIR=$(yq -r "$GATES_CHECKOUT | .with.path" "$WORKFLOW")
+CHECKOUT_REF=$(yq -r "$GATES_CHECKOUT | .with.ref" "$WORKFLOW")
+RESOLVE=$(yq -r "$JOB.steps[] | select(.name == \"Resolve the locked gates commit\") | .run" "$WORKFLOW")
+PREFIX='${{ env.GATES_DIR }}/'
+if [ "$CHECKOUT_DIR" = .gates ] && [ "$CHECKOUT_REF" = '${{ job.workflow_sha }}' ] \
+    && grep -qxF 'mv .gates "$RUNNER_TEMP/gates"' <<<"$RESOLVE" \
+    && grep -qxF 'echo "GATES_DIR=$RUNNER_TEMP/gates" >>"$GITHUB_ENV"' <<<"$RESOLVE" \
+    && grep -qF 'bash -e "$RUNNER_TEMP/gates/run/lock.sh"' <<<"$RESOLVE" \
+    && [ "${SCANNER_EXPR#"$PREFIX"}" != "$SCANNER_EXPR" ] \
+    && [ "${ALLOW_EXPR#"$PREFIX"}" != "$ALLOW_EXPR" ]; then
+    pass "scanner and allowlist resolve inside the job.workflow_repository checkout that run/lock.sh places"
 else
-    fail "scanner ($SCANNER_PATH) or allowlist ($ALLOW_PATH) is not read from the job.workflow_repository checkout at job.workflow_sha (path '$CHECKOUT_DIR', ref '$CHECKOUT_REF')"
+    fail "scanner ($SCANNER_EXPR) or allowlist ($ALLOW_EXPR) is not read from the job.workflow_repository checkout at job.workflow_sha that run/lock.sh places (path '$CHECKOUT_DIR', ref '$CHECKOUT_REF')"
 fi
+SCANNER_PATH=".gates/${SCANNER_EXPR#"$PREFIX"}"
+ALLOW_PATH=".gates/${ALLOW_EXPR#"$PREFIX"}"
 if [ "$(yq -r '.on.workflow_call.inputs // {} | keys | length' "$WORKFLOW")" = 0 ]; then
     pass "no input lets a caller name its own scanner"
 else
     fail "the workflow takes inputs, so a caller can point the scan at a scanner of its choosing"
 fi
 
-# Extraction is the one failure that makes every case below pass vacuously, and
-# the awk stops at the first under-indented line - so a continuation written at
-# column 2 inside a multi-line shell string truncates the body silently.
-# Asserted at BOTH ends, which is the correction test-guard-generated-files.sh
-# had to make.
+# A truncated body makes every case below pass vacuously, so both ends are
+# asserted.
 for marker in 'COULD NOT ESTABLISH' 'scan did not complete'; do
     if grep -qF "$marker" "$STEP"; then
-        pass "the extracted body contains $marker"
+        pass "the scan body contains $marker"
     else
-        fail "the extracted body is missing $marker - extraction truncated"
+        fail "the scan body is missing $marker"
     fi
 done
 

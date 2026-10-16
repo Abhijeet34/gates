@@ -39,8 +39,8 @@ MANIFEST=.ci/upstream-owners.txt
 IFS= read -r -d '' DECLARED <<'DECL' || true
 .ci/upstream-owners.txt	registry	*	the owner list itself, and the one place an account is named
 .ci/fixtures/lavish-axi-31-CHANGELOG.md	cache	2	lavish-axi#31's CHANGELOG.md at HEAD, byte for byte; test-guard-generated-files.sh asserts its blob id against the sha GitHub reports for that pull request, so scrubbing the two fork-point links breaks the check it exists to prove
-.github/workflows/shared-no-mistakes-required.yml	literal	1	the marker the no-mistakes binary writes; editing it reds every caller's PR gate
-.ci/test-no-mistakes-required.sh	literal	1	the same marker, pinned so the workflow's copy cannot drift
+run/no-mistakes-required.sh	literal	1	the marker the no-mistakes binary writes; editing it reds every caller's PR gate
+.ci/test-no-mistakes-required.sh	literal	1	the same marker, pinned so the script's copy cannot drift
 DECL
 
 owners=$(grep -vE '^[[:space:]]*(#|$)' "$MANIFEST" | sort -u)
