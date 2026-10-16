@@ -1,0 +1,7 @@
+# The one identity whose pull request may change a caller's .github/gates.lock,
+# one `<login> <numeric user id>` per line. run/lock.sh reads this file from
+# gates main, never from the pull request it is judging.
+#
+# Empty until the bump App is registered: a login alone binds to whoever first
+# registers an App of that name, so the numeric id is part of the binding, and
+# with no line here every lock change is refused.
