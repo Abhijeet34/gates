@@ -134,7 +134,7 @@ cp system-maintenance/git-hooks/commit-msg "$moved/system-maintenance/git-hooks/
 GATES="$moved" gate 'copies canonical at one commit fail against a checkout at another' 1 '.gitleaks.toml has DRIFTED'
 rm "$moved/.gitleaks.toml"
 GATES="$moved" gate 'a checkout carrying no canonical copy refuses' 1 'COULD NOT ESTABLISH'
-GATES= gate 'an unset gates checkout refuses' 1 'GATES_DIR'
+GATES='' gate 'an unset gates checkout refuses' 1 'GATES_DIR'
 
 # --- a repository to scan ----------------------------------------------------
 
