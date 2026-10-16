@@ -344,6 +344,21 @@ printf 'refs/heads/main %s refs/heads/main %040d\n' "$(git rev-parse HEAD)" 0 |
 finding = "IDENTITY OR MACHINE EXPOSURE"
 
 [[gate]]
+id = "signature-check"
+surface = "Pre-push"
+gates = ["system-maintenance/git-hooks/signature-check.py", "system-maintenance/git-hooks/pushrange.py"]
+test = "system-maintenance/git-hooks/test-signature-check.sh"
+suite = "shell"
+command = "system-maintenance/git-hooks/signature-check.py"
+# The same unsigned commit; only the destination ref differs. Main refuses it, a branch does not.
+red = '''git init -q -b main && echo hi > a.txt && git add -A && git commit -qm unsigned && echo refs/heads/main > ref'''
+clean = '''git init -q -b main && echo hi > a.txt && git add -A && git commit -qm unsigned && echo refs/heads/work > ref'''
+run = '''
+printf '%s %s %s %040d\n' "$(cat ref)" "$(git rev-parse HEAD)" "$(cat ref)" 0 | python3 "$GATE" push origin "$PWD/none"
+'''
+finding = "carry no signature"
+
+[[gate]]
 id = "watermark-scan"
 surface = "Pre-push"
 gates = ["system-maintenance/git-hooks/watermark-scan.py"]
@@ -376,7 +391,8 @@ bash "$ROOT/system-maintenance/git-hooks/install.sh" deploy > /dev/null && echo 
 git init -q --bare -b main up.git && git clone -q up.git fresh 2> /dev/null && cd fresh
 echo "print('hello')" > app.py && git add -A && git commit -qm clean
 '''
-run = 'git push origin main'
+# A branch, because main refuses the unsigned commits these inputs make (signature-check).
+run = 'git push origin HEAD:refs/heads/work'
 finding = "secrets found in the commits being pushed. Push refused."
 
 [[gate]]
