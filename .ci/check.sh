@@ -126,6 +126,8 @@ check_secrets() {
     ./system-maintenance/git-hooks/test-global-hooks.sh || rc=1
     python3 ./system-maintenance/git-hooks/test-watermark-scan.py || rc=1
     ./.ci/test-secret-scan.sh || rc=1
+    # The lock bump and its rollback, judged by the real lock.sh and secret scan.
+    python3 ./.ci/test-bump.py || rc=1
     gitleaks dir . --redact --no-banner --config .gitleaks.toml || rc=1
     gitleaks git . --redact --no-banner --config .gitleaks.toml || rc=1
     return $rc

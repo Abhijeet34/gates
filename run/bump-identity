@@ -2,6 +2,8 @@
 # one `<login> <numeric user id>` per line. run/lock.sh reads this file from
 # gates main, never from the pull request it is judging.
 #
-# Empty until the bump App is registered: a login alone binds to whoever first
-# registers an App of that name, so the numeric id is part of the binding, and
-# with no line here every lock change is refused.
+# A login alone binds to whoever first registers an App of that name, so the
+# numeric id is part of the binding; with no line here every lock change is
+# refused. The builder App, which bin/gates.py runs as (README.md, "Bumping");
+# its id is `gh api 'users/hw-bodhi%5Bbot%5D' --jq .id`, read 2026-10-16.
+hw-bodhi[bot] 343227966
