@@ -131,9 +131,15 @@ check_secrets() {
 
 # --- gates-proof ---------------------------------------------------------------
 
-# Every gate carries a seeded defect that must turn it red; the registry names
-# it and this proves the name still resolves. Static, so it costs under a second.
+# Every gate is run on a red input it must refuse and a clean one it must pass,
+# then neutered to prove the red verdict came from it. The cases run in
+# parallel, so the whole suite costs seconds, but it needs every gate's tools.
 check_gates-proof() {
+    need gitleaks 'brew install gitleaks' || return 1
+    need exiftool 'brew install exiftool' || return 1
+    need yq 'brew install yq' || return 1
+    need jq 'brew install jq' || return 1
+    need git-lfs 'brew install git-lfs' || return 1
     local rc=0
     python3 .ci/gates-proof.py || rc=1
     bash .ci/test-gates-proof.sh || rc=1

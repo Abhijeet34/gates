@@ -28,6 +28,11 @@ concurrency:
 permissions:
   contents: read
 
+# One gitleaks pin for every job that installs it.
+env:
+  GITLEAKS_VERSION: "8.30.1"
+  GITLEAKS_SHA256: "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
+
 # Third-party actions are pinned to a commit SHA, not a tag: a tag can be
 # repointed at new code by whoever owns the action.
 jobs:
@@ -58,9 +63,6 @@ jobs:
     name: secret scan
     runs-on: ubuntu-24.04
     timeout-minutes: 15
-    env:
-      GITLEAKS_VERSION: "8.30.1"
-      GITLEAKS_SHA256: "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -86,12 +88,28 @@ jobs:
 
       - run: .ci/check.sh secrets
 
+  # The proof executes every gate on its red and clean inputs, so it needs each
+  # gate's tools: gitleaks for the secret gates, exiftool for the watermark ones.
   gates-proof:
     name: gates proof
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install gitleaks
+        run: |
+          set -euo pipefail
+          url="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -fsSL "$url" -o gitleaks.tar.gz
+          echo "${GITLEAKS_SHA256}  gitleaks.tar.gz" | sha256sum --check --strict
+          tar -xzf gitleaks.tar.gz gitleaks
+          sudo install -m 0755 gitleaks /usr/local/bin/gitleaks
+          rm -f gitleaks gitleaks.tar.gz
+
+      - name: Install the watermark gate's inspector
+        run: sudo apt-get update && sudo apt-get install -y libimage-exiftool-perl
+
       - run: .ci/check.sh gates-proof
 
   # The one status the branch ruleset requires. It always runs, and it passes

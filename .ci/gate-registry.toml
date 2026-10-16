@@ -1,14 +1,20 @@
-# Every gate this repository ships, the surface it guards, and the two cases
-# that prove it: `red` is a seeded defect the gate must refuse, `clean` is an
-# input it must let through. Both are fixed strings that must appear in `test`,
-# so deleting either case from the test turns `.ci/check.sh gates-proof` red.
+# Every gate this repository ships, the surface it guards, and the inputs that
+# prove it by execution; .ci/gates-proof.py runs them.
 #
-# `suite` names the check.sh suite that runs `test`; gates-proof fails if that
-# suite does not invoke it. A gate file found on disk and named neither in a
-# `gates` list nor in `[[exempt]]` fails too. Anchors are matched as text, so a
-# comment cannot: comments are stripped from the test and from check.sh before
-# matching, and the suite must invoke the test at a command position. Whether a
-# case executes is still proved only by running the test.
+# `command` is the gate itself: a file, or `workflow#step name` for the
+# `run: |` body of one workflow step. `red` and `clean` are bash that build an
+# input in an empty working directory; `run` then invokes the gate on it, and
+# its exit status is the verdict. The proof requires red to exit non-zero with
+# `finding` in its output and clean to exit 0, then replaces `command` with
+# one that exits 0 and requires red to pass, so a `run` that decides the
+# verdict without the gate is refused. Each case sees ROOT (the tree under
+# proof), GATE (the command's executable path in it; a step body runs as
+# `bash -e "$GATE"`, as on the runner) and a git with no global or system
+# config and a noreply identity.
+#
+# `test` is the gate's fuller regression suite and `suite` the check.sh suite
+# that must run it. A gate file found on disk and named neither in a `gates`
+# list nor in `[[exempt]]` fails the proof too.
 
 [[gate]]
 id = "checks-verdict"
@@ -16,8 +22,11 @@ surface = "PR checks"
 gates = [".ci/checks-verdict.sh", ".github/workflows/ci.yml"]
 test = ".ci/test-checks-verdict.sh"
 suite = "shell"
-red = "expect 'all skipped' 1"
-clean = "pull request, every job ran"
+command = ".ci/checks-verdict.sh"
+red = '''echo '{"shell":{"result":"skipped"},"python":{"result":"skipped"}}' > needs.json'''
+clean = '''echo '{"shell":{"result":"success"},"python":{"result":"success"}}' > needs.json'''
+run = 'bash "$GATE" < needs.json'
+finding = "a gate did not run, or did not pass"
 
 [[gate]]
 id = "workflow-policy"
@@ -25,8 +34,11 @@ surface = "Infra and CI config"
 gates = [".ci/test-workflow-policy.sh"]
 test = ".ci/test-workflow-policy.sh"
 suite = "shell"
-red = "pull_request_target trigger"
-clean = "allows GITHUB_TOKEN"
+command = ".ci/test-workflow-policy.sh"
+red = '''mkdir wf && printf 'on:\n  pull_request_target:\n' > wf/ci.yml'''
+clean = '''mkdir wf && printf 'on:\n  pull_request:\n' > wf/ci.yml'''
+run = 'bash "$GATE" "$PWD/wf"'
+finding = "ci.yml:2:  pull_request_target:"
 
 [[gate]]
 id = "dependency-advisories"
@@ -34,8 +46,20 @@ surface = "Dependencies"
 gates = [".github/workflows/shared-dependency-advisories.yml"]
 test = ".ci/test-dependency-advisories.sh"
 suite = "shell"
-red = "an open high advisory fails"
-clean = "no advisory at or above the floor passes"
+command = ".github/workflows/shared-dependency-advisories.yml#Judge the open advisories against the deferral list"
+red = '''
+echo '[{"security_advisory": {"ghsa_id": "GHSA-aaaa-bbbb-cccc", "severity": "high"},
+  "dependency": {"scope": "runtime", "package": {"name": "left-pad"}, "manifest_path": "package-lock.json"}}]' > alerts.json
+'''
+clean = '''
+echo '[{"security_advisory": {"ghsa_id": "GHSA-aaaa-bbbb-cccc", "severity": "medium"},
+  "dependency": {"scope": "runtime", "package": {"name": "left-pad"}, "manifest_path": "package-lock.json"}}]' > alerts.json
+'''
+run = '''
+ALERTS_JSON=alerts.json COMPARE_JSON=none EVENT_NAME=push SEVERITY_FLOOR=high \
+  FAIL_ON_DEVELOPMENT=false DEFERRALS_PATH=deferrals.yml bash -e "$GATE"
+'''
+finding = "are neither fixed nor recorded in deferrals.yml"
 
 [[gate]]
 id = "guard-generated-files"
@@ -43,8 +67,19 @@ surface = "PR checks"
 gates = [".github/workflows/shared-guard-generated-files.yml"]
 test = ".ci/test-guard-generated-files.sh"
 suite = "shell"
-red = "first add of an unlisted path fails"
-clean = "first add of an allowed path passes"
+command = ".github/workflows/shared-guard-generated-files.yml#Check PR does not modify release-please-generated files"
+red = '''
+git init -q -b main && echo '# Changelog' > CHANGELOG.md && echo hi > README.md
+git add -A && git commit -qm base && git tag base
+echo '- a hand-written entry' >> CHANGELOG.md && git commit -qam edit
+'''
+clean = '''
+git init -q -b main && echo '# Changelog' > CHANGELOG.md && echo hi > README.md
+git add -A && git commit -qm base && git tag base
+echo more >> README.md && git commit -qam edit
+'''
+run = 'BASE_SHA=$(git rev-parse base) HEAD_SHA=$(git rev-parse HEAD) ALLOW_FIRST_ADD= bash -e "$GATE"'
+finding = "This PR modifies release-please-generated files: CHANGELOG.md"
 
 [[gate]]
 id = "no-mistakes-required"
@@ -52,8 +87,22 @@ surface = "PR checks"
 gates = [".github/workflows/shared-no-mistakes-required.yml"]
 test = ".ci/test-no-mistakes-required.sh"
 suite = "shell"
-red = "a body that never carries the marker fails"
-clean = "a marker written by an upstream build passes"
+command = ".github/workflows/shared-no-mistakes-required.yml#Verify no-mistakes signature in PR body"
+# `gh` serves the body the step reads live; `sleep` is stubbed so the retries are instant.
+red = '''
+mkdir bin && printf '#!/bin/sh\nexit 0\n' > bin/sleep
+printf '#!/bin/sh\necho "A pull request opened by hand."\n' > bin/gh && chmod +x bin/*
+'''
+clean = '''
+mkdir bin && printf '#!/bin/sh\nexit 0\n' > bin/sleep
+printf '#!/bin/sh\necho "Updates from [git push no-mistakes](https://github.com/Abhijeet34/no-mistakes)"\n' > bin/gh
+chmod +x bin/*
+'''
+run = '''
+PATH="$PWD/bin:$PATH" GH_TOKEN=stub PR_REPO=o/r PR_AUTHOR=someone PR_NUMBER=1 \
+  PIPELINE_STEPS=review bash -e "$GATE"
+'''
+finding = "This PR was not raised through no-mistakes."
 
 [[gate]]
 id = "secret-scan-workflow"
@@ -61,8 +110,23 @@ surface = "Security"
 gates = [".github/workflows/shared-secret-scan.yml"]
 test = ".ci/test-secret-scan.sh"
 suite = "secrets"
-red = "a drifted pre-push hook fails, naming the file"
-clean = "a caller carrying both canonical copies passes"
+command = ".github/workflows/shared-secret-scan.yml#Verify this repository carries the canonical gate"
+red = '''
+mkdir .githooks && cp "$ROOT/.gitleaks.toml" . && cp "$ROOT/.githooks/pre-push" .githooks/
+cp "$ROOT/system-maintenance/git-hooks/commit-msg" .githooks/ && echo '# local edit' >> .githooks/pre-push
+'''
+clean = '''
+mkdir .githooks && cp "$ROOT/.gitleaks.toml" . && cp "$ROOT/.githooks/pre-push" .githooks/
+cp "$ROOT/system-maintenance/git-hooks/commit-msg" .githooks/
+'''
+# The pins are the job's env in the workflow, read from it rather than restated.
+run = '''
+for pin in CONFIG HOOK COMMIT_MSG; do
+  export "${pin}_SHA256=$(yq -r ".jobs[\"secret-scan\"].env.${pin}_SHA256" "$ROOT/.github/workflows/shared-secret-scan.yml")"
+done
+bash -e "$GATE"
+'''
+finding = ".githooks/pre-push has DRIFTED from gates' canonical copy"
 
 [[gate]]
 id = "watermark-scan-workflow"
@@ -70,8 +134,15 @@ surface = "Security"
 gates = [".github/workflows/shared-watermark-scan.yml", ".github/workflows/watermark-scan.yml"]
 test = ".ci/test-watermark-scan-workflow.sh"
 suite = "shell"
-red = "a tree carrying detective provenance fails"
-clean = "a clean tree passes and says how many files it read"
+command = ".github/workflows/shared-watermark-scan.yml#Scan the working tree"
+# A zero-width space, written as bytes so this file carries none.
+red = '''git init -q -b main && printf 'one\xe2\x80\x8btwo\n' > notes.txt && git add -A'''
+clean = '''git init -q -b main && printf 'one two\n' > notes.txt && git add -A'''
+run = '''
+SCANNER="$ROOT/system-maintenance/git-hooks/watermark-scan.py" \
+  ALLOWLIST="$ROOT/system-maintenance/git-hooks/watermark-allow.conf" bash -e "$GATE"
+'''
+finding = "DETECTIVE PROVENANCE is in this repository's tree"
 
 [[gate]]
 id = "gitleaks-rules"
@@ -79,8 +150,11 @@ surface = "Security"
 gates = [".gitleaks.toml"]
 test = ".ci/gitleaks/test-rules.sh"
 suite = "secrets"
-red = "expected rule '$rule', got"
-clean = "fixture is not allowlisted"
+command = ".gitleaks.toml"
+red = '''awk -F'\t' '$2 == "moonshot-kimi" { print $3 }' "$ROOT/.ci/gitleaks/fixtures/known-secrets.tsv" > models.py'''
+clean = '''echo 'MODELS = {"kimi": "kimi-k2"}' > models.py'''
+run = 'gitleaks dir models.py --config "$GATE" --no-banner --redact'
+finding = "leaks found: 1"
 
 [[gate]]
 id = "gitleaks-sync"
@@ -88,8 +162,18 @@ surface = "Security"
 gates = [".ci/gitleaks/sync.sh"]
 test = ".ci/gitleaks/test-sync.sh"
 suite = "shell"
-red = "reports an edited hook"
-clean = "is clean right after installing"
+command = ".ci/gitleaks/sync.sh"
+red = '''
+git init -q -b main caller && mkdir caller/.githooks && git -C caller config core.hooksPath .githooks
+cp "$ROOT/.gitleaks.toml" caller/ && cp "$ROOT/.githooks/pre-push" "$ROOT/system-maintenance/git-hooks/commit-msg" caller/.githooks/
+echo '# local edit' >> caller/.githooks/commit-msg
+'''
+clean = '''
+git init -q -b main caller && mkdir caller/.githooks && git -C caller config core.hooksPath .githooks
+cp "$ROOT/.gitleaks.toml" caller/ && cp "$ROOT/.githooks/pre-push" "$ROOT/system-maintenance/git-hooks/commit-msg" caller/.githooks/
+'''
+run = 'bash "$GATE" --check caller'
+finding = "DRIFT caller/.githooks/commit-msg: differs from canonical"
 
 [[gate]]
 id = "repo-pre-push"
@@ -97,8 +181,21 @@ surface = "Pre-push"
 gates = [".githooks/pre-push"]
 test = ".ci/gitleaks/test-pre-push.sh"
 suite = "secrets"
-red = "a secret pushed alongside a binary-only commit is still refused"
-clean = "a clean push lands"
+command = ".githooks/pre-push"
+red = '''
+git init -q -b main && cp "$ROOT/.gitleaks.toml" . && echo "print('hello')" > app.py
+awk -F'\t' '$2 == "moonshot-kimi" { print $3 }' "$ROOT/.ci/gitleaks/fixtures/known-secrets.tsv" > models.py
+git add -A && git commit -qm 'carries a secret'
+'''
+clean = '''
+git init -q -b main && cp "$ROOT/.gitleaks.toml" . && echo "print('hello')" > app.py
+git add -A && git commit -qm clean
+'''
+# The ref line git feeds a pre-push hook for a new branch; the remote is a path that has no refs.
+run = '''
+printf 'refs/heads/main %s refs/heads/main %040d\n' "$(git rev-parse HEAD)" 0 | bash "$GATE" origin "$PWD/none"
+'''
+finding = "secrets found in the commits being pushed. Push refused."
 
 [[gate]]
 id = "commit-msg"
@@ -106,8 +203,11 @@ surface = "Pre-commit"
 gates = ["system-maintenance/git-hooks/commit-msg"]
 test = "system-maintenance/git-hooks/test-commit-msg.sh"
 suite = "shell"
-red = "Co-authored-by: Claude <noreply@anthropic.com>"
-clean = "human co-author"
+command = "system-maintenance/git-hooks/commit-msg"
+red = '''printf 'feat: thing\n\nCo-authored-by: Claude <noreply@anthropic.com>\n' > msg'''
+clean = '''printf 'feat: thing\n\nCo-authored-by: Jane Doe <jane@example.com>\n' > msg'''
+run = 'sh "$GATE" msg'
+finding = "refusing agent attribution line: Co-authored-by: Claude"
 
 [[gate]]
 id = "exposure-scan"
@@ -115,8 +215,23 @@ surface = "Pre-push"
 gates = ["system-maintenance/git-hooks/exposure-scan.py"]
 test = "system-maintenance/git-hooks/test-exposure-scan.sh"
 suite = "shell"
-red = "a non-noreply AUTHOR and committer are refused"
-clean = "clean push to a public destination lands"
+command = "system-maintenance/git-hooks/exposure-scan.py"
+red = '''
+git init -q -b main && git remote add origin https://git.example.invalid/o/r.git
+echo hi > a.txt && git add -A
+GIT_AUTHOR_EMAIL=jane@example.com GIT_COMMITTER_EMAIL=jane@example.com git commit -qm one
+'''
+clean = '''
+git init -q -b main && git remote add origin https://git.example.invalid/o/r.git
+echo hi > a.txt && git add -A && git commit -qm one
+'''
+# A local destination is judged by origin, whose host has no visibility lookup, so it is
+# not proven private and a finding refuses; the local path keeps the push off the network.
+run = '''
+printf 'refs/heads/main %s refs/heads/main %040d\n' "$(git rev-parse HEAD)" 0 |
+  python3 "$GATE" push origin "$PWD/none"
+'''
+finding = "IDENTITY OR MACHINE EXPOSURE"
 
 [[gate]]
 id = "watermark-scan"
@@ -124,21 +239,53 @@ surface = "Pre-push"
 gates = ["system-maintenance/git-hooks/watermark-scan.py"]
 test = "system-maintenance/git-hooks/test-watermark-scan.py"
 suite = "secrets"
-red = "fires on its fixture"
-clean = "a repository with plain names and messages still passes"
+command = "system-maintenance/git-hooks/watermark-scan.py"
+red = '''printf 'one\xe2\x80\x8btwo\n' > notes.txt'''
+clean = '''printf 'one two\n' > notes.txt'''
+run = 'python3 "$GATE" inspect notes.txt'
+finding = "zero-width space [U+200B]"
 
 [[gate]]
 id = "global-pre-push"
 surface = "Pre-push"
-gates = [
-  "system-maintenance/git-hooks/pre-push",
-  "system-maintenance/git-hooks/check-orphan-dirs",
-  "system-maintenance/git-hooks/install.sh",
-]
+gates = ["system-maintenance/git-hooks/pre-push", "system-maintenance/git-hooks/install.sh"]
 test = "system-maintenance/git-hooks/test-global-hooks.sh"
 suite = "secrets"
-red = "fresh clone: a push carrying a secret is refused, with no per-repo setup"
-clean = "fresh clone: a clean push lands"
+command = "system-maintenance/git-hooks/pre-push"
+# Deployed into a throwaway HOME, then a fresh clone of an allowlisted origin pushes.
+red = '''
+export HOME="$PWD/home" XDG_CONFIG_HOME="$PWD/home/.config" && unset GIT_CONFIG_GLOBAL && mkdir home
+bash "$ROOT/system-maintenance/git-hooks/install.sh" deploy > /dev/null && echo "$PWD/up" > home/.git-hooks/pre-push-allow
+git init -q --bare -b main up.git && git clone -q up.git fresh 2> /dev/null && cd fresh
+awk -F'\t' '$2 == "moonshot-kimi" { print $3 }' "$ROOT/.ci/gitleaks/fixtures/known-secrets.tsv" > models.py
+git add -A && git commit -qm 'carries a secret'
+'''
+clean = '''
+export HOME="$PWD/home" XDG_CONFIG_HOME="$PWD/home/.config" && unset GIT_CONFIG_GLOBAL && mkdir home
+bash "$ROOT/system-maintenance/git-hooks/install.sh" deploy > /dev/null && echo "$PWD/up" > home/.git-hooks/pre-push-allow
+git init -q --bare -b main up.git && git clone -q up.git fresh 2> /dev/null && cd fresh
+echo "print('hello')" > app.py && git add -A && git commit -qm clean
+'''
+run = 'git push origin main'
+finding = "secrets found in the commits being pushed. Push refused."
+
+[[gate]]
+id = "orphan-dirs"
+surface = "Pre-push"
+gates = ["system-maintenance/git-hooks/check-orphan-dirs"]
+test = "system-maintenance/git-hooks/test-global-hooks.sh"
+suite = "secrets"
+command = "system-maintenance/git-hooks/check-orphan-dirs"
+red = '''
+git init -q -b main && echo hi > a.txt && git add -A && git commit -qm one
+mkdir notes && echo 'work nobody tracks' > notes/todo.txt
+'''
+clean = '''
+git init -q -b main && echo hi > a.txt && git add -A && git commit -qm one
+mkdir notes && echo 'work somebody tracks' > notes/todo.txt && git add -A && git commit -qm two
+'''
+run = 'sh "$GATE"'
+finding = "orphan-dirs: 'notes/' has files on disk but ZERO tracked files"
 
 [[gate]]
 id = "gates-proof"
@@ -146,8 +293,21 @@ surface = "Gate of the gates"
 gates = [".ci/gates-proof.py"]
 test = ".ci/test-gates-proof.sh"
 suite = "gates-proof"
-red = "an unregistered gate"
-clean = "the live registry"
+command = ".ci/gates-proof.py"
+# A copy of the tree with report section 2.7's neutered commit-msg hook and its
+# test flipped to match. --gate, because proving every entry from inside this
+# one would recurse.
+red = '''
+cp -R "$ROOT/." . && rm -rf .git
+sed -i.orig '1a\
+exit 0
+' system-maintenance/git-hooks/commit-msg
+sed -i.orig 's/expect refuse "\$t"/expect pass "$t"/' system-maintenance/git-hooks/test-commit-msg.sh
+rm system-maintenance/git-hooks/*.orig
+'''
+clean = '''cp -R "$ROOT/." . && rm -rf .git'''
+run = 'python3 "$GATE" --gate commit-msg .'
+finding = "commit-msg: red input was not refused"
 
 [[exempt]]
 path = "system-maintenance/git-hooks/post-checkout"

@@ -18,7 +18,9 @@ set -uo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 
-WORKFLOWS=.github/workflows
+# A directory argument checks that one instead; .ci/gate-registry.toml proves the
+# gate on one.
+WORKFLOWS=${1:-.github/workflows}
 failed=0
 pass() { printf 'ok   %s\n' "$1"; }
 fail() { printf 'FAIL %s\n' "$1"; failed=1; }
