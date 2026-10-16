@@ -78,6 +78,8 @@ check_shell() {
     bash .ci/test-no-mistakes-required.sh || rc=1
     bash .ci/test-instruction-path-truth.sh || rc=1
     python3 run/instruction-truth/path-truth.py . || rc=1
+    bash .ci/test-instruction-size-limit.sh || rc=1
+    python3 run/instruction-truth/size-limit.py . || rc=1
     bash .ci/test-watermark-scan-workflow.sh || rc=1
     # The bootstrap's lock controls, against fixture gates and caller repositories.
     bash .ci/test-lock.sh || rc=1

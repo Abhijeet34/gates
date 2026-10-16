@@ -174,6 +174,18 @@ clean = '''mkdir src && : > src/real.sh && printf 'Run `src/real.sh`.\n' > AGENT
 run = 'python3 "$GATE" .'
 finding = "AGENTS.md:1: `.ci/gitleaks/sync.sh` does not exist"
 
+[[gate]]
+id = "instruction-size-limit"
+surface = "Instruction files"
+gates = [".github/workflows/shared-instruction-truth.yml", "run/instruction-truth/size-limit.py"]
+test = ".ci/test-instruction-size-limit.sh"
+suite = "shell"
+command = "run/instruction-truth/size-limit.py"
+red = '''seq 201 > AGENTS.md'''
+clean = '''seq 200 > AGENTS.md'''
+run = 'python3 "$GATE" .'
+finding = "AGENTS.md: 201 lines, over the 200-line limit"
+
 # The bootstrap's controls on a caller's .github/gates.lock (README.md, "Pinning").
 # .ci/fixtures/lock-fixture.sh builds a gates origin A -> B -> C with C the
 # bootstrap's commit, a fork-only commit F, and a caller in the named scenario.

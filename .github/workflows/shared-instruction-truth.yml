@@ -8,6 +8,8 @@ name: instruction truth (shared)
 # The job holds one step per rule, each a script under run/instruction-truth/:
 #   - path-truth.py: every backticked repository path resolves or is marked
 #     `(absent)`. Its header owns what is and is not judged.
+#   - size-limit.py: no instruction file over 200 lines, and no `home/` one over
+#     5,000 bytes. Its header owns the limits.
 #
 # This file is a BOOTSTRAP: the trigger, the token's permissions, the runner
 # and the checkouts, which must live in a workflow file. The gate itself runs
@@ -70,3 +72,6 @@ jobs:
 
       - name: Every backticked path in the instruction files resolves
         run: python3 "$GATES_DIR/run/instruction-truth/path-truth.py" .
+
+      - name: Every instruction file is within its size limit
+        run: python3 "$GATES_DIR/run/instruction-truth/size-limit.py" .
