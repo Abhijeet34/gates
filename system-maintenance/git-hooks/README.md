@@ -430,7 +430,7 @@ Measured 2026-10-16 on the 223-commit quoth history (median of three, a local ba
 
 | Push | Serial dispatcher | Concurrent gates |
 |---|---|---|
-| 223-commit first push to an empty destination | 16.3 s | 9.2 s |
+| 223-commit first push to an empty destination | 16.3 s | 9.5 s |
 | 12-commit new branch, base already at the destination | 1.96 s | 1.58 s |
 | 1-commit update of an existing branch | 0.97 s | 0.81 s |
 
