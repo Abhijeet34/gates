@@ -69,7 +69,6 @@ import zipfile
 import zlib
 
 TOOL = "watermark-scan"
-ZERO = "0" * 40
 
 # Every detection this gate claims to make, by id. test-watermark-scan.sh
 # requires a fixture that fires each one and asserts that neutralising the
@@ -1715,20 +1714,16 @@ def cmd_push(argv):
             "exiftool is not installed (brew install exiftool), so no binary can be inspected."
         )
 
+    # Imported here, not at the top: the file verbs also run from CI, out of a copy
+    # of this file alone, and only a push needs the range logic beside it.
+    from pushrange import ranges_from
+
+    # The range comes from the destination's advertisement, the same set the
+    # other pre-push gates scan: the remote-tracking refs of the NAME in $1 were
+    # empty for a push by URL, so this gate read a whole history the others skipped.
     remote = argv[0] if argv else "origin"
-    ranges = []
-    for line in sys.stdin.read().splitlines():
-        parts = line.split()
-        if len(parts) < 4:
-            continue
-        _, local_sha, _, remote_sha = parts[:4]
-        if local_sha == ZERO:
-            continue
-        ranges.append(
-            "%s --not --remotes=%s" % (local_sha, remote)
-            if remote_sha == ZERO
-            else "%s..%s" % (remote_sha, local_sha)
-        )
+    url = argv[1] if len(argv) > 1 else ""
+    ranges = [" ".join(spec) for spec in ranges_from(sys.stdin.read(), remote, url)]
     if not ranges:
         print("%s: nothing to examine (no ref in this push introduces objects)." % TOOL)
         return 0
@@ -1857,11 +1852,12 @@ def cmd_push(argv):
 
     n_text, n_binary, n_media = counts(items)
     print(
-        "%s: examined %d blob(s) - %d text, %d binary, %d inspected with exiftool - "
-        "across %d range(s). No detective provenance found "
+        "%s: examined %d commit(s) and %d blob(s) - %d text, %d binary, %d inspected "
+        "with exiftool - across %d range(s). No detective provenance found "
         "(%d allowlisted, %d tool tag(s) noted)."
         % (
             TOOL,
+            len(commits),
             len(items),
             n_text,
             n_binary,

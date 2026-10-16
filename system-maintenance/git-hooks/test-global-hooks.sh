@@ -40,6 +40,7 @@ command -v git-lfs >/dev/null 2>&1 || { echo "test-global-hooks: git-lfs not ins
 # that quietly dropped section 10 would report a pass over an unmeasured gate.
 command -v exiftool >/dev/null 2>&1 || { echo "test-global-hooks: exiftool not installed" >&2; exit 2; }
 command -v python3 >/dev/null 2>&1 || { echo "test-global-hooks: python3 not installed" >&2; exit 2; }
+command -v ssh-keygen >/dev/null 2>&1 || { echo "test-global-hooks: ssh-keygen not installed" >&2; exit 2; }
 
 SECRET=$(awk -F'\t' '$2 == "moonshot-kimi" { print $3 }' "$FIXTURE")
 [ -n "$SECRET" ] || { echo "test-global-hooks: fixture has no moonshot-kimi row" >&2; exit 2; }
@@ -94,6 +95,13 @@ git config --global user.name test
 # whose destination is not proven private - and several cases below push to one.
 git config --global user.email test@users.noreply.github.com
 git config --global init.defaultBranch main
+# Commits are signed, as they are on this machine (commit.gpgsign is global
+# there), because the signature check refuses an unsigned commit pushed to main
+# and most cases below push main. Section 12 commits unsigned ones on purpose.
+ssh-keygen -q -t ed25519 -N '' -C test -f "$TMP/signing-key" || { echo "test-global-hooks: cannot generate a signing key" >&2; exit 2; }
+git config --global gpg.format ssh
+git config --global user.signingkey "$TMP/signing-key"
+git config --global commit.gpgsign true
 bash "$INSTALL" check >/dev/null 2>&1 || fail "install.sh check reports drift immediately after deploy"
 
 # Intercepts `git lfs` without touching PATH: git searches GIT_EXEC_PATH before
@@ -545,6 +553,171 @@ if [ "${GLOBAL_HOOKS_E2E:-0}" = 1 ]; then
 else
     echo "note: the networked fresh-clone case did NOT run (set GLOBAL_HOOKS_E2E=1)"
 fi
+
+# ==============================================================================
+# 12. The gates run CONCURRENTLY on one buffered ref list, and a failure in any
+#     one of them still fails the push without scrambling the others' messages.
+#     Stub scanners stand in for the deployed ones, so what is proved is the
+#     dispatch: a stub only succeeds if it sees the others running alongside it.
+# ==============================================================================
+stub() { # <deployed name> <tag> <rc> - a scanner that waits for the other two to start
+    cat > "$HOME/.git-hooks/$1" <<STUB
+#!/bin/sh
+cat > /dev/null
+: > "$TMP/barrier/$2"
+i=0
+until [ -e "$TMP/barrier/GL" ] && [ -e "$TMP/barrier/WM" ] && [ -e "$TMP/barrier/EX" ]; do
+    i=\$((i + 1))
+    [ \$i -gt 60 ] && { echo "$2 1 the others never started: these gates ran one after another"; exit 1; }
+    sleep 0.1
+done
+for n in 1 2 3; do echo "$2 \$n"; sleep 0.1; done
+exit $3
+STUB
+    chmod +x "$HOME/.git-hooks/$1"
+}
+arm_stubs() { # <rc of GL> <rc of WM> <rc of EX>
+    /bin/rm -rf "$TMP/barrier"
+    mkdir -p "$TMP/barrier"
+    stub gitleaks-pre-push GL "$1"
+    stub watermark-scan.py WM "$2"
+    stub exposure-scan.py EX "$3"
+}
+# What a run of the three stubs printed, as the order of their tags: one run of
+# each means no block of one was split by another.
+tag_runs() { grep -E '^(GL|WM|EX) [0-9]' "$1" | cut -c1-2 | uniq | tr '\n' ' '; }
+
+seed "$TMP/conc"
+allow "${TMP}/conc"
+echo "print('c')" > "$TMP/conc/c.py"
+git -C "$TMP/conc" add -A && git -C "$TMP/conc" commit --quiet -m conc
+
+arm_stubs 0 0 0
+git -C "$TMP/conc" push --quiet origin HEAD:refs/heads/work >"$TMP/conc.log" 2>&1
+check "three scanners that must overlap to pass: the push lands" pass $?
+[ "$(tag_runs "$TMP/conc.log")" = "GL WM EX " ] || fail "concurrent output is not one block per scanner, in order (got: $(tag_runs "$TMP/conc.log"))"
+
+arm_stubs 1 1 1
+git -C "$TMP/conc" push --quiet origin HEAD:refs/heads/work2 >"$TMP/conc.log" 2>&1
+check "all three failing: refused" refuse $?
+[ "$(tag_runs "$TMP/conc.log")" = "GL WM EX " ] || fail "three failures are not reported as one intact block each, in order (got: $(tag_runs "$TMP/conc.log"))"
+
+# A failure in one still runs, and prints, the rest - serially the first failure
+# hid the others behind it.
+arm_stubs 0 0 1
+git -C "$TMP/conc" push --quiet origin HEAD:refs/heads/work3 >"$TMP/conc.log" 2>&1
+check "exposure failing alone: refused" refuse $?
+[ "$(tag_runs "$TMP/conc.log")" = "GL WM EX " ] || fail "a failing scanner swallowed another's output (got: $(tag_runs "$TMP/conc.log"))"
+arm_stubs 1 0 0
+git -C "$TMP/conc" push --quiet origin HEAD:refs/heads/work4 >"$TMP/conc.log" 2>&1
+check "gitleaks failing alone: refused, with the later scanners still run" refuse $?
+[ "$(tag_runs "$TMP/conc.log")" = "GL WM EX " ] || fail "gitleaks failing stopped the scanners after it (got: $(tag_runs "$TMP/conc.log"))"
+
+# A scanner that dies on a signal mid-run is a failure, not a pass.
+arm_stubs 0 0 0
+sed -i.orig 's/^exit 0$/kill -SEGV $$/' "$HOME/.git-hooks/watermark-scan.py" && /bin/rm -f "$HOME/.git-hooks/watermark-scan.py.orig"
+git -C "$TMP/conc" push --quiet origin HEAD:refs/heads/work5 >"$TMP/conc.log" 2>&1
+check "a scanner killed by a signal mid-run: refused" refuse $?
+
+# A killed push leaves nothing running and nothing behind. The hook is run
+# directly so the signal reaches it, as Ctrl-C or a timeout would.
+for name in gitleaks-pre-push watermark-scan.py exposure-scan.py; do
+    cat > "$HOME/.git-hooks/$name" <<STUB
+#!/bin/sh
+cat > /dev/null
+sleep 60 &
+echo \$! > "\$HANG_DIR/pid.$name"
+wait
+STUB
+    chmod +x "$HOME/.git-hooks/$name"
+done
+/bin/rm -rf "$TMP/hangdir" "$TMP/tmpd"
+mkdir -p "$TMP/hangdir" "$TMP/tmpd"
+printf 'refs/heads/work6 %s refs/heads/work6 %040d\n' "$(git -C "$TMP/conc" rev-parse HEAD)" 0 > "$TMP/refline"
+(cd "$TMP/conc" && HANG_DIR="$TMP/hangdir" TMPDIR="$TMP/tmpd" exec "$HOME/.git-hooks/pre-push" origin "$TMP/conc.git" < "$TMP/refline" >/dev/null 2>&1) &
+hook=$!
+i=0
+until [ "$(ls "$TMP/hangdir" 2>/dev/null | wc -l | tr -d ' ')" -ge 3 ] || [ $i -gt 100 ]; do i=$((i + 1)); sleep 0.1; done
+kill -TERM "$hook" 2>/dev/null
+wait "$hook" 2>/dev/null
+sleep 0.5
+[ "$(ls "$TMP/hangdir" | wc -l | tr -d ' ')" -ge 3 ] || fail "the hanging scanners never started, so the kill proved nothing"
+for f in "$TMP"/hangdir/pid.*; do
+    if kill -0 "$(cat "$f")" 2>/dev/null; then
+        fail "a scanner outlived the killed hook ($(basename "$f"))"
+        kill -KILL "$(cat "$f")" 2>/dev/null
+    fi
+done
+[ -z "$(ls -A "$TMP/tmpd")" ] || fail "the killed hook left temp files behind: $(ls "$TMP/tmpd")"
+
+bash "$INSTALL" deploy >/dev/null 2>&1   # the real scanners back
+
+# ==============================================================================
+# 12b. The signature check, through a real push: main takes signed commits only,
+#      any other branch may carry unsigned ones.
+# ==============================================================================
+seed "$TMP/sig"
+echo "unsigned work" > "$TMP/sig/u.txt"
+git -C "$TMP/sig" add -A && git -C "$TMP/sig" commit --quiet --no-gpg-sign -m "app-token style commit"
+UNSIGNED_SHA=$(git -C "$TMP/sig" rev-parse HEAD)
+git -C "$TMP/sig" push origin HEAD:refs/heads/work >"$TMP/sig.log" 2>&1
+check "an unsigned commit pushed to a branch lands" pass $?
+git -C "$TMP/sig" push origin main >"$TMP/sig.log" 2>&1
+check "an unsigned commit pushed to main is refused" refuse $?
+said "signature: the refusal names the commit" "$TMP/sig.log" "${UNSIGNED_SHA:0:12}"
+said "signature: the refusal is the signature check's" "$TMP/sig.log" "signature-check:"
+[ "$(git --git-dir="$TMP/sig.git" rev-parse refs/heads/main)" != "$UNSIGNED_SHA" ] || fail "the unsigned commit reached main on the remote"
+git -C "$TMP/sig" commit --quiet --amend --no-edit -S
+git -C "$TMP/sig" push --quiet origin main >/dev/null 2>&1
+check "the same change, signed, lands on main" pass $?
+mv "$HOME/.git-hooks/signature-check" "$TMP/sigcheck.away"
+echo "more" >> "$TMP/sig/u.txt"
+git -C "$TMP/sig" commit --quiet -am more
+git -C "$TMP/sig" push origin main >"$TMP/sig.log" 2>&1
+check "no deployed signature check refuses" refuse $?
+said "signature: a missing check names itself" "$TMP/sig.log" "signature-check is missing"
+mv "$TMP/sigcheck.away" "$HOME/.git-hooks/signature-check"
+
+# ==============================================================================
+# 12c. One push, one answer to "what does this push contain", from all three
+#      scanners. A push BY URL has no remote-tracking refs under the name git
+#      passes the hook, which sent the watermark gate to the repository's whole
+#      history while the other two asked the destination and read 3 commits.
+# ==============================================================================
+seed "$TMP/mm"
+allow "${TMP}/mm"
+for n in 1 2 3 4; do
+    echo "base $n" > "$TMP/mm/base$n.txt"
+    git -C "$TMP/mm" add -A && git -C "$TMP/mm" commit --quiet -m "base $n"
+done
+git -C "$TMP/mm" push --quiet origin main >/dev/null 2>&1
+git -C "$TMP/mm" checkout --quiet -b feat
+for n in 1 2 3; do
+    echo "feat $n" > "$TMP/mm/feat$n.txt"
+    git -C "$TMP/mm" add -A && git -C "$TMP/mm" commit --quiet -m "feat $n"
+done
+# gitleaks itself is stubbed so its count can be read: it reports the number of
+# commits in the --log-opts range it was handed.
+mkdir -p "$TMP/glbin"
+cat > "$TMP/glbin/gitleaks" <<'STUB'
+#!/bin/sh
+for a in "$@"; do case "$a" in --log-opts=*) opts=${a#--log-opts=} ;; esac; done
+# shellcheck disable=SC2086  # a rev-list spec is several words
+n=$(git rev-list --no-merges --count $opts)
+echo "$n" > "$GL_COUNT"
+echo "INF $n commits scanned."
+echo "INF no leaks found"
+STUB
+chmod +x "$TMP/glbin/gitleaks"
+# Pushed to the destination by URL: no remote-tracking ref carries that name.
+PATH="$TMP/glbin:$PATH" GL_COUNT="$TMP/gl-count" git -C "$TMP/mm" push "$TMP/mm.git" feat >"$TMP/mm.log" 2>&1
+check "the push by URL lands" pass $?
+gl=$(cat "$TMP/gl-count" 2>/dev/null)
+wm=$(sed -n 's/^watermark-scan: examined \([0-9][0-9]*\) commit(s).*/\1/p' "$TMP/mm.log")
+ex=$(sed -n 's/^exposure-scan: examined \([0-9][0-9]*\) commit(s).*/\1/p' "$TMP/mm.log")
+[ "$gl" = 3 ] || fail "gitleaks should be handed the 3 new commits, counted ${gl:-none}"
+[ "$wm" = 3 ] || fail "watermark should examine the 3 new commits, reported ${wm:-none}"
+[ "$ex" = 3 ] || fail "exposure should examine the 3 new commits, reported ${ex:-none}"
 
 if [ "$failed" -ne 0 ]; then
     printf '\033[31m%d global-hook checks failed\033[0m\n' "$failed" >&2

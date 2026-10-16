@@ -25,12 +25,18 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P) || exit 2
 SRC="$ROOT/system-maintenance/git-hooks"
 DEST="${GIT_HOOKS_DIR:-$HOME/.git-hooks}"
 
-# "<source>:<name in ~/.git-hooks>". The last six are not hooks git ever runs -
-# git only invokes files whose name is exactly a hook name - they are the three
-# scanners the machine-wide pre-push chains and their rule files, deployed here
-# so it never has to reach into the repository it is scanning to find them.
+# "<source>:<name in ~/.git-hooks>". Only pre-push, check-orphan-dirs, commit-msg
+# and the three post-* shims are hooks git runs - git only invokes files whose
+# name is exactly a hook name. The rest are the scanners the machine-wide
+# pre-push chains, the module the Python ones share and their rule files,
+# deployed here so it never has to reach into the repository it is scanning.
+#
+# ORDER MATTERS: a deploy is a series of renames, and a push landing between two
+# of them runs whatever is there. So what the dispatcher calls comes first and
+# the dispatcher last, and pushrange.py before the files that import it; a push
+# mid-deploy then meets an old dispatcher over new parts, never a new one over
+# parts that are not there yet.
 PAYLOAD=(
-    "$SRC/pre-push:pre-push"
     "$SRC/check-orphan-dirs:check-orphan-dirs"
     "$SRC/commit-msg:commit-msg"
     "$SRC/post-checkout:post-checkout"
@@ -38,14 +44,17 @@ PAYLOAD=(
     "$SRC/post-merge:post-merge"
     "$ROOT/.githooks/pre-push:gitleaks-pre-push"
     "$ROOT/.gitleaks.toml:gitleaks.toml"
+    "$SRC/pushrange.py:pushrange.py"
     "$SRC/watermark-scan.py:watermark-scan.py"
     "$SRC/watermark-allow.conf:watermark-allow.conf"
     "$SRC/watermark-optout.conf:watermark-optout.conf"
     "$SRC/exposure-scan.py:exposure-scan.py"
+    "$SRC/signature-check:signature-check"
+    "$SRC/pre-push:pre-push"
 )
 
-# Everything but the three rule files is executed by git or by a hook.
-executable() { case "$1" in gitleaks.toml | watermark-allow.conf | watermark-optout.conf) return 1 ;; *) return 0 ;; esac; }
+# Everything but the rule files and the shared module is executed by git or by a hook.
+executable() { case "$1" in gitleaks.toml | watermark-allow.conf | watermark-optout.conf | pushrange.py) return 1 ;; *) return 0 ;; esac; }
 
 digest() { shasum -a 256 "$1" | cut -d' ' -f1; }
 

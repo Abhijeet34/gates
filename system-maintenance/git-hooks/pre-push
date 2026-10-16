@@ -2,12 +2,15 @@
 # The machine-wide pre-push hook: deployed to ~/.git-hooks/pre-push, so it fires
 # for EVERY repository on this machine that has not overridden core.hooksPath.
 #
-# It runs five gates in order:
+# It runs four gates together, then two checks in order:
 #   1. the gitleaks secret scan  - allowlisted repositories only
 #   2. the no-watermarking gate  - EVERY repository, minus a written opt-out
 #   3. the exposure gate         - EVERY repository, no opt-out
-#   4. check-orphan-dirs         - every repository, as before
-#   5. git lfs pre-push          - every repository, as before
+#   4. the signature check       - EVERY repository, refuses only a push to main
+#   5. check-orphan-dirs         - every repository, as before
+#   6. git lfs pre-push          - every repository, as before
+# Gates 1 to 4 read the same buffered ref list independently, so they run
+# concurrently and their output is printed whole, in this order.
 #
 # THE TWO SCANS HAVE OPPOSITE DEFAULTS, and that is deliberate rather than an
 # oversight. They ask different questions about different subjects:
@@ -169,41 +172,78 @@ refuse() {
     echo "global-pre-push: COULD NOT ESTABLISH that this push is clean. Push refused." >&2
     exit 1
 }
-STDIN_FILE=$(mktemp) || refuse "cannot create a temp file."
-trap 'rm -f "$STDIN_FILE"' EXIT
+WORK=$(mktemp -d) || refuse "cannot create a temp directory."
+STDIN_FILE="$WORK/refs"
+PIDS=''
+# A killed push must leave no scanner running behind it: git signals this hook
+# and not its children. Same process group on purpose, so a scanner that has to
+# prompt (an ssh passphrase for ls-remote) still can; a background process
+# group reading the terminal is stopped, which would hang the push.
+kill_tree() {
+    for _c in $(pgrep -P "$1" 2>/dev/null); do kill_tree "$_c"; done
+    kill "$1" 2>/dev/null
+}
+cleanup() {
+    for _p in $PIDS; do kill_tree "$_p"; done
+    rm -rf "$WORK"
+}
+trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 cat > "$STDIN_FILE" || refuse "cannot buffer the ref list from stdin."
 
+# Every file a gate needs is checked BEFORE any gate starts, so a half-deployed
+# machine refuses at once with the remedy rather than after the first scanner.
 if [ "$scan_gitleaks" = 1 ]; then
     # Fail closed: an allowlisted repository whose scanner is missing is a
     # repository nobody scanned, and that must not look like a clean push.
     [ -x "$HOOK_DIR/gitleaks-pre-push" ] || refuse "$HOOK_DIR/gitleaks-pre-push is missing or not executable (run system-maintenance/git-hooks/install.sh deploy)."
     [ -r "$HOOK_DIR/gitleaks.toml" ] || refuse "$HOOK_DIR/gitleaks.toml is missing (run system-maintenance/git-hooks/install.sh deploy)."
-
-    # The scan reads the DEPLOYED config, never the pushed repository's copy, for
-    # the same reason it runs the deployed scanner: a fresh clone is scanned by
-    # canonical rules even if its own .gitleaks.toml is absent or stale, and no
-    # data out of the repo steers them.
-    GITLEAKS_PREPUSH_CONFIG="$HOOK_DIR/gitleaks.toml" \
-        "$HOOK_DIR/gitleaks-pre-push" "$@" < "$STDIN_FILE" || exit 1
 fi
-
-# The no-watermarking gate, on every push. Same posture as above: the deployed
-# scanner, the deployed allowlist and the deployed opt-out list, never a copy
-# that arrived with the repository. It is a DETECTOR here - it refuses and names
-# `watermark-scan.py clean` as the remedy, and never rewrites what you are
-# pushing, because a hook that mutated a commit would be rewriting history
-# behind you.
 [ -x "$HOOK_DIR/watermark-scan.py" ] || refuse "$HOOK_DIR/watermark-scan.py is missing or not executable (run system-maintenance/git-hooks/install.sh deploy)."
 [ -r "$HOOK_DIR/watermark-allow.conf" ] || refuse "$HOOK_DIR/watermark-allow.conf is missing (run system-maintenance/git-hooks/install.sh deploy)."
 [ -r "$HOOK_DIR/watermark-optout.conf" ] || refuse "$HOOK_DIR/watermark-optout.conf is missing (run system-maintenance/git-hooks/install.sh deploy)."
-# The identity is passed in rather than recomputed: the normalisation above is
-# the security boundary and a second implementation of it would drift. An empty
-# value is a repository with no origin, which is still ours and still scanned;
-# the variable being UNSET is a wiring failure and the scanner refuses on it.
-WATERMARK_IDENTITY="$identity" \
+[ -x "$HOOK_DIR/exposure-scan.py" ] || refuse "$HOOK_DIR/exposure-scan.py is missing or not executable (run system-maintenance/git-hooks/install.sh deploy)."
+[ -x "$HOOK_DIR/signature-check" ] || refuse "$HOOK_DIR/signature-check is missing or not executable (run system-maintenance/git-hooks/install.sh deploy)."
+[ -r "$HOOK_DIR/pushrange.py" ] || refuse "$HOOK_DIR/pushrange.py is missing (run system-maintenance/git-hooks/install.sh deploy)."
+
+# The gates are independent readers of the same buffered ref list, so they run
+# together: a 223-commit first push took 29.1 s serially (gitleaks 11.96, watermark
+# 10.78, exposure 5.78) against the slowest alone. Each one's output goes to its
+# own file and is printed whole, in this fixed order, once it has finished, so
+# two failures never interleave. Every gate runs even when an earlier one fails,
+# which also reports every problem in one push instead of one per attempt.
+ORDER=''
+start() { # <name> <command...>
+    _name=$1
+    shift
+    "$@" < "$STDIN_FILE" > "$WORK/$_name.out" 2>&1 &
+    eval "pid_$_name=$!"
+    PIDS="$PIDS $!"
+    ORDER="$ORDER $_name"
+}
+
+# The secret scan reads the DEPLOYED config, never the pushed repository's copy,
+# for the same reason it runs the deployed scanner: a fresh clone is scanned by
+# canonical rules even if its own .gitleaks.toml is absent or stale, and no data
+# out of the repo steers them.
+[ "$scan_gitleaks" = 1 ] &&
+    start gitleaks env GITLEAKS_PREPUSH_CONFIG="$HOOK_DIR/gitleaks.toml" "$HOOK_DIR/gitleaks-pre-push" "$@"
+
+# The no-watermarking gate, on every push. Same posture: the deployed scanner,
+# the deployed allowlist and the deployed opt-out list, never a copy that arrived
+# with the repository. It is a DETECTOR here - it refuses and names
+# `watermark-scan.py clean` as the remedy, and never rewrites what you are
+# pushing, because a hook that mutated a commit would be rewriting history
+# behind you. The identity is passed in rather than recomputed: the normalisation
+# above is the security boundary and a second implementation of it would drift.
+# An empty value is a repository with no origin, which is still ours and still
+# scanned; the variable being UNSET is a wiring failure and the scanner refuses.
+start watermark env WATERMARK_IDENTITY="$identity" \
     WATERMARK_ALLOW="$HOOK_DIR/watermark-allow.conf" \
     WATERMARK_OPTOUT="$HOOK_DIR/watermark-optout.conf" \
-    "$HOOK_DIR/watermark-scan.py" push "$@" < "$STDIN_FILE" || exit 1
+    "$HOOK_DIR/watermark-scan.py" push "$@"
 
 # The exposure gate, on every push: a non-noreply identity, or this machine's
 # own identifiers, in what is being published. It refuses toward a public
@@ -211,8 +251,31 @@ WATERMARK_IDENTITY="$identity" \
 # for at run time so no identifier is ever written into this repository.
 # /usr/sbin and /sbin are appended for scutil, ifconfig and ioreg, which a
 # stripped PATH lacks; appended, so they never shadow anything.
-[ -x "$HOOK_DIR/exposure-scan.py" ] || refuse "$HOOK_DIR/exposure-scan.py is missing or not executable (run system-maintenance/git-hooks/install.sh deploy)."
-PATH="$PATH:/usr/sbin:/sbin" "$HOOK_DIR/exposure-scan.py" push "$@" < "$STDIN_FILE" || exit 1
+start exposure env PATH="$PATH:/usr/sbin:/sbin" "$HOOK_DIR/exposure-scan.py" push "$@"
+
+# Signatures are enforced on main only; every other ref passes untouched.
+start signature "$HOOK_DIR/signature-check" push "$@"
+
+verdict=0
+for _name in $ORDER; do
+    eval "_pid=\$pid_$_name"
+    # An empty pid would make `wait` return 0 having waited for nothing.
+    if [ -z "$_pid" ]; then
+        echo "global-pre-push: the $_name gate did not start." >&2
+        verdict=1
+        continue
+    fi
+    wait "$_pid"
+    _rc=$?
+    [ -s "$WORK/$_name.out" ] && cat "$WORK/$_name.out" >&2
+    if [ "$_rc" -ne 0 ]; then
+        # A gate that died on a signal printed nothing of its own.
+        [ "$_rc" -gt 128 ] && echo "global-pre-push: the $_name gate was killed (signal $((_rc - 128))), so it established nothing." >&2
+        verdict=1
+    fi
+done
+PIDS=''
+[ "$verdict" -eq 0 ] || exit 1
 
 # Refuse to push while a directory of real files has nothing tracked in it.
 # Reads no stdin, so the ref list stays intact for git-lfs below.

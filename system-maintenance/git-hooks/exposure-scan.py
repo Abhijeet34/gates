@@ -31,8 +31,9 @@ import shutil
 import subprocess
 import sys
 
+from pushrange import ZERO, ranges_from
+
 TOOL = "exposure-scan"
-ZERO = "0" * 40
 
 # Addresses that identify no person and no machine. A glob per entry, matched
 # case-insensitively against the whole address, with the reason beside it.
@@ -185,56 +186,6 @@ def derive_needles():
 
 
 # --- the pushed range ----------------------------------------------------------
-
-
-def ranges_from(stdin, remote, url):
-    """The rev-list specs this push publishes, the same set .githooks/pre-push scans.
-
-    A new branch excludes what the DESTINATION advertises, asked of the URL git
-    passes as $2, and falls back to the named remote's tracking refs. Without
-    that, the first push of any branch re-reads the repository's whole history
-    and refuses forever over a leak that is already published.
-    """
-    ranges = []
-    advert = None
-    for line in stdin.splitlines():
-        parts = line.split()
-        if len(parts) < 4 or parts[1] == ZERO:
-            continue
-        local_sha, remote_sha = parts[1], parts[3]
-        if remote_sha != ZERO:
-            ranges.append([remote_sha + ".." + local_sha])
-            continue
-        if advert is None:
-            listing = run("git", "ls-remote", url or remote, check=False)
-            if listing is None:
-                advert = ["--remotes=" + remote]
-            else:
-                wanted = "".join(
-                    ln.split()[0] + "^{commit}\n"
-                    for ln in listing.splitlines()
-                    if ln.strip()
-                )
-                proc = subprocess.run(
-                    ["git", "cat-file", "--batch-check=%(objectname)"],
-                    input=wanted.encode(),
-                    capture_output=True,
-                )
-                advert = sorted(
-                    {
-                        ln
-                        for ln in proc.stdout.decode().split("\n")
-                        if re.fullmatch(r"[0-9a-f]{40,64}", ln)
-                    }
-                )
-            if (url or "").startswith(
-                os.path.join(os.environ.get("HOME", ""), ".no-mistakes/repos/")
-            ):
-                # The pipeline's staging bare starts empty; the delivery push
-                # re-scans the rest against the real destination.
-                advert.append("--remotes")
-        ranges.append([local_sha, "--not", *advert] if advert else [local_sha])
-    return ranges
 
 
 def pushed_tags(stdin):
