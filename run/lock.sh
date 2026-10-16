@@ -39,7 +39,11 @@ parse_lock() { # <label> < content
 }
 
 head_lock=""
-if [ -e "$LOCK" ]; then head_lock=$(parse_lock "$LOCK" <"$LOCK") || exit 1; fi
+if [ -e "$LOCK" ] || [ -L "$LOCK" ]; then
+    # A directory reads as empty and would pass for no lock at all.
+    [ -f "$LOCK" ] && [ ! -L "$LOCK" ] || fail "$LOCK is not a regular file."
+    head_lock=$(parse_lock "$LOCK" <"$LOCK") || exit 1
+fi
 target=${head_lock:-$BOOTSTRAP_SHA}
 
 fetched=0

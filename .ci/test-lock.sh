@@ -80,12 +80,27 @@ expect "a lock change by the bump login with another id" impersonated 1 "(9999) 
 expect "a lock change when gates main names no bump identity" bump 1 "configures no bump identity" '$FIX_C' \
     'g() { git -C .gates "$@"; }; g checkout -q -B main origin/main && : > .gates/run/bump-identity && g commit -qam unset && g push -q origin main && g checkout -q --detach "$FIX_C"'
 
+expect "a lock removed by another author" removed 1 "someone (1) is not the bump identity" '$FIX_C' \
+    'export PR_AUTHOR=someone PR_AUTHOR_ID=1'
+expect "a lock added by another author" added 1 "someone (1) is not the bump identity" '$FIX_C' \
+    'export PR_AUTHOR=someone PR_AUTHOR_ID=1'
+expect "a lock added at a commit older than the bootstrap's" added 1 "a downgrade" '$FIX_C' \
+    'echo "$FIX_A" > caller/.github/gates.lock && git -C caller commit -qam older'
+
 # --- red: what the lock is read from and checked against ----------------------
 
 expect "a lock that names a tag, not a commit" locked 1 "is not a single 40-hex gates commit: v1" '$FIX_C' \
     'echo v1 > caller/.github/gates.lock'
 expect "a lock naming two commits" locked 1 "is not a single 40-hex gates commit" '$FIX_C' \
     'printf "%s\n%s\n" "$FIX_A" "$FIX_B" > caller/.github/gates.lock'
+expect "a lock in upper case" locked 1 "is not a single 40-hex gates commit" '$FIX_C' \
+    'tr a-f A-F <<<"$FIX_B" > caller/.github/gates.lock'
+expect "a lock naming a blob, not a commit" locked 1 "not on gates main" '$FIX_C' \
+    'git -C .gates rev-parse "$FIX_B:.gitleaks.toml" > caller/.github/gates.lock'
+expect "a lock that is a directory" locked 1 "is not a regular file" '$FIX_C' \
+    'rm caller/.github/gates.lock && mkdir caller/.github/gates.lock'
+expect "a lock that is a symlink" locked 1 "is not a regular file" '$FIX_C' \
+    'echo "$FIX_B" > caller/elsewhere && ln -sf ../elsewhere caller/.github/gates.lock'
 expect "a shallow gates checkout" locked 1 "is shallow" '$FIX_C' \
     'rm -rf .gates && git clone -q --depth 1 "file://$PWD/gates.git" .gates'
 expect "a check-runs read that fails" locked 1 "could not read the check runs" '$FIX_C' \
