@@ -97,7 +97,7 @@ git config --global init.defaultBranch main
 bash "$INSTALL" check >/dev/null 2>&1 || fail "install.sh check reports drift immediately after deploy"
 
 # Intercepts `git lfs` without touching PATH: git searches GIT_EXEC_PATH before
-# PATH for git-lfs, and the hook's Homebrew prepend would otherwise always win.
+# PATH for git-lfs, so the real one on PATH never wins.
 mkdir -p "$TMP/exec"
 cat > "$TMP/exec/git-lfs" <<STUB
 #!/bin/sh
@@ -488,6 +488,35 @@ said "exposure: a missing scanner names itself" "$TMP/exposed.log" "exposure-sca
 mv "$TMP/exposure.away" "$HOME/.git-hooks/exposure-scan.py"
 git -C "$TMP/exposed" push --quiet target main >/dev/null 2>&1
 check "the same push lands once the author is a noreply address" pass $?
+
+# ==============================================================================
+# 10c. The hook must not reorder a PATH that already reaches Homebrew. git-lfs
+#      runs `git credential fill` from inside it, and agents' git helper is a
+#      bare `gh` that resolves to a wrapper put first on PATH; a Homebrew prepend
+#      handed that call to the real gh instead and every agent push failed.
+# ==============================================================================
+mkdir -p "$TMP/exec-gh" "$TMP/agent-bin"
+printf '#!/bin/sh\nexit 0\n' > "$TMP/agent-bin/gh"
+cat > "$TMP/exec-gh/git-lfs" <<STUB
+#!/bin/sh
+cat >/dev/null
+{ command -v gh; printf '%s\n' "\$PATH"; } > "$TMP/lfs-path"
+exit 0
+STUB
+chmod +x "$TMP/agent-bin/gh" "$TMP/exec-gh/git-lfs"
+git -C "$TMP/exposed" commit --quiet --allow-empty -m "path case"
+PATH="$TMP/agent-bin:$PATH" GIT_EXEC_PATH="$TMP/exec-gh" git -C "$TMP/exposed" push --quiet target main >/dev/null 2>&1
+check "the push behind the PATH case lands" pass $?
+[ "$(head -1 "$TMP/lfs-path" 2>/dev/null)" = "$TMP/agent-bin/gh" ] \
+    || fail "git-lfs resolves gh to the first one on the caller's PATH (got: $(head -1 "$TMP/lfs-path" 2>/dev/null))"
+# The prepend's own reason still holds: a stripped PATH gains Homebrew.
+git -C "$TMP/exposed" commit --quiet --allow-empty -m "stripped path case"
+PATH=/usr/bin:/bin GIT_EXEC_PATH="$TMP/exec-gh" /usr/bin/git -C "$TMP/exposed" push --quiet target main >/dev/null 2>&1
+check "a push from a stripped PATH lands" pass $?
+case ":$(sed -n 2p "$TMP/lfs-path" 2>/dev/null):" in
+    *:/opt/homebrew/bin:*) ;;
+    *) fail "a stripped PATH does not gain /opt/homebrew/bin inside the hook" ;;
+esac
 
 # ==============================================================================
 # 11. Opt-in: a real clone of a real allowlisted repository over the network.
