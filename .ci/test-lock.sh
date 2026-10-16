@@ -119,10 +119,20 @@ expect "an empty gates source" legacy 1 "the gates source cannot be named" '$FIX
 # --- the old code path: each control deleted, its red scenario gets through ----
 
 # <label> <scenario> <commit gates then runs at> <exact guard line>
+# Matched by bash string equality, not awk: `awk -v` escape-processes the
+# value, each guard line ends in a backslash, and on the ubuntu-24.04 runner
+# the awk form matched none of the five (measured 2026-10-16).
 without() {
-    local mutant="$workdir/without-$1.sh"
-    if awk -v line="$4" '$0 == line { sub(/[^ ].*/, "true \\"); n++ } { print } END { exit n != 1 }' \
-        "$LOCK_SH" >"$mutant"; then
+    local mutant="$workdir/without-$1.sh" n=0 l
+    while IFS= read -r l; do
+        if [ "$l" = "$4" ]; then
+            printf '%strue \\\n' "${l%%[! ]*}"
+            n=$((n + 1))
+        else
+            printf '%s\n' "$l"
+        fi
+    done <"$LOCK_SH" >"$mutant"
+    if [ "$n" = 1 ]; then
         expect "without its guard, the $1 red scenario gets through" "$2" 0 "gates locked at" "$3" : "$mutant"
     else
         fail "the $1 guard is not in $LOCK_SH exactly once"

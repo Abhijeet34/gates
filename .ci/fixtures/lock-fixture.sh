@@ -90,8 +90,11 @@ esac
 [ "$scenario" = impersonated ] && author_id=9999
 [ "$event" = pull_request ] && commit caller head >/dev/null
 
+# A case's prep may commit, and a runner account has no name to fall back on.
 cat >env.sh <<ENV
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null
+export GIT_AUTHOR_NAME=fixture GIT_AUTHOR_EMAIL=fixture@invalid
+export GIT_COMMITTER_NAME=fixture GIT_COMMITTER_EMAIL=fixture@invalid
 export GATES_DIR="$PWD/.gates" GATES_REPOSITORY=o/gates BOOTSTRAP_SHA=$C
 export EVENT_NAME=$event BASE_SHA=$base PR_AUTHOR='$author' PR_AUTHOR_ID=$author_id
 export PATH="$PWD/bin:\$PATH" GH_TOKEN=stub
