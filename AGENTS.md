@@ -8,7 +8,7 @@ This file is the project's committed home for project-intrinsic agent knowledge:
   Those measurements stay in `automation`; a comment here states the finding and its date, never where it was measured.
 - **`gitleaks dir .` in `.ci/check.sh` scans ignored directories too**, so an untracked log quoting a fixture value (a pooled worktree's `.fm-evidence/`, say) fails `secrets` locally while CI passes.
   Validate in a clean clone before reading that failure as the branch's.
-- **Each `shared-*.yml` is a bootstrap; the gate is a `run/` script it runs from a checkout of `job.workflow_repository` at the commit the caller's `.github/gates.lock` names, or at `job.workflow_sha` when there is none.**
+- **Each `shared-*.yml` is a bootstrap; the gate is a `run/` script it runs from a checkout of `job.workflow_repository` at the commit the caller's `.github/gates.lock` (absent here) names, or at `job.workflow_sha` when there is none.**
   `run/lock.sh` decides that commit and owns the controls; README.md, "Pinning", owns the design.
   Logic belongs in `run/`, because YAML reaches a pinned caller only through a workflow-file pin bump, while `run/` reaches it through a lock bump; a lock-less caller at `@main` runs `main` either way.
   From a private repository that checkout answers `Not Found` with the caller's token (measured 2026-09-16), so the bootstraps need this repository to be public for any other repository to use them.
@@ -16,7 +16,7 @@ This file is the project's committed home for project-intrinsic agent knowledge:
   Under `-e` a failing command substitution aborts on the assignment, so an `rc=$?` on the following line never runs, and a `grep` that matches nothing takes the step down under `pipefail`.
 - **`.gitleaks.toml`, `.githooks/pre-push` and `system-maintenance/git-hooks/commit-msg` (synced as `.githooks/commit-msg`) are compared byte for byte with gates at the locked commit, not by digest.**
   Changing any of them means re-running `.ci/gitleaks/sync.sh` over every clone that tracks `main`, or those callers go red on their next pull request; a locked caller moves its copies with its lock.
-  A caller extends the hook through a tracked, executable `.githooks/pre-push.local`, never by editing its copy; `system-maintenance/git-hooks/README.md` owns the contract.
+  A caller extends the hook through a tracked, executable `.githooks/pre-push.local` (absent here), never by editing its copy; `system-maintenance/git-hooks/README.md` owns the contract.
 - **`system-maintenance/git-hooks/README.md` owns the machine-wide hook design**: the allowlist keyed on the normalised `origin`, why the watermark gate is opt-out while gitleaks is opt-in, the `clean`/`verify` verdicts, and the latency numbers.
   Read it before changing a rule, an exemption or the scope.
 - **`gitleaks git` exits 0 and reports "no leaks found" when it scanned nothing, and counts only commits it read a patch from.**
@@ -34,7 +34,7 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 - **Every gate is registered in `.ci/gate-registry.toml` with executable `red` and `clean` inputs, a `run` and a `finding`, and `.ci/check.sh gates-proof` executes them: red must be refused naming the finding, clean must pass, and red must pass once the row's `command` is neutered.**
   It also fails on an unregistered gate file or a test no suite runs.
   Adding a workflow, hook, `run/` file or `.ci` script means adding its row in the same commit; a git-lfs shim or an installer goes under `[[exempt]]` with a reason.
-- **`bin/gates.py bump` and `rollback` move a caller's `.github/gates.lock`; README.md, "Bumping", owns the design and `bin/rollout.toml` the stages.**
+- **`bin/gates.py bump` and `rollback` move a caller's `.github/gates.lock` (absent here); README.md, "Bumping", owns the design and `bin/rollout.toml` the stages.**
   `createCommitOnBranch` keeps a modified file's mode but adds every new file `100644` (measured 2026-10-16), so a caller missing a synced hook is refused and needs one `sync.sh` push first.
   `.ci/test-bump.py` runs the tool against fixture callers through `.ci/fixtures/gh-stub.py`, which models that behaviour; change both together.
 
