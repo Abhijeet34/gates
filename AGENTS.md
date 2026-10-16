@@ -31,8 +31,9 @@ This file is the project's committed home for project-intrinsic agent knowledge:
   `test-global-hooks.sh` is the exception and must run bare, because it deploys into a throwaway `HOME` whose global config it writes.
 - **Tracked text carries no machine identifier and no security-alert count, tests included, because `exposure-scan.py` refuses both on a push to this public repository.**
   A test plants such a value by reading it from the machine or assembling it from a variable at run time; `system-maintenance/git-hooks/README.md`, "The exposure gate", owns the rules.
-- **Every gate is registered in `.ci/gate-registry.toml` with a red and a clean case that must stay in its test, and `.ci/check.sh gates-proof` fails on an unregistered gate file, a vanished case, or a test no suite runs.**
-  Adding a workflow, hook or `.ci` script means adding its entry in the same commit; a git-lfs shim goes under `[[exempt]]` with a reason.
+- **Every gate is registered in `.ci/gate-registry.toml` with executable `red` and `clean` inputs, a `run` and a `finding`, and `.ci/check.sh gates-proof` executes them: red must be refused naming the finding, clean must pass, and red must pass once the row's `command` is neutered.**
+  It also fails on an unregistered gate file or a test no suite runs.
+  Adding a workflow, hook or `.ci` script means adding its row in the same commit; a git-lfs shim goes under `[[exempt]]` with a reason.
 
 ## Maintaining this file
 
