@@ -33,7 +33,7 @@ parse_lock() { # <label> < content
     local body
     body=$(sed 's/#.*//' | tr -d ' \t\r' | grep -v '^$' || true)
     [ -z "$body" ] && return 0
-    printf '%s\n' "$body" | grep -qxE '[0-9a-f]{40}' \
+    [[ $body =~ ^[0-9a-f]{40}$ ]] \
         || fail "$1 is not a single 40-hex gates commit: $(printf '%s' "$body" | head -c 120)"
     printf '%s\n' "$body"
 }
