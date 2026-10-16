@@ -76,9 +76,11 @@ def cmd_push(argv):
         return 0
     try:
         shas = []
+        seen = set()
         for spec in ranges_from("\n".join(lines), remote, url):
             for sha in git("rev-list", *spec).decode().split():
-                if sha not in shas:
+                if sha not in seen:
+                    seen.add(sha)
                     shas.append(sha)
         bad = unsigned(shas) if shas else []
     except (RuntimeError, OSError, ValueError) as exc:

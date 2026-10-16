@@ -378,6 +378,9 @@ Every gate runs even when an earlier one fails, so one push reports every proble
 A gate that exits non-zero fails the push, and one killed by a signal fails it too and says so, because it printed nothing of its own.
 
 Every file a gate needs is checked before any gate starts, so a half-deployed machine refuses at once with `install.sh deploy` as the remedy instead of after the first scanner.
+The gates' `git ls-remote` calls now run concurrently, so a destination that needs an interactive SSH passphrase or host-key prompt could prompt several times at once.
+Every fleet remote is HTTPS through a credential helper and git over SSH cannot resolve in the sandbox, so no prompt arises here.
+
 A killed push leaves nothing behind: the dispatcher traps `HUP`, `INT` and `TERM`, kills each gate and its children, and removes its temp directory.
 The gates stay in the hook's own process group on purpose, so one that must prompt (an ssh passphrase for `git ls-remote`) still can; a background group that reads the terminal is stopped, which would hang the push.
 `test-global-hooks.sh`, section 12, pins all of this with stub scanners that only succeed when they see the others running beside them.
