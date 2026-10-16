@@ -66,6 +66,9 @@ expect "a pull request that changes no lock needs no bump identity" pr-legacy 0 
 expect "a bump by the bump identity, forward on main, lock and copies only" bump 0 "gates locked at" '$FIX_B'
 expect "a lock added by the bump identity at the bootstrap's commit" added 0 "gates locked at" '$FIX_C'
 expect "a lock removed by the bump identity, forward to the bootstrap's commit" removed 0 "gates at" '$FIX_C'
+expect "a rollback by the bump identity to the lock the base's lock replaced" rollback 0 "gates locked at" '$FIX_A'
+expect "a rollback from a depth-1 caller checkout, which lacks the base's history" rollback 0 "gates locked at" '$FIX_A' \
+    'mv caller caller.src && git clone -q --no-local --depth 1 "file://$PWD/caller.src" caller'
 
 # --- red: each control, and gates is never checked out at what it refused -----
 
@@ -74,6 +77,9 @@ expect "an imposter: a commit gates does not have at all" locked 1 "not on gates
     'echo 0123456789abcdef0123456789abcdef01234567 > caller/.github/gates.lock'
 expect "a commit on main whose checks run failed" unchecked 1 "no green checks run" '$FIX_C'
 expect "a downgrade" downgrade 1 "a downgrade" '$FIX_C'
+expect "a rollback past the lock the base's lock replaced" rollback-skip 1 "a downgrade" '$FIX_C'
+expect "a rollback by another author" rollback 1 "someone (1) is not the bump identity" '$FIX_C' \
+    'export PR_AUTHOR=someone PR_AUTHOR_ID=1'
 expect "a lock change bundled with other content" bundled 1 "together with other content: app.py" '$FIX_C'
 expect "a lock change by another author" author 1 "someone (1) is not the bump identity" '$FIX_C'
 expect "a lock change by the bump login with another id" impersonated 1 "(9999) is not the bump identity" '$FIX_C'
@@ -143,6 +149,7 @@ without checks unchecked '$FIX_B' '    green "$head_lock" \'
 without bundled bundled '$FIX_B' '        [ -z "$extra" ] \'
 without author author '$FIX_B' '        grep -qxF "${PR_AUTHOR:-} ${PR_AUTHOR_ID:-}" <<<"$identity" \'
 without downgrade downgrade '$FIX_A' '        g merge-base --is-ancestor "$from" "$target" 2>/dev/null \'
+without rollback rollback-skip '$FIX_A' '    [ "$prev" = "$1" ] \'
 
 ((failed)) && { echo "test-lock: FAILED" >&2; exit 1; }
 echo "test-lock: every control refuses its red scenario, and each deleted guard lets its own through"
