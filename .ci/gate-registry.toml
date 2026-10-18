@@ -463,6 +463,40 @@ mkdir store && printf '{"gate": "migrations", "head": "%s", "verdict": "pass"}\n
 run = 'python3 "$GATE" fold --base base --store store'
 finding = "FAIL migrations: no verdict for this head"
 
+# The budget monitor's alarm is a gate too: a series at 70% of its budget must be
+# named, not summarised away. README.md, "The budget monitor".
+[[gate]]
+id = "budget-monitor"
+surface = "Gate budgets"
+gates = ["run/budget-monitor.py"]
+test = ".ci/test-budget-monitor.py"
+suite = "shell"
+command = "run/budget-monitor.py"
+red = '''
+mkdir bin && printf '[[budget]]\nid = "gate"\nrepo = "o/r"\nworkflow = "ci.yml"\njob = "check"\nbudget_s = 360\n' > budgets.toml
+cat > bin/gh <<'EOF'
+#!/bin/sh
+case "$2" in
+  *"/runs?"*) echo '{"id":1,"created":"2026-10-19T11:00:00Z"}' ;;
+  *) echo '{"name":"check","conclusion":"success","started":"2026-10-19T11:00:00Z","completed":"2026-10-19T11:05:00Z","steps":[]}' ;;
+esac
+EOF
+chmod +x bin/gh
+'''
+clean = '''
+mkdir bin && printf '[[budget]]\nid = "gate"\nrepo = "o/r"\nworkflow = "ci.yml"\njob = "check"\nbudget_s = 360\n' > budgets.toml
+cat > bin/gh <<'EOF'
+#!/bin/sh
+case "$2" in
+  *"/runs?"*) echo '{"id":1,"created":"2026-10-19T11:00:00Z"}' ;;
+  *) echo '{"name":"check","conclusion":"success","started":"2026-10-19T11:00:00Z","completed":"2026-10-19T11:01:40Z","steps":[]}' ;;
+esac
+EOF
+chmod +x bin/gh
+'''
+run = 'PATH="$PWD/bin:$PATH" python3 "$GATE" --budgets budgets.toml --now 2026-10-19T12:00:00Z'
+finding = "ALARM: p95 300 s is 83% of the 360 s budget (alarm at 70%)"
+
 # Security design 7.2's protected surface; README.md, "The permissions-diff gate".
 [[gate]]
 id = "permissions-diff"
