@@ -91,6 +91,11 @@ check_shell() {
     python3 .ci/test-budget-monitor.py || rc=1
     # The protected surface of security design 7.2, and its row in shadow under the runner.
     python3 .ci/test-permissions-diff.py || rc=1
+    # The document rules, their shadow rows under the runner, and the first two on this tree.
+    # The budget is not run here: it is a shadow row until this tree's AGENTS.md fits it.
+    python3 .ci/test-docs-truth.py || rc=1
+    python3 run/docs-truth.py owner . || rc=1
+    python3 run/docs-truth.py commands . || rc=1
     # The exposure and signature gates, through real pushes into throwaway repositories.
     bash system-maintenance/git-hooks/test-exposure-scan.sh || rc=1
     bash system-maintenance/git-hooks/test-signature-check.sh || rc=1
