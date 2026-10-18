@@ -36,8 +36,10 @@ import argparse
 import datetime
 import hashlib
 import json
+import os
 import platform
 import re
+import signal
 import subprocess
 import sys
 import time
@@ -204,9 +206,9 @@ def records(store, strict):
     if not path.exists():
         return []
     out = []
-    for n, line in enumerate(path.read_text().splitlines(), 1):
+    for n, raw in enumerate(path.read_bytes().splitlines(), 1):
         try:
-            rec = json.loads(line)
+            rec = json.loads(raw.decode())
             if not isinstance(rec, dict) or not all(
                 isinstance(rec.get(k), str) for k in ("gate", "head", "verdict")
             ):
@@ -267,25 +269,24 @@ def run_one(row, head, base, store, timeout):
                 "duration_ms": 0,
             }
     t0 = time.monotonic()
+    proc = subprocess.Popen(
+        ["bash", "-e", "-c", row["run"]],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        start_new_session=True,
+    )
     try:
-        proc = subprocess.run(
-            ["bash", "-e", "-c", row["run"]],
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            timeout=timeout,
-        )
-        verdict, detail, output = (
+        output, _ = proc.communicate(timeout=timeout)
+        verdict, detail = (
             ("pass" if proc.returncode == 0 else "fail"),
             f"exit {proc.returncode}",
-            proc.stdout,
         )
-    except subprocess.TimeoutExpired as e:
-        verdict, detail, output = (
-            "error",
-            f"timed out after {timeout}s",
-            e.output or b"",
-        )
+    except subprocess.TimeoutExpired:
+        # A grandchild holding the pipe would block the next read, so the whole group dies first.
+        os.killpg(proc.pid, signal.SIGKILL)
+        output, _ = proc.communicate()
+        verdict, detail = "error", f"timed out after {timeout}s"
     return {
         **rec,
         "verdict": verdict,
