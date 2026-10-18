@@ -463,6 +463,28 @@ mkdir store && printf '{"gate": "migrations", "head": "%s", "verdict": "pass"}\n
 run = 'python3 "$GATE" fold --base base --store store'
 finding = "FAIL migrations: no verdict for this head"
 
+# Security design 7.2's protected surface; README.md, "The permissions-diff gate".
+[[gate]]
+id = "permissions-diff"
+surface = "Security"
+gates = ["run/permissions-diff.py"]
+test = ".ci/test-permissions-diff.py"
+suite = "shell"
+command = "run/permissions-diff.py"
+red = '''
+git init -q -b main && mkdir .claude && echo '{"sandbox": {"enabled": true}}' > .claude/settings.json
+echo hi > README.md && git add -A && git commit -qm base && git tag base
+echo '{"sandbox": {"enabled": true, "allowUnsandboxedCommands": true}}' > .claude/settings.json
+git commit -qam widen
+'''
+clean = '''
+git init -q -b main && mkdir .claude && echo '{"sandbox": {"enabled": true}}' > .claude/settings.json
+echo hi > README.md && git add -A && git commit -qm base && git tag base
+echo more >> README.md && git commit -qam edit
+'''
+run = 'python3 "$GATE" --base base'
+finding = "permissions-diff: .claude/settings.json changes Claude Code settings"
+
 [[gate]]
 id = "gates-proof"
 surface = "Gate of the gates"
