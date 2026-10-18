@@ -87,6 +87,8 @@ check_shell() {
     bash .ci/test-suite-coverage.sh || rc=1
     # The gate runner's selection, cache and fold, each case also run without its control.
     python3 .ci/test-gate-runner.py || rc=1
+    # The protected surface of security design 7.2, and its row in shadow under the runner.
+    python3 .ci/test-permissions-diff.py || rc=1
     # The exposure and signature gates, through real pushes into throwaway repositories.
     bash system-maintenance/git-hooks/test-exposure-scan.sh || rc=1
     bash system-maintenance/git-hooks/test-signature-check.sh || rc=1
