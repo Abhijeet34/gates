@@ -437,6 +437,32 @@ mkdir notes && echo 'work somebody tracks' > notes/todo.txt && git add -A && git
 run = 'sh "$GATE"'
 finding = "orphan-dirs: 'notes/' has files on disk but ZERO tracked files"
 
+# The runner's selector is a gate too (report 4.3, rule 3): a migration change
+# whose migration gate has no verdict must not fold to pass.
+[[gate]]
+id = "gate-runner"
+surface = "Gate runner"
+gates = ["run/gate.py"]
+test = ".ci/test-gate-runner.py"
+suite = "shell"
+command = "run/gate.py"
+red = '''
+git init -q -b main && mkdir -p .github migrations src && echo 'fn main() {}' > src/main.rs
+printf '[[gate]]\nid = "rust"\ninputs = ["src/**"]\nrun = "true"\n\n[[gate]]\nid = "migrations"\ninputs = ["migrations/**"]\nrun = "true"\n' > .github/gates.toml
+echo 'create table t (id int);' > migrations/0001.sql && git add -A && git commit -qm base && git tag base
+echo 'create index i on t (id);' > migrations/0002.sql && git add -A && git commit -qm migrate
+mkdir store && printf '{"gate": "rust", "head": "%s", "verdict": "pass"}\n' "$(git rev-parse HEAD)" > store/records.jsonl
+'''
+clean = '''
+git init -q -b main && mkdir -p .github migrations src && echo 'fn main() {}' > src/main.rs
+printf '[[gate]]\nid = "rust"\ninputs = ["src/**"]\nrun = "true"\n\n[[gate]]\nid = "migrations"\ninputs = ["migrations/**"]\nrun = "true"\n' > .github/gates.toml
+echo 'create table t (id int);' > migrations/0001.sql && git add -A && git commit -qm base && git tag base
+echo 'create index i on t (id);' > migrations/0002.sql && git add -A && git commit -qm migrate
+mkdir store && printf '{"gate": "migrations", "head": "%s", "verdict": "pass"}\n' "$(git rev-parse HEAD)" > store/records.jsonl
+'''
+run = 'python3 "$GATE" fold --base base --store store'
+finding = "FAIL migrations: no verdict for this head"
+
 [[gate]]
 id = "gates-proof"
 surface = "Gate of the gates"
