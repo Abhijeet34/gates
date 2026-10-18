@@ -14,6 +14,7 @@ Licensed under the Apache License 2.0; see `LICENSE` and `NOTICE`.
 | `run/` | What each bootstrap runs from the locked gates commit: `lock.sh`, which decides that commit, and one script per gate. |
 | `run/gate.py` | The gate runner: selects a repository's gates from its `.github/gates.toml` (absent here) and the diff, keys each verdict by the gate's inputs, records verdicts and folds them with review and docs verdicts, and keeps a shadow row from blocking until it earns promotion; its docstring owns the contract. No workflow calls it yet. |
 | `run/permissions-diff.py` | The permissions-diff gate over the protected surface; see "The permissions-diff gate". |
+| `run/docs-truth.py`, `.github/docs.toml` | The three document rules (owner and reader, commands, byte budget) and this repository's own owner and reader list; see "The documentation rows". |
 | `run/budget-monitor.py` | The gate budget monitor: prints each budgeted step's weekly p50/p95, the alarm and the fix task text; see "The budget monitor". |
 | `bin/gates.py`, `bin/rollout.toml` | `gates bump` and `gates rollback`, which move callers' locks; see "Bumping". |
 | `.ci/` | The contract test for each gate script, the gitleaks rule and allowlist suites, and `check.sh`, which runs all of them. |
@@ -149,6 +150,53 @@ shadow_since = 2026-10-19
 
 `BASE_SHA` and `GATES_DIR` come from the calling workflow, which does not exist yet.
 `.ci/test-permissions-diff.py` runs 7.2's five red fixtures and runs this row through `run/gate.py`, which folds it to `shadow` with a `shadow_since` and refuses without one.
+
+## The documentation rows
+
+`run/docs-truth.py owner|commands|budget [root]` answers three rules from the tree alone; its docstring owns the exact scope.
+Path truth (`run/instruction-truth/path-truth.py`) and the instruction size caps (`run/instruction-truth/size-limit.py`) already exist and are not repeated: this script judges what they skip.
+
+- **`owner`**: every `AGENTS.md` and `CLAUDE.md` is listed in `.github/docs.toml` with a non-empty `owner` and a `reader` of `agents`, `compliance` or `clients` (report 7.3's three readers). Any other Markdown file is judged only when it is listed.
+- **`commands`**: a command in a shell-tagged fence of any Markdown file must parse under `bash -n` and its command word must exist. Path truth skips fenced blocks, which is where a renamed script goes stale unnoticed.
+  "Exists" means a bash builtin or keyword, a file of the tree (executable when run directly, present when handed to `bash`, `sh` or `python3`), or a program the manifest lists under `tools`.
+  A `PATH` lookup was rejected because it would judge the machine running the check, so a runner without `gitleaks` would refuse every caller's docs; running `--help` was rejected because it executes what the document says.
+  A command word holding `$`, a glob or `~`, a heredoc body and inline backtick spans are not judged: a span such as `git push` is as often a noun as an instruction.
+- **`budget`**: the root `AGENTS.md` is at most 8,000 bytes. The plan asks for a word budget, but the fleet's instruction budgets are all bytes or lines: a home file under 5,000 bytes (factory plan r5, "Budgets"; enforced by `size-limit.py`), a repository file under 8,000 bytes (the same section and report 7.2, "a root `AGENTS.md` of at most 8,000 bytes") and 200 lines (report 7.2, quoth's target; `size-limit.py`).
+  No word figure exists to take, and converting bytes to words would invent one, so the 8,000 is the only new number and it keeps its unit. A nested `AGENTS.md` has no fleet budget and is not judged.
+
+Read tracking is left out. Report 7.3 counts reads from the event log (`record.read`) and retires a document unread for a quarter, and a gate cannot decide that deterministically:
+
+- The log is not in the tree, so it cannot enter the runner's cache key, and the same commit would fold differently from one day to the next.
+- A quarter without a read is a clock, not a property of the commit under review.
+- A session loads an instruction file whole, so every `AGENTS.md` counts as read on every run and the measure says nothing about it.
+
+It fits a scheduled report over the log, as the budget monitor does for step times, which is the maintainer's to add.
+
+Each rule is a row of a caller's `.github/gates.toml`, in shadow until the promotion rule in `run/gate.py` lets it block. They are `kind = "check"` because a `docs` row has no `run` and takes a recorded review verdict.
+The commands row lists `**` as inputs because a script that is deleted or loses its executable bit changes the verdict without touching a document:
+
+```toml
+[[gate]]
+id = "docs-owner-reader"
+inputs = ["**/*.md", ".github/docs.toml"]
+run = 'python3 "$GATES_DIR/run/docs-truth.py" owner .'
+shadow_since = 2026-10-19
+
+[[gate]]
+id = "docs-commands-run"
+inputs = ["**"]
+run = 'python3 "$GATES_DIR/run/docs-truth.py" commands .'
+shadow_since = 2026-10-19
+
+[[gate]]
+id = "docs-agents-budget"
+inputs = ["AGENTS.md"]
+run = 'python3 "$GATES_DIR/run/docs-truth.py" budget .'
+shadow_since = 2026-10-19
+```
+
+`.ci/test-docs-truth.py` runs the cases of all three rules and runs these rows through `run/gate.py`, which folds each to `shadow` with a `shadow_since` and refuses without one. No workflow calls the script: a step in `shared-instruction-truth.yml` is the maintainer's to add in the weekly batch.
+`.ci/check.sh` runs `owner` and `commands` on this tree and not `budget`, because this tree's own `AGENTS.md` is over it.
 
 ## The budget monitor
 

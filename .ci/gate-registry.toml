@@ -519,6 +519,50 @@ echo more >> README.md && git commit -qam edit
 run = 'python3 "$GATE" --base base'
 finding = "permissions-diff: .claude/settings.json changes Claude Code settings"
 
+# Three document rules over one script; README.md, "The documentation rows". They
+# are rows of a caller's .github/gates.toml in shadow, never a workflow step.
+[[gate]]
+id = "docs-owner-reader"
+surface = "Documentation"
+gates = ["run/docs-truth.py"]
+test = ".ci/test-docs-truth.py"
+suite = "shell"
+command = "run/docs-truth.py"
+red = '''echo '# Agents' > AGENTS.md'''
+clean = '''
+echo '# Agents' > AGENTS.md && mkdir .github
+printf '[[doc]]\npath = "AGENTS.md"\nowner = "maintainer"\nreader = "agents"\n' > .github/docs.toml
+'''
+run = 'python3 "$GATE" owner .'
+finding = "AGENTS.md: names no owner and reader"
+
+[[gate]]
+id = "docs-commands-run"
+surface = "Documentation"
+gates = ["run/docs-truth.py"]
+test = ".ci/test-docs-truth.py"
+suite = "shell"
+command = "run/docs-truth.py"
+red = '''printf '# Setup\n\n```bash\n.ci/sync.sh --check\n```\n' > README.md'''
+clean = '''
+printf '# Setup\n\n```bash\n.ci/sync.sh --check\n```\n' > README.md
+mkdir .ci && printf '#!/bin/sh\n' > .ci/sync.sh && chmod +x .ci/sync.sh
+'''
+run = 'python3 "$GATE" commands .'
+finding = "README.md:4: `.ci/sync.sh` does not exist"
+
+[[gate]]
+id = "docs-agents-budget"
+surface = "Documentation"
+gates = ["run/docs-truth.py"]
+test = ".ci/test-docs-truth.py"
+suite = "shell"
+command = "run/docs-truth.py"
+red = '''head -c 8001 /dev/zero | tr '\0' x > AGENTS.md'''
+clean = '''head -c 8000 /dev/zero | tr '\0' x > AGENTS.md'''
+run = 'python3 "$GATE" budget .'
+finding = "AGENTS.md: 8001 bytes, over the 8000-byte budget"
+
 [[gate]]
 id = "gates-proof"
 surface = "Gate of the gates"
