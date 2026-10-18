@@ -43,6 +43,8 @@ This file is the project's committed home for project-intrinsic agent knowledge:
   `system-maintenance/git-hooks/README.md`, "The gates run together" and "The signature check", owns the design.
 - **`run/gate.py` reads a caller's `.github/gates.toml` (absent here), a registry separate from `.ci/gate-registry.toml`, which proves the gate files this repository ships.**
   Its fold never passes a selected blocking gate, review and docs rows included, without a `pass` record for the head, and a shadow row blocks only once it meets the promotion rule in its docstring; `.ci/test-gate-runner.py` re-runs each case against a copy with its control removed, so a change that moves a mutation's anchor text fails the suite until the anchor follows.
+- **`run/permissions-diff.py` refuses any change to security design 7.2's protected surface, including its own `SURFACE`, a workflow's `permissions:` blocks and an existing `surface = "Security"` row of `.ci/gate-registry.toml`; README.md, "The permissions-diff gate", owns the mapping and the paths 7.2 names that no longer exist.**
+  Changing a Security row or a workflow token therefore needs a class-2 decision once a caller promotes the gate out of shadow.
 
 ## Maintaining this file
 

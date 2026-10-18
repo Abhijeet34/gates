@@ -13,6 +13,7 @@ Licensed under the Apache License 2.0; see `LICENSE` and `NOTICE`.
 | `.github/workflows/shared-*.yml` | Reusable workflows: `secret-scan`, `watermark-scan`, `dependency-advisories`, `guard-generated-files`, `no-mistakes-required`, `instruction-truth`. Each is a bootstrap; see "Pinning". |
 | `run/` | What each bootstrap runs from the locked gates commit: `lock.sh`, which decides that commit, and one script per gate. |
 | `run/gate.py` | The gate runner: selects a repository's gates from its `.github/gates.toml` (absent here) and the diff, keys each verdict by the gate's inputs, records verdicts and folds them with review and docs verdicts, and keeps a shadow row from blocking until it earns promotion; its docstring owns the contract. No workflow calls it yet. |
+| `run/permissions-diff.py` | The permissions-diff gate over the protected surface; see "The permissions-diff gate". |
 | `bin/gates.py`, `bin/rollout.toml` | `gates bump` and `gates rollback`, which move callers' locks; see "Bumping". |
 | `.ci/` | The contract test for each gate script, the gitleaks rule and allowlist suites, and `check.sh`, which runs all of them. |
 
@@ -101,6 +102,52 @@ The release's `sync.sh` runs on the machine that bumps, as `install.sh deploy` d
 
 Dependabot was the alternative for the lock and does not fit it: its `github-actions` updater reads only workflow files, so it cannot move `.github/gates.lock`, and it cannot run `sync.sh`, so even a bump of the workflow pin would arrive with drifted copies.
 It stays the writer for the rare bootstrap pin bump, which needs `workflows` write.
+
+## The permissions-diff gate
+
+`run/permissions-diff.py --base B` reads `git diff B...HEAD` and refuses every change to the files that grant an agent authority, naming each path, in 0.12 s on this repository (measured 2026-10-19).
+Its refusal is the signal that sizes the change L and opens a class-2 decision; an automatic change may not land it.
+It refuses a narrowing too: telling a narrowing from a widening is left to that decision.
+
+The surface is security design 7.2's list, mapped onto the paths that exist today (read 2026-10-19 across the fleet's repositories):
+
+| 7.2 entry | Paths | What counts as a change |
+| --- | --- | --- |
+| `settings*.json` and worker profiles | `**/.claude/settings*.json`, `**/managed-settings.json`, `**/managed-settings.d/**`, `**/claude-code/config/settings*.json`, `internal/sandbox/profile.go` | any |
+| the `fac permit` rule table | `internal/permit/permit.go` | any |
+| `route.toml` `[tiers]` and `[vendors]` | `route.toml` | `[tiers]`, `[repos]` or `[vendors]` differs, or the file cannot be parsed |
+| App manifests and the minter's permission subsets | `**/github-apps/roles.json`, `**/github-apps/app-token.sh`, `**/github-apps/register-app.py` | any |
+| workflow `permissions:`, rulesets, Actions settings | `.github/workflows/*.yml` and `*.yaml`; `.github/ruleset*.json`, `.github/rulesets/**` | a workflow's `permissions:` blocks differ, comments aside; a ruleset, any |
+| gate registry rows with `phase = "security"` | `.github/gates.toml`, every row; `.ci/gate-registry.toml`, rows with `surface = "Security"` | an existing row deleted or any of its fields changed; a new row passes |
+| the outbound pattern set and channel allowlists | `outbound/outbound.go` | any |
+| memory guards and `captain.md` | `**/memory-write-guard.sh`, `**/captain.md` | any |
+| (added) the gate's own surface | `run/permissions-diff.py` | any |
+
+Where 7.2 no longer matches what exists:
+
+- No permit rule table exists: the permit host is a deny overlay compiled into `internal/permit/permit.go`, so that file is protected whole.
+- No worker profile file exists: the per-task sandbox profile is code in `internal/sandbox/profile.go`, and the orchestrator's worker overlay is built inside its launcher script, which no path rule can protect without refusing every launcher edit.
+- Neither `phase` nor `flake` is a registry key, and `run/gate.py` refuses an unknown key, so no row in `.github/gates.toml` can be marked as security; every existing row is protected instead.
+- No channel allowlist, Actions permission setting as code or App manifest file exists; the App's permissions are written by `register-app.py` and subset by `roles.json` and `app-token.sh`.
+- `route.toml` marks `[repos]` captain-owned beside `[tiers]`, and moving a repository to a wider tier widens which vendors receive its source, so `[repos]` is added.
+- `settings*.json` misses `managed-settings.json`, which outranks every other scope, and catches an editor's `.vscode/settings.json`, so the globs name Claude Code's files.
+- Not protected, and candidates for the list: `.github/CODEOWNERS`, `.github/secret_scanning.yml`, `.gitleaks.toml`'s allowlists, `.githooks/**`, and a new workflow with no `permissions:` key, which takes the repository's default token.
+
+A caller runs it as a shadow row in its `.github/gates.toml`, so `run/gate.py` reports its red as `shadow` until the promotion rule in its docstring lets it block:
+
+```toml
+[[gate]]
+id = "permissions-diff"
+inputs = ["**"]
+# The verdict depends on the base, which the runner neither keys nor passes to
+# `run`, so the merge base enters the key through a probe.
+tools = { base = 'git merge-base "$BASE_SHA" HEAD' }
+run = 'python3 "$GATES_DIR/run/permissions-diff.py" --base "$BASE_SHA"'
+shadow_since = 2026-10-19
+```
+
+`BASE_SHA` and `GATES_DIR` come from the calling workflow, which does not exist yet.
+`.ci/test-permissions-diff.py` runs 7.2's five red fixtures and runs this row through `run/gate.py`, which folds it to `shadow` with a `shadow_since` and refuses without one.
 
 ## Using the hooks on a machine
 
