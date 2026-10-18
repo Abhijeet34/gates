@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regression tests for run/gate.py: selection, the verdict cache and the fold.
+"""Regression tests for run/gate.py: selection, the verdict cache, the fold and promotion.
 
     .ci/test-gate-runner.py
 
@@ -10,6 +10,7 @@ against a copy with the one control that case exists for removed, so a case
 that would pass without its control is itself refused.
 """
 
+import datetime
 import json
 import os
 import shutil
@@ -53,6 +54,8 @@ FILES = {
     "docs/index.md": "# Fixture\n",
     "README.md": "A fixture.\n",
 }
+
+NOW = datetime.datetime.now(datetime.UTC)
 
 workdir = Path(tempfile.mkdtemp())
 
@@ -131,6 +134,46 @@ class Fixture:
     def runs_of(self, gid):
         path = self.runs / gid
         return len(path.read_text().splitlines()) if path.exists() else 0
+
+    def append(self, name, lines):
+        self.store.mkdir(exist_ok=True)
+        with open(self.store / name, "a") as h:
+            h.writelines(json.dumps(line) + "\n" for line in lines)
+
+    def history(self, gid, days_ago, value="pass"):
+        """One fresh record for gid per entry of days_ago, at heads other than this one."""
+        self.append(
+            "records.jsonl",
+            [
+                {
+                    "schema": 1,
+                    "gate": gid,
+                    "head": f"{n:040x}",
+                    "verdict": value,
+                    "reused_from": None,
+                    "started": (NOW - datetime.timedelta(days=d)).isoformat(),
+                }
+                for n, d in enumerate(days_ago, 1)
+            ],
+        )
+
+    def event(self, gid, event, days_ago):
+        at = (NOW - datetime.timedelta(days=days_ago)).isoformat()
+        self.append("standing.jsonl", [{"gate": gid, "event": event, "at": at}])
+
+    def lint(self, since_days_ago=None):
+        """Replace the registry with one always-red `lint` row, shadowed from the given day."""
+        row = '[[gate]]\nid = "lint"\ninputs = ["**"]\nrun = "echo lint finding; exit 1"\n'
+        if since_days_ago is not None:
+            since = (NOW - datetime.timedelta(days=since_days_ago)).date()
+            row += f"shadow_since = {since.isoformat()}\n"
+        return self.commit({".github/gates.toml": row})
+
+    def run_fold(self):
+        """(run's exit, fold's exit, fold's output) at the head."""
+        run_rc, _ = self.gate("run", "--base", self.base, "--store", str(self.store))
+        rc, out = self.gate("fold", "--base", self.base, "--store", str(self.store))
+        return run_rc, rc, out.strip()
 
     def records(self):
         path = self.store / "records.jsonl"
@@ -269,6 +312,135 @@ def damaged_record_refuses(runner):
     return None
 
 
+def shadow_red_does_not_block(runner):
+    f = Fixture(runner)
+    f.lint(since_days_ago=3)
+    run_rc, rc, out = f.run_fold()
+    if (
+        run_rc != 0
+        or rc != 0
+        or "shadow lint: fail: exit 1 (in shadow since" not in out
+    ):
+        return f"a red lint row 3 days into shadow blocked (run exit {run_rc}, fold exit {rc}): {out}"
+    return None
+
+
+def promoted_row_blocks(runner):
+    f = Fixture(runner)
+    f.lint(since_days_ago=20)
+    # 49 clean runs over 19 days, so this head's red run is the 50th.
+    f.history("lint", [19 - i * 19 / 48 for i in range(49)])
+    run_rc, rc, out = f.run_fold()
+    if run_rc == 0 or rc == 0 or "FAIL lint: fail: exit 1" not in out:
+        return f"a lint row 20 days and 50 runs into shadow with no false alarm did not block (run exit {run_rc}, fold exit {rc}): {out}"
+    return None
+
+
+def errors_earn_no_promotion(runner):
+    f = Fixture(runner)
+    f.lint(since_days_ago=20)
+    f.history("lint", [19 - i * 19 / 48 for i in range(49)], value="error")
+    run_rc, rc, out = f.run_fold()
+    if rc != 0 or "1 of 50 runs, 20 of 14 days" not in out:
+        return f"a lint row whose 49 earlier runs all errored was promoted (fold exit {rc}): {out}"
+    return None
+
+
+def promotion_waits_for_days_and_runs(runner):
+    f = Fixture(runner)
+    f.lint(since_days_ago=10)
+    f.history("lint", [9 - i * 9 / 59 for i in range(60)])
+    run_rc, rc, out = f.run_fold()
+    if rc != 0 or "61 of 50 runs, 10 of 14 days" not in out:
+        return f"a lint row with 61 runs but 10 days in shadow blocked (fold exit {rc}): {out}"
+    return None
+
+
+def false_alarm_keeps_shadow(runner):
+    f = Fixture(runner)
+    f.lint(since_days_ago=30)
+    f.history("lint", [29 - i * 28 / 59 for i in range(60)])
+    f.event("lint", "false-alarm", days_ago=10)
+    run_rc, rc, out = f.run_fold()
+    since = (NOW - datetime.timedelta(days=10)).date()
+    if rc != 0 or f"shadow lint: fail: exit 1 (in shadow since {since}: " not in out:
+        return f"a lint row with an upheld false alarm 10 days ago blocked (fold exit {rc}): {out}"
+    return None
+
+
+def failed_proof_demotes(runner):
+    f = Fixture(runner)
+    f.lint()
+    run_rc, rc, out = f.run_fold()
+    if rc == 0 or "FAIL lint: fail: exit 1" not in out:
+        return f"an established red lint row did not block (fold exit {rc}): {out}"
+    f.event("lint", "proof-failed", days_ago=1)
+    rc, out = f.gate("fold", "--base", f.base, "--store", str(f.store))
+    if rc != 0 or "shadow lint: fail: exit 1 (in shadow since" not in out:
+        return f"a lint row whose proof failed yesterday still blocked (fold exit {rc}): {out.strip()}"
+    return None
+
+
+REVIEWED = """
+[[gate]]
+id = "rust"
+inputs = ["src/**"]
+run = 'echo run >> "$RUNS/rust"'
+
+[[gate]]
+id = "review"
+kind = "review"
+inputs = ["**"]
+
+[[gate]]
+id = "docs"
+kind = "docs"
+inputs = ["**/*.md", "docs/**"]
+"""
+
+
+def verdict(gid, head, value, detail):
+    return {"schema": 1, "gate": gid, "head": head, "verdict": value, "detail": detail}
+
+
+def absent_review_refuses(runner):
+    f = Fixture(runner)
+    head = f.commit({".github/gates.toml": REVIEWED, "docs/index.md": "# Moved\n"})
+    run_rc, rc, out = f.run_fold()
+    if [r["gate"] for r in f.records()] != ["rust"]:
+        return f"run wrote records for {[r['gate'] for r in f.records()]}, not only the rust check"
+    if rc == 0 or "FAIL review: no verdict for this head" not in out:
+        return (
+            f"a fold with no review record was not refused naming it (exit {rc}): {out}"
+        )
+    f.append("records.jsonl", [verdict("review", head, "pass", "approved")])
+    rc, out = f.gate("fold", "--base", f.base, "--store", str(f.store))
+    if rc == 0 or "FAIL docs: no verdict for this head" not in out:
+        return f"a fold with a review but no docs record was not refused naming docs (exit {rc}): {out.strip()}"
+    return None
+
+
+def errored_doc_refuses(runner):
+    f = Fixture(runner)
+    head = f.commit({".github/gates.toml": REVIEWED, "docs/index.md": "# Moved\n"})
+    f.gate("run", "--base", f.base, "--store", str(f.store))
+    f.append(
+        "records.jsonl",
+        [
+            verdict("review", head, "pass", "approved"),
+            verdict("docs", head, "error", "reviewer timed out"),
+        ],
+    )
+    rc, out = f.gate("fold", "--base", f.base, "--store", str(f.store))
+    if rc == 0 or "FAIL docs: error: reviewer timed out" not in out:
+        return f"an errored docs record folded to {out.strip()!r} (exit {rc})"
+    f.append("records.jsonl", [verdict("docs", head, "pass", "current")])
+    rc, out = f.gate("fold", "--base", f.base, "--store", str(f.store))
+    if rc != 0:
+        return f"passing review and docs records did not fold to pass (exit {rc}): {out.strip()}"
+    return None
+
+
 # (case, control it proves, text in run/gate.py, the text with the control removed)
 CASES = [
     (
@@ -318,6 +490,54 @@ CASES = [
         "a damaged record refusing the fold",
         "            if strict:\n                raise Undecided",
         "            if False:\n                raise Undecided",
+    ),
+    (
+        shadow_red_does_not_block,
+        "a row in its shadow window not blocking",
+        "    return False, (\n",
+        "    return True, (\n",
+    ),
+    (
+        promoted_row_blocks,
+        "a row meeting the promotion rule blocking",
+        "if days >= SHADOW_DAYS and runs >= SHADOW_RUNS:",
+        "if False:",
+    ),
+    (
+        errors_earn_no_promotion,
+        "only a judged run counting toward promotion",
+        'rec["verdict"] in ("pass", "fail")',
+        "True",
+    ),
+    (
+        promotion_waits_for_days_and_runs,
+        "14 days and 50 runs, whichever is later",
+        "if days >= SHADOW_DAYS and runs >= SHADOW_RUNS:",
+        "if days >= SHADOW_DAYS or runs >= SHADOW_RUNS:",
+    ),
+    (
+        false_alarm_keeps_shadow,
+        "an upheld false alarm restarting the shadow window",
+        "starts = [latest_event] if latest_event else []",
+        "starts = []",
+    ),
+    (
+        failed_proof_demotes,
+        "a failed proof demoting the row",
+        'EVENTS = {"false-alarm", "proof-failed"}',
+        'EVENTS = {"false-alarm"}',
+    ),
+    (
+        absent_review_refuses,
+        "an absent review or docs record refusing",
+        "rec = latest.get(gid)\n",
+        'rec = latest.get(gid) or {"verdict": "pass"}\n',
+    ),
+    (
+        errored_doc_refuses,
+        "only a pass record passing",
+        'if verdict == "pass":',
+        'if verdict in ("pass", "error"):',
     ),
 ]
 
