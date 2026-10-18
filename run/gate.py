@@ -94,6 +94,8 @@ def load(head):
         raise Undecided(f"{REGISTRY}: {e}") from e
     if not rows:
         raise Undecided(f"{REGISTRY} lists no gates")
+    if not isinstance(rows, list) or not all(isinstance(r, dict) for r in rows):
+        raise Undecided(f"{REGISTRY}: `gate` must be an array of [[gate]] tables")
     seen = set()
     for row in rows:
         gid = row.get("id")
