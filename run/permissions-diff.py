@@ -24,7 +24,10 @@ import subprocess
 import sys
 import tomllib
 
-from gate import glob_re
+# The import would leave run/__pycache__ in the gates checkout, where the gate
+# proof reads every file under run/ as a gate.
+sys.dont_write_bytecode = True
+from gate import glob_re  # noqa: E402
 
 NO_BASE = "0" * 40
 DECISION = (
