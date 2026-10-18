@@ -15,6 +15,12 @@ The registry is `.github/gates.toml` in the tree under test, read at H, one
   run    = "cargo test --locked"                     # bash -e, at the checkout root
   tools  = { cargo = "cargo --version" }             # optional: probe whose output keys
   blocks = true                                      # optional: false reports only
+  kind   = "check"                                   # optional: check, review or docs
+  shadow_since = 2026-10-19                          # optional: date it entered shadow
+
+A `review` or `docs` row has no `run`: the review pipeline appends its verdict
+to DIR/records.jsonl in the same record shape, `run` skips it, and the fold
+reads it like any other, so an absent or `error` review never folds to pass.
 
 Selection maps `git diff --name-only B...H` through each gate's inputs, and
 selects every gate when a changed path is named by no gate, is the registry or
@@ -28,6 +34,15 @@ appends one verdict record per selected gate to DIR/records.jsonl, reusing a
 `pass` with the same key instead of running, and keeps each log under DIR/logs
 by its sha256. `fold` exits 0 only when every selected blocking gate's latest
 record for H is `pass`; a missing, `fail` or `error` record refuses.
+
+Promotion (design 4.5 and 4.7): a row's shadow window opens at the later of its
+`shadow_since` and its latest event in DIR/standing.jsonl, one JSON line
+{"gate", "event", "at"} per upheld false alarm (`false-alarm`) or failed
+proof (`proof-failed`). A row with an open window blocks only once the window
+spans 14 days and holds 50 fresh `pass` or `fail` records with a `started`
+time in it, whichever is later, so it has 0 upheld false alarms in it by
+construction; until then its red is reported as `shadow`, never a block. A row
+with no window is established and blocks, so an empty store never demotes it.
 
 Exit status: 0 pass, 1 refused, 2 could not decide (bad registry, git failure).
 """
@@ -47,8 +62,11 @@ import tomllib
 from pathlib import Path
 
 REGISTRY = ".github/gates.toml"
-ROW_KEYS = {"id", "inputs", "run", "tools", "blocks"}
+ROW_KEYS = {"id", "inputs", "run", "tools", "blocks", "kind", "shadow_since"}
+KINDS = {"check", "review", "docs"}
 VERDICTS = {"pass", "fail", "error"}
+EVENTS = {"false-alarm", "proof-failed"}
+SHADOW_DAYS, SHADOW_RUNS = 14, 50
 NO_BASE = "0" * 40
 RUNNER = f"{platform.system()}-{platform.machine()}".lower()
 PROBE_TIMEOUT = 60
@@ -115,8 +133,19 @@ def load(head):
             and all(isinstance(g, str) and g for g in inputs)
         ):
             problems.append("inputs must be a non-empty list of globs")
-        if not isinstance(row.get("run"), str) or not row["run"].strip():
+        kind = row.setdefault("kind", "check")
+        if kind not in KINDS:
+            problems.append(f"kind must be one of {sorted(KINDS)}")
+        elif kind != "check":
+            if "run" in row:
+                problems.append(f"a {kind} row's verdict is recorded, so it has no run")
+        elif not isinstance(row.get("run"), str) or not row["run"].strip():
             problems.append("no run command")
+        since = row.get("shadow_since")
+        if since is not None and (
+            not isinstance(since, datetime.date) or isinstance(since, datetime.datetime)
+        ):
+            problems.append("shadow_since must be a date such as 2026-10-19")
         tools = row.get("tools", {})
         if not (
             isinstance(tools, dict) and all(isinstance(v, str) for v in tools.values())
@@ -196,7 +225,9 @@ def key(row, head, tools):
         "tools": tools,
         "inputs": sorted(entries),
     }
-    blob = json.dumps(material, sort_keys=True, separators=(",", ":")).encode()
+    blob = json.dumps(
+        material, sort_keys=True, separators=(",", ":"), default=str
+    ).encode()
     return "sha256:" + hashlib.sha256(blob).hexdigest()
 
 
@@ -221,6 +252,67 @@ def records(store, strict):
             continue
         out.append(rec)
     return out
+
+
+def when(text):
+    try:
+        t = datetime.datetime.fromisoformat(text)
+    except (TypeError, ValueError):
+        return None
+    return t if t.tzinfo else None
+
+
+def events(store):
+    """{gate id: time of its latest upheld false alarm or failed proof}."""
+    path = store / "standing.jsonl"
+    if not path.exists():
+        return {}
+    latest = {}
+    for n, raw in enumerate(path.read_bytes().splitlines(), 1):
+        try:
+            ev = json.loads(raw.decode())
+            at = when(ev.get("at")) if isinstance(ev, dict) else None
+            if (
+                at is None
+                or not isinstance(ev.get("gate"), str)
+                or ev.get("event") not in EVENTS
+            ):
+                raise ValueError("not a standing event")
+        except ValueError as e:
+            # A line that cannot be read may be a demotion, so nothing is decided.
+            raise Undecided(f"{path}:{n}: {e}") from e
+        latest[ev["gate"]] = max(at, latest.get(ev["gate"], at))
+    return latest
+
+
+def standing(row, recs, latest_event, now):
+    """(whether the row blocks, why not when it does not)."""
+    if not row.get("blocks", True):
+        return False, "blocks = false"
+    starts = [latest_event] if latest_event else []
+    if row.get("shadow_since"):
+        starts.append(
+            datetime.datetime.combine(
+                row["shadow_since"], datetime.time(), datetime.UTC
+            )
+        )
+    if not starts:
+        return True, None
+    start = max(starts)
+    runs = 0
+    for rec in recs:
+        t = when(rec.get("started"))
+        # A reuse or an `error` judged nothing, so neither earns promotion.
+        fresh = not rec.get("reused_from") and rec["verdict"] in ("pass", "fail")
+        if rec["gate"] == row["id"] and fresh and t and t >= start:
+            runs += 1
+    days = (now - start).days
+    if days >= SHADOW_DAYS and runs >= SHADOW_RUNS:
+        return True, None
+    return False, (
+        f"in shadow since {start:%Y-%m-%d}: {runs} of {SHADOW_RUNS} runs,"
+        f" {max(days, 0)} of {SHADOW_DAYS} days"
+    )
 
 
 def write(store, rec):
@@ -299,8 +391,9 @@ def run_one(row, head, base, store, timeout):
 
 def fold(rows, chosen, head, store):
     """(every selected blocking gate passed, one line per selected gate)."""
-    latest = {}
-    for rec in records(store, strict=True):
+    latest, recs, ledger = {}, records(store, strict=True), events(store)
+    now = datetime.datetime.now(datetime.UTC)
+    for rec in recs:
         if rec["head"] == head:
             latest[rec["gate"]] = rec
     ok, lines = True, []
@@ -325,11 +418,12 @@ def fold(rows, chosen, head, store):
         )
         if verdict is not None and verdict not in VERDICTS:
             why = f"unknown verdict {verdict!r}"
-        if row.get("blocks", True):
+        blocks, shadow = standing(row, recs, ledger.get(gid), now)
+        if blocks:
             ok = False
             lines.append(f"FAIL {gid}: {why}")
         else:
-            lines.append(f"shadow {gid}: {why}")
+            lines.append(f"shadow {gid}: {why} ({shadow})")
     return ok, lines
 
 
@@ -378,12 +472,21 @@ def main():
                 raise Undecided(
                     "the checkout has uncommitted or untracked changes, so a verdict would not describe HEAD"
                 )
-            failed = False
+            failed, ledger = False, events(args.store)
+            now = datetime.datetime.now(datetime.UTC)
             for row in rows:
-                if row["id"] in chosen:
+                if row["id"] in chosen and row["kind"] != "check":
+                    print(f"await {row['id']}: its {row['kind']} verdict is recorded")
+                elif row["id"] in chosen:
                     rec = run_one(row, head, base, args.store, args.timeout)
                     write(args.store, rec)
-                    failed |= rec["verdict"] != "pass" and row.get("blocks", True)
+                    blocks, _ = standing(
+                        row,
+                        records(args.store, strict=False),
+                        ledger.get(row["id"]),
+                        now,
+                    )
+                    failed |= rec["verdict"] != "pass" and blocks
                     via = (
                         f" (reused from {rec['reused_from'][:12]})"
                         if rec["reused_from"]

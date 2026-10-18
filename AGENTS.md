@@ -42,7 +42,7 @@ This file is the project's committed home for project-intrinsic agent knowledge:
   `signature-check` refuses an unsigned commit pushed to `refs/heads/main` only, so a fixture that pushes `main` through the deployed hooks must sign its commits (`test-global-hooks.sh` sets `commit.gpgsign`) and a gates-proof input pushes a branch.
   `system-maintenance/git-hooks/README.md`, "The gates run together" and "The signature check", owns the design.
 - **`run/gate.py` reads a caller's `.github/gates.toml` (absent here), a registry separate from `.ci/gate-registry.toml`, which proves the gate files this repository ships.**
-  Its fold never passes a selected gate without a `pass` record for the head; `.ci/test-gate-runner.py` re-runs each case against a copy with its control removed, so a change that moves a mutation's anchor text fails the suite until the anchor follows.
+  Its fold never passes a selected blocking gate, review and docs rows included, without a `pass` record for the head, and a shadow row blocks only once it meets the promotion rule in its docstring; `.ci/test-gate-runner.py` re-runs each case against a copy with its control removed, so a change that moves a mutation's anchor text fails the suite until the anchor follows.
 
 ## Maintaining this file
 

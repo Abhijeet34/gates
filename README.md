@@ -12,7 +12,7 @@ Licensed under the Apache License 2.0; see `LICENSE` and `NOTICE`.
 | `system-maintenance/git-hooks/` | The machine-wide hooks deployed to `~/.git-hooks` by `install.sh`, including the watermark, exposure and signature gates, which its pre-push runs concurrently. Its `README.md` owns the design and the measurements. |
 | `.github/workflows/shared-*.yml` | Reusable workflows: `secret-scan`, `watermark-scan`, `dependency-advisories`, `guard-generated-files`, `no-mistakes-required`, `instruction-truth`. Each is a bootstrap; see "Pinning". |
 | `run/` | What each bootstrap runs from the locked gates commit: `lock.sh`, which decides that commit, and one script per gate. |
-| `run/gate.py` | The gate runner: selects a repository's gates from its `.github/gates.toml` (absent here) and the diff, keys each verdict by the gate's inputs, records verdicts and folds them; its docstring owns the contract. No workflow calls it yet. |
+| `run/gate.py` | The gate runner: selects a repository's gates from its `.github/gates.toml` (absent here) and the diff, keys each verdict by the gate's inputs, records verdicts and folds them with review and docs verdicts, and keeps a shadow row from blocking until it earns promotion; its docstring owns the contract. No workflow calls it yet. |
 | `bin/gates.py`, `bin/rollout.toml` | `gates bump` and `gates rollback`, which move callers' locks; see "Bumping". |
 | `.ci/` | The contract test for each gate script, the gitleaks rule and allowlist suites, and `check.sh`, which runs all of them. |
 
