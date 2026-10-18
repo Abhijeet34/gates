@@ -14,6 +14,7 @@ Licensed under the Apache License 2.0; see `LICENSE` and `NOTICE`.
 | `run/` | What each bootstrap runs from the locked gates commit: `lock.sh`, which decides that commit, and one script per gate. |
 | `run/gate.py` | The gate runner: selects a repository's gates from its `.github/gates.toml` (absent here) and the diff, keys each verdict by the gate's inputs, records verdicts and folds them with review and docs verdicts, and keeps a shadow row from blocking until it earns promotion; its docstring owns the contract. No workflow calls it yet. |
 | `run/permissions-diff.py` | The permissions-diff gate over the protected surface; see "The permissions-diff gate". |
+| `run/budget-monitor.py` | The gate budget monitor: prints each budgeted step's weekly p50/p95, the alarm and the fix task text; see "The budget monitor". |
 | `bin/gates.py`, `bin/rollout.toml` | `gates bump` and `gates rollback`, which move callers' locks; see "Bumping". |
 | `.ci/` | The contract test for each gate script, the gitleaks rule and allowlist suites, and `check.sh`, which runs all of them. |
 
@@ -148,6 +149,20 @@ shadow_since = 2026-10-19
 
 `BASE_SHA` and `GATES_DIR` come from the calling workflow, which does not exist yet.
 `.ci/test-permissions-diff.py` runs 7.2's five red fixtures and runs this row through `run/gate.py`, which folds it to `shadow` with a `shadow_since` and refuses without one.
+
+## The budget monitor
+
+`run/budget-monitor.py --budgets FILE` prints, per budgeted gate step, the last three weeks' sample count, p50 and p95, computed from the Actions API with `gh api` alone and stored nowhere.
+It stands in for the runner's timings until its records carry them fleet-wide; the docstring owns the file format and the exit status.
+A series is a repository, workflow, job and optional step with a `budget_s`, for example pointback's `ci.yml`, job `check`, step `check`, 360.
+
+- **ALARM** when the latest week's p95 is at or over 70% of the budget, which is how pointback's 12 s to 338 s climb would have been named on 2026-10-13, before the step hit its 6-minute timeout on 2026-10-15 (report 2.5; `.ci/test-budget-monitor.py` replays that table).
+- **FIX** when the trailing-7-day p95 was at or over the budget itself on each of the last 14 days. The report then prints the title and body of the task to file; it files nothing.
+- A series with no sample in the latest week prints `NO DATA` and exits 2, because silence is not a pass.
+- A cancelled step is not a sample: a cancel ends a step early, so it says nothing about the budget.
+
+The design says "fix task after 14 days over" without saying over what; this reads it as the budget itself and keeps the 70% line as the early alarm.
+No workflow runs it: a scheduled run is the maintainer's to add in the weekly batch.
 
 ## Using the hooks on a machine
 
