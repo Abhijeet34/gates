@@ -4,6 +4,7 @@
 Usage: fakes.py undeclared [--base B] [root]
        fakes.py counterpart [root]
        fakes.py stale [--today YYYY-MM-DD] [root]        (default root: the current directory)
+       fakes.py compare [--id ID] [--api URL] [--out DIR] [--write] [--today YYYY-MM-DD] [root]
 
 A repository declares every fake, stub, mock or recorded replay its tests use as
 a `[[fake]]` in `.github/fakes.toml` at its root; README.md, "The fake rows",
@@ -19,22 +20,43 @@ undeclared   A test double in a test file that no [[fake]] declares, that is no
 counterpart  A [[fake]] whose `real` file is gone, whose `real` no longer names its
              `real_name`, or whose `paths` match no file: it stands for nothing.
 stale        A [[fake]] whose `recorded` date is more than `max_age_days` (default
-             7) before today, or after it. `--today` fixes today; the default is
-             today in UTC.
+             7) before today, or after it, or that carries a `drift` its last
+             compare wrote. `--today` fixes today; the default is today in UTC.
+compare      Each `[[fake.github]]` replay of a [[fake]] whose recorded reply no
+             longer has the shape of a fresh real reply to the same GET request:
+             a field added, removed or retyped, or another status. Values are not
+             compared. Every declared GitHub fake, or the one `--id` names; this
+             is the daily real smoke. `--api` replaces https://api.github.com,
+             `--out` keeps each fresh reply under DIR at its recording's path,
+             and `--write` moves a matching fake's `recorded` to today and gives
+             a drifted one a `drift`, which `stale` then refuses.
 
 Exit status: 0 nothing to name, 1 a finding, 2 could not decide. Every exit 2
 prints `fakes: refused (TYPE): ...`, and TYPE is one of:
 
-bad-declaration   .github/fakes.toml does not parse or a [[fake]] is malformed.
-tool-error        git failed, or a sibling script could not be loaded.
+bad-declaration   .github/fakes.toml does not parse or a [[fake]] is malformed,
+                  or a replay's recording is missing or not JSON.
+tool-error        git failed, a sibling script could not be loaded, or --write
+                  could not rewrite .github/fakes.toml by line.
+network           a real request failed, timed out, answered 5xx or not JSON.
+rate-limited      GitHub answered 429, or 403 with no requests left.
+nothing-to-compare  compare found no GitHub fake declared, or none with --id.
+
+compare exits 1 when any fake drifted, even if another could not be compared.
 """
 
 import argparse
+import copy
 import datetime
+import http.client
 import importlib.util
+import json
+import os
 import re
 import sys
 import tomllib
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 # The imports would leave run/__pycache__ in the gates checkout, where the gate
@@ -47,7 +69,11 @@ CONFIG = ".github/fakes.toml"
 NO_BASE = "0" * 40
 DEFAULT_MAX_AGE = 7
 REQUIRED = ("id", "paths", "names", "stands_for", "real", "compare", "recorded")
-OPTIONAL = ("real_name", "max_age_days")
+OPTIONAL = ("real_name", "max_age_days", "github", "drift")
+REPLAY_KEYS = {"request", "recording", "status"}
+# A GET path and query on the API host: no scheme, no `//` that could name
+# another host, no whitespace.
+REQUEST = re.compile(r"/(?!/)[A-Za-z0-9._~!$&'()*+,;=:@%/?-]*")
 
 
 class Refused(Exception):
@@ -139,6 +165,9 @@ def declarations(root):
         if type(max_age) is not int or max_age < 1:
             raise bad(fid, "max_age_days must be a whole number of days, 1 or more")
         real_name = decl.get("real_name")
+        drift = decl.get("drift")
+        if drift is not None and (not isinstance(drift, str) or not drift.strip()):
+            raise bad(fid, "drift must be a non-empty string")
         fakes.append(
             {
                 "id": fid,
@@ -150,9 +179,45 @@ def declarations(root):
                 "stands_for": text(decl, "stands_for"),
                 "recorded": recorded,
                 "max_age": max_age,
+                "github": replays(decl, fid),
+                "drift": drift,
             }
         )
     return fakes
+
+
+def replays(decl, fid):
+    """The [[fake.github]] tables of one [[fake]], checked; [] for a fake of no GitHub request."""
+    found = decl.get("github", [])
+    if not isinstance(found, list) or not all(isinstance(r, dict) for r in found):
+        raise bad(fid, "github must be [[fake.github]] tables")
+    checked = []
+    for r in found:
+        missing = sorted({"request", "recording"} - set(r))
+        unknown = sorted(set(r) - REPLAY_KEYS)
+        if missing or unknown:
+            raise bad(fid, f"[[fake.github]] missing {missing}, unknown {unknown}")
+        request, recording = r["request"], r["recording"]
+        # Only GET is ever sent, so a method in the declaration is refused
+        # rather than silently read as one.
+        if (
+            not isinstance(request, str)
+            or not REQUEST.fullmatch(request)
+            or ".." in request.split("?")[0].split("/")
+        ):
+            raise bad(fid, f"request {request!r} must be a GET path such as /repos/o/r")
+        if (
+            not isinstance(recording, str)
+            or not recording.strip()
+            or Path(recording).is_absolute()
+            or ".." in Path(recording).parts
+        ):
+            raise bad(fid, f"recording {recording!r} must be a path inside the tree")
+        status = r.get("status", 200)
+        if type(status) is not int or not 100 <= status <= 599:
+            raise bad(fid, f"status {status!r} must be an HTTP status, such as 200")
+        checked.append({"request": request, "recording": recording, "status": status})
+    return checked
 
 
 # --- what a test double looks like, per language ------------------------------
@@ -493,7 +558,261 @@ def stale(_root, _base, fakes, today):
                 f"{f['id']}: recorded {f['recorded']}, {age} days ago, past its"
                 f" {f['max_age']}-day freshness; re-run {f['compare']!r} and move recorded"
             )
+        if f["drift"]:
+            found.append(
+                f"{f['id']}: its last compare found drift ({f['drift']});"
+                f" update the recording or the code, then re-run {f['compare']!r}"
+            )
     return found, f"every declared fake is fresh ({len(fakes)} declared, today {today})"
+
+
+# --- record and compare: a GitHub fake against a fresh real reply ------------
+
+API = "https://api.github.com"
+TIMEOUT = 30
+MAX_REPLY = 10 * 2**20
+KEY = re.compile(r"[A-Za-z0-9_-]+")
+
+
+class Obj(dict):
+    """An object's shape: {key: shape}, and the keys some items of its array lack."""
+
+    optional = frozenset()
+
+
+def shape(value):
+    """A JSON value's shape: a type name, an Obj for an object, [element shape] for an array.
+
+    An array's element shape is the merge of every element's, so a list's length
+    and order are values and not shape.
+    """
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, (int, float)):
+        return "number"
+    if isinstance(value, str):
+        return "string"
+    if isinstance(value, list):
+        merged = None
+        for item in value:
+            merged = shape(item) if merged is None else merge(merged, shape(item))
+        return [] if merged is None else [merged]
+    return Obj({k: shape(v) for k, v in value.items()})
+
+
+def kind(s):
+    return "object" if isinstance(s, dict) else "array" if isinstance(s, list) else s
+
+
+def merge(a, b):
+    if a == "null":
+        return b
+    if b == "null":
+        return a
+    if isinstance(a, dict) and isinstance(b, dict):
+        merged = Obj(
+            {
+                k: merge(a[k], b[k]) if k in a and k in b else a.get(k, b.get(k))
+                for k in a | b
+            }
+        )
+        merged.optional = a.optional | b.optional | (a.keys() ^ b.keys())
+        return merged
+    if isinstance(a, list) and isinstance(b, list):
+        return [merge(a[0], b[0])] if a and b else a or b
+    if a == b:
+        return a
+    return " or ".join(sorted(set(kind(a).split(" or ")) | set(kind(b).split(" or "))))
+
+
+def step(path, key):
+    return (
+        f"{path}.{key}" if KEY.fullmatch(key) else f"{path or '.'}[{json.dumps(key)}]"
+    )
+
+
+def drift(recorded, real, path=""):
+    """Each way `real` differs in shape from `recorded`, in key order.
+
+    null matches any type, because GitHub answers null for an optional value it
+    lacks (a repository's description, a pull request's merged_at); an empty
+    array matches any array, because it shows no element to compare; and a key
+    some recorded items lack may be missing from every real one.
+    """
+    if recorded == "null" or real == "null":
+        return []
+    if kind(recorded) != kind(real):
+        return [f"retyped {path or '.'} from {kind(recorded)} to {kind(real)}"]
+    if isinstance(recorded, dict):
+        found = []
+        for key in sorted(recorded.keys() | real.keys()):
+            at = step(path, key)
+            if key not in recorded:
+                found.append(f"added {at} ({kind(real[key])})")
+            elif key not in real:
+                if key not in recorded.optional:
+                    found.append(f"removed {at} ({kind(recorded[key])})")
+            else:
+                if key in real.optional and key not in recorded.optional:
+                    found.append(
+                        f"removed {at} from some items ({kind(recorded[key])})"
+                    )
+                found += drift(recorded[key], real[key], at)
+        return found
+    if isinstance(recorded, list) and recorded and real:
+        return drift(recorded[0], real[0], f"{path or '.'}[]")
+    return []
+
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    # A redirect is a status to report, and following one would carry the token
+    # to wherever it points.
+    def redirect_request(self, *_args, **_kwargs):
+        return None
+
+
+def fetch(api, request):
+    """(status, body) of one GET; only the CI job's own token, only to GitHub itself."""
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "User-Agent": "gates-fakes-compare",
+    }
+    token = os.environ.get("GITHUB_TOKEN")
+    if api == API and token and os.environ.get("GITHUB_ACTIONS") == "true":
+        headers["Authorization"] = f"Bearer {token}"
+    req = urllib.request.Request(api + request, headers=headers, method="GET")
+    try:
+        with urllib.request.build_opener(NoRedirect).open(req, timeout=TIMEOUT) as r:
+            status, replied, body = r.status, r.headers, r.read(MAX_REPLY + 1)
+    except urllib.error.HTTPError as e:
+        status, replied, body = e.code, e.headers, e.read(MAX_REPLY + 1)
+    except (OSError, http.client.HTTPException) as e:
+        reason = getattr(e, "reason", e)
+        raise Refused("network", f"GET {request}: {reason}") from e
+    if status == 429 or (status == 403 and replied.get("x-ratelimit-remaining") == "0"):
+        raise Refused(
+            "rate-limited",
+            f"GET {request}: status {status}, resets at {replied.get('x-ratelimit-reset')}",
+        )
+    if status >= 500:
+        raise Refused("network", f"GET {request}: status {status}")
+    if len(body) > MAX_REPLY:
+        raise Refused("network", f"GET {request}: reply over {MAX_REPLY} bytes")
+    return status, body
+
+
+def compare_fake(root, api, out, f):
+    """Drift lines for one fake's replays; Refused when it cannot be compared."""
+    found = []
+    for r in f["github"]:
+        where = f"{r['recording']} (GET {r['request']})"
+        path = root / r["recording"]
+        try:
+            recorded = json.loads(path.read_bytes())
+        except FileNotFoundError as e:
+            raise bad(f["id"], f"recording {r['recording']} does not exist") from e
+        except (ValueError, OSError) as e:
+            raise bad(f["id"], f"recording {r['recording']} is not JSON: {e}") from e
+        status, body = fetch(api, r["request"])
+        if out:
+            kept = out / r["recording"]
+            kept.parent.mkdir(parents=True, exist_ok=True)
+            kept.write_bytes(body)
+        if status != r["status"]:
+            found.append(f"{where}: status {r['status']} recorded, {status} now")
+            continue
+        try:
+            real = json.loads(body)
+        except ValueError as e:
+            raise Refused(
+                "network", f"GET {r['request']}: the reply is not JSON: {e}"
+            ) from e
+        found += [f"{where}: {d}" for d in drift(shape(recorded), shape(real))]
+    return found
+
+
+HEADER = re.compile(r"\s*\[\[?\s*[A-Za-z0-9_.\"-]+\s*\]\]?\s*(?:#.*)?")
+RECORDED_LINE = re.compile(r"(\s*recorded\s*=\s*)([^\s#]+)(.*)", re.S)
+DRIFT_LINE = re.compile(r"\s*drift\s*=")
+FAKE_HEADER = re.compile(r"\s*\[\[\s*fake\s*\]\]\s*(?:#.*)?")
+
+
+def rewrite(root, index, today, drifted):
+    """Move the index-th [[fake]]'s `recorded` to today and drop its `drift`, or set `drift`.
+
+    Edited by line so the file's comments and layout stay, then re-read: any
+    difference but the intended one refuses rather than writing.
+    """
+    path = root / CONFIG
+    text = path.read_text()
+    lines = text.splitlines(keepends=True)
+    starts = [i for i, line in enumerate(lines) if FAKE_HEADER.fullmatch(line.rstrip())]
+    begin = starts[index] if index < len(starts) else len(lines)
+    end = next(
+        (
+            i
+            for i in range(begin + 1, len(lines))
+            if HEADER.fullmatch(lines[i].rstrip("\n"))
+        ),
+        len(lines),
+    )
+    kept, seen = [], 0
+    for line in lines[begin:end]:
+        if DRIFT_LINE.match(line):
+            continue
+        m = RECORDED_LINE.match(line)
+        if m:
+            seen += 1
+            line = m[1] + (m[2] if drifted else today.isoformat()) + m[3]
+            line += "" if line.endswith("\n") else "\n"
+            if drifted:
+                line += f"drift = {json.dumps(drifted, ensure_ascii=False)}\n"
+        kept.append(line)
+    new = "".join(lines[:begin] + kept + lines[end:])
+    want = copy.deepcopy(tomllib.loads(text))
+    entry = want["fake"][index]
+    if drifted:
+        entry["drift"] = drifted
+    else:
+        entry["recorded"] = today
+        entry.pop("drift", None)
+    try:
+        ok = seen == 1 and tomllib.loads(new) == want
+    except tomllib.TOMLDecodeError:
+        ok = False
+    if not ok:
+        raise Refused(
+            "tool-error",
+            f"cannot rewrite [[fake]] {entry['id']!r} in {CONFIG} by line;"
+            " set its recorded or drift by hand",
+        )
+    path.write_text(new)
+
+
+def compare(root, api, out, only, write, fakes, today):
+    chosen = [
+        (i, f) for i, f in enumerate(fakes) if f["github"] and only in (None, f["id"])
+    ]
+    if not chosen:
+        named = f"with id {only!r}" if only else "declared"
+        raise Refused(
+            "nothing-to-compare", f"no [[fake]] with a [[fake.github]] replay {named}"
+        )
+    found, refused, replies = [], [], 0
+    for index, f in chosen:
+        try:
+            lines = compare_fake(root, api, out, f)
+        except Refused as e:
+            refused.append(e)
+            continue
+        replies += len(f["github"])
+        found += [f"{f['id']}: {line}" for line in lines]
+        if write:
+            more = f" (and {len(lines) - 1} more)" if len(lines) > 1 else ""
+            rewrite(root, index, today, f"{today}: {lines[0]}{more}" if lines else None)
+    return found, refused, replies, len(chosen)
 
 
 ROWS = {"undeclared": undeclared, "counterpart": counterpart, "stale": stale}
@@ -503,11 +822,16 @@ LINT = None
 def main():
     global LINT
     ap = argparse.ArgumentParser(
-        usage="fakes.py undeclared|counterpart|stale [--base B] [--today YYYY-MM-DD] [root]"
+        usage="fakes.py undeclared|counterpart|stale|compare [--base B] [--today YYYY-MM-DD]"
+        " [--id ID] [--api URL] [--out DIR] [--write] [root]"
     )
-    ap.add_argument("row", choices=ROWS)
+    ap.add_argument("row", choices=[*ROWS, "compare"])
     ap.add_argument("--base")
     ap.add_argument("--today", type=datetime.date.fromisoformat)
+    ap.add_argument("--id")
+    ap.add_argument("--api", default=API)
+    ap.add_argument("--out", type=Path)
+    ap.add_argument("--write", action="store_true")
     ap.add_argument("root", nargs="?", default=".")
     # Plain parse_args consumes the optional root early on Python before 3.12.7 and rejects it after --base.
     args = ap.parse_intermixed_args()
@@ -515,10 +839,18 @@ def main():
         ap.error(
             "--base applies to undeclared only; the other rows read every declaration"
         )
-    if args.today and args.row != "stale":
-        ap.error("--today applies to stale only")
+    if args.today and args.row not in ("stale", "compare"):
+        ap.error("--today applies to stale and compare only")
+    own = args.id or args.out or args.write or args.api != API
+    if own and args.row != "compare":
+        ap.error("--id, --api, --out and --write apply to compare only")
+    api = args.api.rstrip("/")
+    if not re.fullmatch(r"https?://[^/?#\s]+", api):
+        ap.error(f"--api {args.api!r} must be an http or https origin")
     root = Path(args.root).resolve()
     today = args.today or datetime.datetime.now(datetime.UTC).date()
+    if args.row == "compare":
+        return run_compare(root, api, args, today)
     try:
         LINT = load_slop()
         try:
@@ -541,6 +873,30 @@ def main():
         print(f"fakes: {len(found)} finding(s)")
         return 1
     print(f"fakes: {clean}")
+    return 0
+
+
+def run_compare(root, api, args, today):
+    try:
+        found, refused, replies, fakes = compare(
+            root, api, args.out, args.id, args.write, declarations(root), today
+        )
+    except Refused as e:
+        print(f"fakes: refused ({e.kind}): {e}")
+        return 2
+    for line in found:
+        print(f"fakes: compare: {line}")
+    for e in refused:
+        print(f"fakes: refused ({e.kind}): {e}")
+    if found:
+        print(f"fakes: {len(found)} finding(s)")
+        return 1
+    if refused:
+        return 2
+    print(
+        f"fakes: every declared GitHub fake has the shape of its real reply"
+        f" ({replies} replies, {fakes} fakes)"
+    )
     return 0
 
 
