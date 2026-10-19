@@ -80,6 +80,14 @@ def since(name, row, base_files, change_files, want, finding=None):
     return judge(name, rc, out, want, finding)
 
 
+def since_in_subdir(name, row, sub, change_files, want, finding=None):
+    here = repo({"README.md": "x\n"}, {f"{sub}/{k}": v for k, v in change_files.items()})
+    rc, out = run(
+        sys.executable, str(GATE), row, "--base", "base", str(here / sub), cwd=here
+    )
+    return judge(name, rc, out, want, finding)
+
+
 def judge(name, rc, out, want, finding):
     if rc != want:
         return f"{name}: exit {rc}, wanted {want}:\n{out}"
@@ -697,9 +705,19 @@ def under_the_runner():
 def main():
     failures = [sweep(*case) for case in SWEEPS]
     failures += [since(*case) for case in SINCE]
+    failures.append(
+        since_in_subdir(
+            "a subdirectory root still judges what the diff added",
+            "z-index",
+            "web",
+            {"a.css": ".a { z-index: 9999; }\n"},
+            1,
+            "z-index",
+        )
+    )
     failures.append(under_the_runner())
     failures = [f for f in failures if f]
-    total = len(SWEEPS) + len(SINCE) + 1
+    total = len(SWEEPS) + len(SINCE) + 2
     for f in failures:
         print(f"FAIL {f}", file=sys.stderr)
     print(f"test-slop-rules: {total - len(failures)} of {total} cases passed")

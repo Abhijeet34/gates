@@ -120,7 +120,7 @@ def scope(root, base):
         spec = [f"{base}...HEAD"]
     found, path = {}, None
     for line in git(
-        root, "diff", "-U0", "--no-renames", "--no-color", *spec
+        root, "diff", "-U0", "--relative", "--no-renames", "--no-color", *spec
     ).splitlines():
         if line.startswith("+++ "):
             path = line[6:] if line.startswith("+++ b/") else None
@@ -585,7 +585,7 @@ def em_dash(root, change):
         found += [
             f"{rel}:{n}: carries an em dash; use a hyphen or reword"
             for n, line in enumerate(lines, 1)
-            if "—" in line and is_added(added, n)
+            if "\u2014" in line and is_added(added, n)
         ]
     return found, "no added UI line carries an em dash"
 
