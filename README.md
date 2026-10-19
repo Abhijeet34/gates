@@ -20,6 +20,7 @@ Licensed under the Apache License 2.0; see `LICENSE` and `NOTICE`.
 | `run/scratch-guard.py` | The scratch guard, which runs a gate or suite and refuses a file it left behind outside its own `TMPDIR`; see "The scratch rows". |
 | `run/change-gates.py` | The contract, migration and fact rows over a change, read from a caller's `.github/changes.toml`; see "The change rows". |
 | `run/slop-rules.py` | The shadow slop rows (source-text assertions, symbol truth and the deterministic UI rules of STANDARDS) over a change; see "The slop rows". |
+| `run/fakes.py` | The fake rows: test doubles a caller's `.github/fakes.toml` does not declare, declared fakes with no real counterpart, and fakes past their freshness; see "The fake rows". |
 | `run/budget-monitor.py` | The gate budget monitor: prints each budgeted step's weekly p50/p95, the alarm and the fix task text; see "The budget monitor". |
 | `bin/gates.py`, `bin/rollout.toml` | `gates bump` and `gates rollback`, which move callers' locks; see "Bumping". |
 | `.ci/` | The contract test for each gate script, the gitleaks rule and allowlist suites, and `check.sh`, which runs all of them. |
@@ -583,6 +584,120 @@ The other four UI rows (`contrast`, `z-index`, `em-dash`, `reduced-motion`) take
 `.ci/test-slop-rules.py` runs the rows through `run/gate.py`, folds each red one to `shadow`, and shows a change to an unrelated file leaves all seven unselected.
 Nine registry rows prove the script by execution (`slop-tests-source-text`, `slop-symbols-path`, `slop-symbols-function`, `slop-symbols-flag`, `ui-easing`, `ui-contrast`, `ui-z-index`, `ui-em-dash`, `ui-reduced-motion`).
 No workflow calls it: `BASE_SHA` comes from a caller, and a step is the maintainer's weekly batch.
+
+## The fake rows
+
+`run/fakes.py undeclared|counterpart|stale [--base B] [--today D] [root]` holds a repository's test doubles to what it declares in `.github/fakes.toml`.
+Its docstring owns the exit statuses (0 nothing to name, 1 a finding, 2 could not decide, with a typed `refused (TYPE)` line), and each finding is one line, `fakes: ROW: ...`.
+It is the first slice of the factory plan's real-tests row (r5, "P3a-RT"): the declaration, the fake lint and the stale-fake refusal.
+Mutation proof on changed code, and GitHub record-and-compare with a daily real smoke, are later slices.
+
+**What this replaces.**
+The sandbox report's task W8 (s1, section 9) was one real-tests policy task: a `fakes.toml` registry, a weekly contract or record-and-compare check per fake, a census gate that flags a new unregistered mock, and a seeded-defect proof per test, accepted when the census gate fails on a new `jest.mock` and a drifted fake fails its weekly check.
+The plan folded W8 into P3a-RT, and these rows are W8's registry and census gate.
+The census is widened from mock libraries to hand fakes and test-written programs, as the learning-loop report's fake lint asks (l1, 10.3), and the drift check is a declared freshness date here, which the record-and-compare slice will move.
+The plan review found "fake freshness not a merge refusal" in the earlier plan (r4, 4, R19); `stale` is that refusal.
+
+**The declaration.**
+
+```toml
+[[fake]]
+id = "gh"
+paths = ["tests/**", ".ci/fixtures/gh-stub.py"]   # where the double lives or is installed
+names = ["gh"]                                    # what the lint calls it, below
+stands_for = "the GitHub REST API, rate-limited for content-creating requests"
+real = "bin/sync.py"                              # the code that talks to the real thing
+real_name = "gh"                                  # optional: the word it names it by
+compare = "tests/compare-gh.sh"                   # the check against the real system
+recorded = 2026-10-19                             # the last passing record-and-compare
+max_age_days = 7                                  # optional, default 7
+```
+
+| Key | Why it is there |
+| --- | --- |
+| `id` | Names the fake in every finding and keeps two declarations apart, as in `.github/changes.toml`. |
+| `paths` | "the fake's path" (l1, 10.2 rule 3) and "outside a path and symbol registered" (10.3): globs of the files that hold or install the double, so a declared name is allowed only there. |
+| `names` | The "symbol" of 10.3: the names the lint gives the doubles this fake covers. |
+| `stands_for` | What real thing the fake stands in for, l1's "boundary" and "reason"; prose for the reviewer, checked only to be present. |
+| `real`, `real_name` | The file of this tree that calls the real thing, and the word it calls it by. An external API cannot be probed offline, so the tree's own call is what `counterpart` checks, and a declaration cannot outlive the seam it fakes. |
+| `compare` | "the record-and-compare command" (10.2 rule 3, 10.4), the source of truth to compare against. Nothing here runs it; the record-and-compare slice will. |
+| `recorded` | "a recording date": the day the last compare passed, which `stale` reads. |
+| `max_age_days` | "its schedule"; the default is 7 because every boundary in l1's 10.4 table is compared weekly. |
+
+Left out: a closed list of boundary classes, because rule 2's "paid or rate-limited API or the phone channel" is a judgement a reviewer makes from `stands_for`, and a field for a red compare, which the compare slice will write.
+A key the table does not name is refused (`bad-declaration`), since a misspelt `max_age` would otherwise fall back to 7 days without a word, and `recorded` must be a bare TOML date.
+
+**What a test double is, per language.**
+The callers' test files (eleven clones that call these workflows, read 2026-10-19, and this tree) are shell, Python, TypeScript and JavaScript, Go and Rust, so those five are judged.
+A test file is what `run/slop-rules.py` calls one, plus `conftest.py` and a Rust file from its first `#[cfg(test)]` line; a fixture directory and a vendored tree (`node_modules`, `vendor`, `target`) are not judged.
+Each double gets a name, and a declaration covers a name in its `paths`:
+
+| Kind | Recognised by | Named by |
+| --- | --- | --- |
+| hand fake | a type, class, struct, trait or function (and a `const`, `let` or `var` in JavaScript) whose name starts with Fake, Stub, Mock or Dummy and then a capital, a digit, `_` or the end of the word; a shell `fake_x` or `stub_x` function | its name: `FakeHost`, `fakeGh`, `stub_gitleaks` |
+| mock | a mocking library's call: Python's `patch`, `Mock`, `MagicMock`, `monkeypatch`, `mocker`, `responses` and `freeze_time`; `vi` and `jest` mocks, spies and fake timers, `sinon`, `nock`, `node:test`'s `mock`, `mockIPC`, `page.route` and msw's `setupServer`; Go's gomock and testify's `mock.Mock`; Rust's mockall | its first argument when that is a string literal, the module, target or host it replaces (`node:child_process`, `pkg.fetch.get`); the call otherwise (`vi.fn`) |
+| stand-in program | a file a test writes from a `#!` literal (a shell redirect or heredoc, `write_text`, `writeFileSync`, `os.WriteFile`, `fs::write`); a file a shell test makes executable in a directory it puts on `PATH` or another `*_PATH`, or behind a `*_BIN` seam; a `#!` source held in a variable named fake, stub, mock or shim | the file's basename, through the variable that holds it when that spells one |
+
+The starting point was the learning-loop report's classifier (l1, A7), and the measurement below changed it in five places:
+
+- A7's `Null`, `No` and `Noop` prefixes are left out: the callers' tests define none (0 across the eleven clones), so they add a pattern nothing measured.
+- `chmod +x` alone is not a stand-in, because this tree's tests make the hooks they test executable (`.ci/test-secret-scan.sh`), and those are the real thing; putting the directory on a path is what makes a written file stand in for a program.
+- A `>` inside a quoted string is not a redirect, so a printf format that writes `: > "%s/blocked"` into a stub does not name it `blocked`.
+- A compared literal (`=== "win32"`) or one with a space is not the program's path, and a call, an object or an attribute is not the variable that holds it.
+- A `#!` that a test only looks for (`strings.Contains(string(b), "#!/bin/sh")`) writes nothing.
+
+Not judged: a program written by a command held in a string for a helper to run (`.ci/test-lock.sh` writes `bin/gh` that way); a `#!` on a later line than its write; a shell function that overrides a command (`git() {`), which A7 counted but which cannot be told from a test's own helper without a list of commands; Go's `httptest.NewServer`, which A7 counts as loopback real I/O; a double defined in a helper module outside the test files.
+
+**Measured** over the tracked test files of the eleven clones and this tree's own, 2026-10-19, with `--base` of the empty tree: 269 doubles in 102 files, none declared, because no caller has a `.github/fakes.toml` yet.
+
+| Language | Files | Hand fakes | Mocks | Stand-in programs |
+| --- | --- | --- | --- | --- |
+| TypeScript and JavaScript | 46 | 16 | 102 | 3 |
+| shell | 27 | 7 | 0 | 77 |
+| Python | 17 | 7 | 26 | 6 |
+| Rust | 9 | 20 | 0 | 1 |
+| Go | 3 | 2 | 0 | 2 |
+
+A fixed-seed sample of 30 findings read against its source line held 30 test doubles; one sat in a vendored `node_modules` a caller tracks, so the row now skips vendored trees, which took 8 findings out of the count.
+That is precision on whole trees; on a change the shadow window of `run/gate.py` measures it, and an upheld false alarm restarts that window.
+Most stand-in programs are local binaries (`sleep`, `stat`, `ps`, `cat`, `xargs`, `defaults`) or the repository's own scripts, which l1's rule 2 allows no fake for, so they are conversion tasks rather than declarations; `gh`, the commonest at 6, is the allowed kind.
+Each tree takes under 0.5 s.
+`.ci/test-fakes.py` carries the examples it tests, so this tree's own run names 7 more; no row runs on this tree.
+
+**The rows**, in a caller's `.github/gates.toml`, in shadow until the promotion rule in `run/gate.py` lets them block, and `scoped = true` so a change to a path they do not name does not select them:
+
+```toml
+[[gate]]
+id = "fakes-undeclared"
+inputs = ["**/test_*.py", "**/*_test.go", "**/*.test.*", "**/test-*.sh", "tests/**", "test/**", ".github/fakes.toml"]
+scoped = true
+tools = { base = 'git merge-base "$BASE_SHA" HEAD' }
+run = 'python3 "$GATES_DIR/run/fakes.py" undeclared --base "$BASE_SHA"'
+shadow_since = 2026-10-19
+
+[[gate]]
+id = "fakes-counterpart"
+inputs = [".github/fakes.toml", "tests/**", "bin/sync.py"]
+scoped = true
+run = 'python3 "$GATES_DIR/run/fakes.py" counterpart'
+shadow_since = 2026-10-19
+
+[[gate]]
+id = "fakes-stale"
+inputs = [".github/fakes.toml", "tests/**", "bin/sync.py"]
+scoped = true
+tools = { today = 'date -u +%F' }
+run = 'python3 "$GATES_DIR/run/fakes.py" stale'
+shadow_since = 2026-10-19
+```
+
+`counterpart` and `stale` name the declaration, every fake's `paths` and every `real` file as their inputs, so a change to a test that uses a fake, or to the code it fakes, selects them: that is "a PR whose selected tests use a registered fake" (l1, 10.3).
+`stale` keys on today's date through its `tools` probe, so yesterday's pass is not reused once a fake goes past its freshness.
+With `--base`, `undeclared` judges only the lines a change added, so a repository's existing doubles do not turn its next change red; the change that adds or edits `.github/fakes.toml` sweeps every test file, so deleting a declaration cannot pass, and that first sweep is where existing doubles become declarations or conversion tasks (l1, 10.3: "its first run is a baseline").
+l1 asks for a stale fake's verdict to be `error`; `run/gate.py` records any non-zero exit as `fail`, which refuses in the fold the same way, so the runner is unchanged here.
+`.ci/test-fakes.py` runs the three rows through `run/gate.py`, folds each red one to `shadow`, and shows a change to an unrelated file leaves them unselected.
+Five registry rows prove the script by execution (`fakes-undeclared-program`, `fakes-undeclared-mock`, `fakes-undeclared-hand`, `fakes-counterpart`, `fakes-stale`).
+No workflow calls it: `BASE_SHA` and a `.github/fakes.toml` come from a caller, and a step is the maintainer's weekly batch.
 
 ## Using the hooks on a machine
 

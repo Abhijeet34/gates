@@ -107,6 +107,8 @@ check_shell() {
     python3 .ci/test-change-gates.py || rc=1
     # The slop rows (source-text assertions, symbol truth, the UI rules of ~/STANDARDS.md), and their scoped shadow rows under the runner.
     python3 .ci/test-slop-rules.py || rc=1
+    # The fake rows (undeclared doubles, counterparts, freshness), and their scoped shadow rows under the runner.
+    python3 .ci/test-fakes.py || rc=1
     # The exposure and signature gates, through real pushes into throwaway repositories.
     bash system-maintenance/git-hooks/test-exposure-scan.sh || rc=1
     bash system-maintenance/git-hooks/test-signature-check.sh || rc=1
