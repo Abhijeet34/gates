@@ -15,6 +15,7 @@ Licensed under the Apache License 2.0; see `LICENSE` and `NOTICE`.
 | `run/gate.py` | The gate runner: selects a repository's gates from its `.github/gates.toml` (absent here) and the diff, keys each verdict by the gate's inputs, records verdicts and folds them with review and docs verdicts, and keeps a shadow row from blocking until it earns promotion; its docstring owns the contract. No workflow calls it yet. |
 | `run/permissions-diff.py` | The permissions-diff gate over the protected surface; see "The permissions-diff gate". |
 | `run/docs-truth.py`, `.github/docs.toml` | The three document rules (owner and reader, commands, byte budget) and this repository's own owner and reader list; see "The documentation rows". |
+| `run/tool-gates.py` | The pinned-tool gates (zizmor, actionlint, offline OSV-Scanner); see "The tool rows". |
 | `run/budget-monitor.py` | The gate budget monitor: prints each budgeted step's weekly p50/p95, the alarm and the fix task text; see "The budget monitor". |
 | `bin/gates.py`, `bin/rollout.toml` | `gates bump` and `gates rollback`, which move callers' locks; see "Bumping". |
 | `.ci/` | The contract test for each gate script, the gitleaks rule and allowlist suites, and `check.sh`, which runs all of them. |
@@ -211,6 +212,119 @@ A series is a repository, workflow, job and optional step with a `budget_s`, for
 
 The design says "fix task after 14 days over" without saying over what; this reads it as the budget itself and keeps the 70% line as the early alarm.
 No workflow runs it: a scheduled run is the maintainer's to add in the weekly batch.
+
+## The tool rows
+
+`run/tool-gates.py zizmor|actionlint|osv [root]` runs a pinned tool as a gate; its docstring owns the exit statuses.
+It stands in for custom workflow rules and for an online advisory lookup (factory plan r5, "P3a-ROWS"); it never fetches anything.
+A refusal that is not a finding exits 2 and prints `tool-gates: refused (TYPE)`, with TYPE one of `missing-tool`, `wrong-version`, `missing-database`, `stale-database` or `tool-error`, so a runner without the tool, or with an old database, cannot fold its row to a pass.
+
+| Tool | Pin | Where the pin lives | Checked by |
+| --- | --- | --- | --- |
+| zizmor | 1.29.0 | `PINS` in `run/tool-gates.py` | `zizmor --version` before every run |
+| actionlint | 1.7.12 (the latest release, 2026-03-30) | the same | `actionlint --version` |
+| OSV-Scanner | 2.6.0 (35 days old on 2026-10-19; 2.7.0 is 7) | the same | `osv-scanner --version` |
+
+A runner row also lists the version probe under `tools`, so the runner's cache key moves with the pin.
+
+**Install.**
+Nothing here installs them, and the CI jobs do not either (see "Not in CI" below).
+
+```bash
+uv tool install zizmor==1.29.0
+curl -fsSLO https://github.com/google/osv-scanner/releases/download/v2.6.0/osv-scanner_linux_amd64
+```
+
+- `osv-scanner_linux_amd64` has sha256 `ca69b3d3cd08f889a49dc0a383122f71cc528b83803671df5fd874d97485b108` and `osv-scanner_darwin_arm64` has `98c460dcd37de25819babd757d04542045b6243113e209edcd4d89fedb0256b4`, from the release's `osv-scanner_SHA256SUMS` (read 2026-10-19). Verify before `chmod +x`.
+- actionlint 1.7.12 is the release tarball `actionlint_1.7.12_linux_amd64.tar.gz` (sha256 `8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8`) or `brew install actionlint` on the Mac.
+
+**The offline database** is OSV's per-ecosystem `all.zip` under the directory `OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY` names.
+The gate requires that variable, requires at least one `all.zip` in it, and refuses `stale-database` when the oldest is over 7 days old (`MAX_DB_AGE_DAYS`), which is the refresh cadence this assumes.
+Refreshing is its own step, run where the network is allowed and never from the gate:
+
+```bash
+OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY=$HOME/.cache/osv-db osv-scanner scan source --offline --download-offline-databases -r .
+```
+
+This was not run for this change: the sandbox it was built in answers 403 for `osv-vulnerabilities.storage.googleapis.com` (measured 2026-10-19), and `osv-scanner` exits 127 there rather than reporting a clean tree.
+The cases here used a copy of an existing 2026-10-13 database (npm 218 MB, crates.io 3.6 MB) with the same layout.
+A tree that uses an ecosystem the directory lacks is refused `missing-database`; `.ci/test-tool-gates.py --real` shows it with a `Cargo.lock` and an npm-only database.
+
+**Measured on this machine** (arm64 macOS, 2026-10-19; the load average read 10 to 12 during the loaded runs, which is why they differ):
+
+| Row | Wall time |
+| --- | --- |
+| `zizmor` over this repository's 8 workflows | 0.13 to 0.27 s (3 runs) |
+| `actionlint` over the same | 0.08 to 0.09 s (3 runs) |
+| `osv`, one lockfile, npm database | 6.5 to 6.8 s (3 runs, load not recorded, user CPU 6.6 s); 8.4 to 11.9 s (13 runs under load); 7.4 to 12.5 s with a `Cargo.lock` beside it (5 runs under load) |
+
+The advisory row does not hold the 10-second pre-push budget by itself: it parses the whole 218 MB npm archive on every call, so it is CPU-bound and loses time to any other work running beside it.
+The pre-push hook starts four gates together, so the row is only affordable when the push touches a lockfile.
+`run/gate.py` already selects it that way through `inputs`, and the sample row below lists the lockfile globs for that reason.
+Whether the hook should call it at all, or whether a smaller database (one ecosystem, or the advisories for packages in the lockfile) should be built at refresh time, is the maintainer's to decide; the figures are the input.
+
+**Against the custom workflow rules.**
+`.ci/test-workflow-policy.sh` bans eight shapes by `grep`.
+zizmor 1.29.0, offline, on its default persona, flags 3 of them (measured 2026-10-19, one fixture workflow per shape):
+
+| Planted shape | zizmor, default persona | zizmor, `--persona auditor` |
+| --- | --- | --- |
+| `pull_request_target` trigger | `dangerous-triggers` | same |
+| `workflow_run` trigger, list form | `dangerous-triggers` | same |
+| `secrets: inherit` | `secrets-inherit` | same |
+| `runs-on: self-hosted`, and the label list | not flagged | `self-hosted-runner` |
+| a named secret, and one beside `GITHUB_TOKEN` | not flagged | `secrets-outside-env` for both |
+| `issue_comment` trigger | not flagged | not flagged |
+
+So the premise that the planted refusals are mostly zizmor rules holds for 3 of 8 on the default persona and 7 of 8 on the auditor persona, which zizmor documents as accepting false positives.
+Nothing is retired here.
+The proposal for the weekly batch: keep `workflow-policy` for the five shapes zizmor does not cover, and drop only its `pull_request_target`, `workflow_run` and `secrets: inherit` lines once the zizmor row has been promoted out of shadow.
+Running zizmor's auditor persona in place of the custom rule is the alternative; it needs a decision on its false positives first.
+The row runs `--offline`, so zizmor's audits that need the GitHub API (known-vulnerable actions, impostor commits) do not run.
+
+**Findings on this repository** (shadow rows are allowed to be red):
+
+- `zizmor` exits 13 with 11 `artipacked` findings: each `actions/checkout` step lacks `persist-credentials: false`.
+- `actionlint` exits 1 with 26 findings, all of two kinds the workflows depend on and 1.7.12 does not know: `job.workflow_repository` and `job.workflow_sha` (24), and the `vulnerability-alerts` token scope (2). They are false positives against the tool's tables, not defects in the workflows.
+
+**The rows**, in a caller's `.github/gates.toml`, in shadow until the promotion rule in `run/gate.py` lets them block.
+The advisory row's `database` probe prints the day and each database file's size and mtime, so a verdict is reused only within a day and only against the database it was judged on.
+
+```toml
+[[gate]]
+id = "workflow-zizmor"
+inputs = [".github/workflows/**"]
+tools = { zizmor = "zizmor --version" }
+run = 'python3 "$GATES_DIR/run/tool-gates.py" zizmor .'
+shadow_since = 2026-10-19
+
+[[gate]]
+id = "workflow-actionlint"
+inputs = [".github/workflows/**"]
+tools = { actionlint = "actionlint --version" }
+run = 'python3 "$GATES_DIR/run/tool-gates.py" actionlint .'
+shadow_since = 2026-10-19
+
+[[gate]]
+id = "advisories-osv"
+inputs = ["**/*lock.json", "**/*lock.yaml", "**/*.lock", "**/go.mod", "**/requirements*.txt"]
+tools = { osv = "osv-scanner --version", database = 'python3 "$GATES_DIR/run/tool-gates.py" osv-stamp' }
+run = 'python3 "$GATES_DIR/run/tool-gates.py" osv .'
+shadow_since = 2026-10-19
+```
+
+`.ci/test-tool-gates.py` runs these rows through `run/gate.py` against stub tools and folds each to `shadow`.
+Five registry rows (`workflow-zizmor`, `workflow-actionlint`, `advisories-osv`, `advisories-osv-stale`, `tool-missing`) prove the script by execution with stub tools, because the `gates-proof` job installs none of the real ones.
+
+**Not in CI.**
+`ci.yml` installs none of the three tools, so `.ci/check.sh` runs the stub cases only, and `.ci/test-tool-gates.py --real` (the pinned binaries on `PATH` and a database directory) is run by hand:
+
+```bash
+OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY=$HOME/.cache/osv-db python3 .ci/test-tool-gates.py --real
+```
+
+Installing the pinned tools in the `shell` job and adding `--real` to `check_shell` is a workflow edit, so it waits for the maintainer's weekly batch.
+No workflow calls `run/tool-gates.py` either.
 
 ## Using the hooks on a machine
 

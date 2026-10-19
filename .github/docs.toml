@@ -1,7 +1,7 @@
 # Who owns each document and who reads it; run/docs-truth.py owns the rules.
 # `tools` lists the programs a document's shell fences may call besides bash
 # builtins, files of this tree and the interpreters.
-tools = []
+tools = ["uv", "curl", "osv-scanner"]
 
 [[doc]]
 path = "AGENTS.md"

@@ -563,6 +563,105 @@ clean = '''head -c 8000 /dev/zero | tr '\0' x > AGENTS.md'''
 run = 'python3 "$GATE" budget .'
 finding = "AGENTS.md: 8001 bytes, over the 8000-byte budget"
 
+# External tools pinned and run offline; README.md, "The tool rows". The inputs build
+# stub tools on a PATH of their own, because the proof runs where none of the real
+# ones is installed (README.md names the CI step that would install them); the real
+# binaries answer the same questions in `.ci/test-tool-gates.py --real`.
+[[gate]]
+id = "workflow-zizmor"
+surface = "Infra and CI config"
+gates = ["run/tool-gates.py"]
+test = ".ci/test-tool-gates.py"
+suite = "shell"
+command = "run/tool-gates.py"
+red = '''
+mkdir -p bin .github/workflows && echo 'on: push' > .github/workflows/ci.yml
+printf '#!/bin/sh\n[ "$1" = --version ] && { echo "zizmor 1.29.0"; exit 0; }\nexit 13\n' > bin/zizmor && chmod +x bin/zizmor
+'''
+clean = '''
+mkdir -p bin .github/workflows && echo 'on: push' > .github/workflows/ci.yml
+printf '#!/bin/sh\n[ "$1" = --version ] && { echo "zizmor 1.29.0"; exit 0; }\nexit 0\n' > bin/zizmor && chmod +x bin/zizmor
+'''
+run = 'py=$(command -v python3); PATH="$PWD/bin" "$py" "$GATE" zizmor .'
+finding = "tool-gates: zizmor refused the workflows (exit 13)"
+
+[[gate]]
+id = "workflow-actionlint"
+surface = "Infra and CI config"
+gates = ["run/tool-gates.py"]
+test = ".ci/test-tool-gates.py"
+suite = "shell"
+command = "run/tool-gates.py"
+red = '''
+mkdir -p bin .github/workflows && echo 'on: push' > .github/workflows/ci.yml
+printf '#!/bin/sh\n[ "$1" = --version ] && { echo 1.7.12; exit 0; }\nexit 1\n' > bin/actionlint && chmod +x bin/actionlint
+'''
+clean = '''
+mkdir -p bin .github/workflows && echo 'on: push' > .github/workflows/ci.yml
+printf '#!/bin/sh\n[ "$1" = --version ] && { echo 1.7.12; exit 0; }\nexit 0\n' > bin/actionlint && chmod +x bin/actionlint
+'''
+run = 'py=$(command -v python3); PATH="$PWD/bin" "$py" "$GATE" actionlint .'
+finding = "tool-gates: actionlint refused the workflows (exit 1)"
+
+# The stub exits 99 unless called with --offline, so a call that could reach the network fails.
+[[gate]]
+id = "advisories-osv"
+surface = "Dependencies"
+gates = ["run/tool-gates.py"]
+test = ".ci/test-tool-gates.py"
+suite = "shell"
+command = "run/tool-gates.py"
+red = '''
+mkdir -p bin db/npm && : > db/npm/all.zip && echo '{}' > package-lock.json
+printf '#!/bin/sh\n[ "$1" = --version ] && { echo "osv-scanner version: 2.6.0"; exit 0; }\ncase " $* " in *" --offline "*) exit 1 ;; esac\nexit 99\n' > bin/osv-scanner
+chmod +x bin/osv-scanner
+'''
+clean = '''
+mkdir -p bin db/npm && : > db/npm/all.zip && echo '{}' > package-lock.json
+printf '#!/bin/sh\n[ "$1" = --version ] && { echo "osv-scanner version: 2.6.0"; exit 0; }\ncase " $* " in *" --offline "*) exit 0 ;; esac\nexit 99\n' > bin/osv-scanner
+chmod +x bin/osv-scanner
+'''
+run = 'py=$(command -v python3); PATH="$PWD/bin" OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY="$PWD/db" "$py" "$GATE" osv .'
+finding = "tool-gates: osv-scanner refused the tree: known vulnerabilities"
+
+# A database older than the limit is a refusal of its own type, not a pass over old advisories.
+[[gate]]
+id = "advisories-osv-stale"
+surface = "Dependencies"
+gates = ["run/tool-gates.py"]
+test = ".ci/test-tool-gates.py"
+suite = "shell"
+command = "run/tool-gates.py"
+red = '''
+mkdir -p bin db/npm && : > db/npm/all.zip && echo '{}' > package-lock.json
+python3 -c "import os,time; t=time.time()-8*86400; os.utime('db/npm/all.zip',(t,t))"
+printf '#!/bin/sh\n[ "$1" = --version ] && { echo "osv-scanner version: 2.6.0"; exit 0; }\nexit 0\n' > bin/osv-scanner
+chmod +x bin/osv-scanner
+'''
+clean = '''
+mkdir -p bin db/npm && : > db/npm/all.zip && echo '{}' > package-lock.json
+printf '#!/bin/sh\n[ "$1" = --version ] && { echo "osv-scanner version: 2.6.0"; exit 0; }\nexit 0\n' > bin/osv-scanner
+chmod +x bin/osv-scanner
+'''
+run = 'py=$(command -v python3); PATH="$PWD/bin" OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY="$PWD/db" "$py" "$GATE" osv .'
+finding = "tool-gates: refused (stale-database)"
+
+# An absent tool is a refusal, so a runner without zizmor cannot fold its row to a pass.
+[[gate]]
+id = "tool-missing"
+surface = "Infra and CI config"
+gates = ["run/tool-gates.py"]
+test = ".ci/test-tool-gates.py"
+suite = "shell"
+command = "run/tool-gates.py"
+red = '''mkdir -p bin .github/workflows && echo 'on: push' > .github/workflows/ci.yml'''
+clean = '''
+mkdir -p bin .github/workflows && echo 'on: push' > .github/workflows/ci.yml
+printf '#!/bin/sh\n[ "$1" = --version ] && { echo "zizmor 1.29.0"; exit 0; }\nexit 0\n' > bin/zizmor && chmod +x bin/zizmor
+'''
+run = 'py=$(command -v python3); PATH="$PWD/bin" "$py" "$GATE" zizmor .'
+finding = "tool-gates: refused (missing-tool)"
+
 [[gate]]
 id = "gates-proof"
 surface = "Gate of the gates"
