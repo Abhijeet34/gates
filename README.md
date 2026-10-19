@@ -18,6 +18,7 @@ Licensed under the Apache License 2.0; see `LICENSE` and `NOTICE`.
 | `run/tool-gates.py` | The pinned-tool gates (zizmor, actionlint, offline OSV-Scanner); see "The tool rows". |
 | `run/pr-text.py` | The pull request text scan over a title and body read as JSON on stdin; see "The text rows". |
 | `run/scratch-guard.py` | The scratch guard, which runs a gate or suite and refuses a file it left behind outside its own `TMPDIR`; see "The scratch rows". |
+| `run/change-gates.py` | The contract, migration and fact rows over a change, read from a caller's `.github/changes.toml`; see "The change rows". |
 | `run/budget-monitor.py` | The gate budget monitor: prints each budgeted step's weekly p50/p95, the alarm and the fix task text; see "The budget monitor". |
 | `bin/gates.py`, `bin/rollout.toml` | `gates bump` and `gates rollback`, which move callers' locks; see "Bumping". |
 | `.ci/` | The contract test for each gate script, the gitleaks rule and allowlist suites, and `check.sh`, which runs all of them. |
@@ -404,6 +405,93 @@ It also found a defect while being built: five of the seven Python suites run un
 They now remove it, and the same measurement reads 0 for all seven.
 The shell suites were not measured: `.ci/check.sh shell` takes about four minutes.
 Under the guard such a leftover lands in the guard's own directory and is removed with it, so the guard names a write outside `TMPDIR` and does not name a suite that forgot to clean up inside it.
+
+## The change rows
+
+`run/change-gates.py contracts|migrations|facts [--base B] [root]` judges one change against what a repository declares in `.github/changes.toml`.
+Its docstring owns the exit statuses (0 nothing to name, 1 a finding, 2 could not decide, with a typed `refused (TYPE)` line) and the declaration keys.
+Nothing is guessed from the tree: a repository that declares nothing gets `refused (undeclared)`, so a row cannot pass over a file it was never told about.
+
+**What the callers declare today** (read 2026-10-19 across the fleet's clones):
+
+| Row | Found | So the row takes |
+| --- | --- | --- |
+| contract snapshots | `skills/<name>/SKILL.md` in `chrome-devtools-axi`, `gh-axi`, `quota-axi`, `tasks-axi` and `pointback`, each named as the CLI contract. Four are generated from the CLI's help text and drift-checked in the caller's own tests (`build:skill -- --check`, `test/skill.test.ts`); `pointback`'s is hand-written and its `AGENTS.md` says to change it "with any command, flag or field it names". No JSON schema file and no exported API snapshot exists. | a `snapshot` and either `sources` (the hand-written case) or a `command` that prints it (the generated case) |
+| migrations | one directory of files: `halderworks-site` `migrations/NNNN_name.sql`, applied by `wrangler d1 migrations apply`. `quoth`'s `migrate.rs` moves folders between bundle identifiers and `quoth`'s and `papertrace`'s SQLite schemas are code, so they have no files to protect. | a `dir`, a `pattern` and an optional `dry_run` |
+| facts | no repository declares one. | a `fact` with its superseded statements |
+
+```toml
+[[contract]]
+id = "pointback-cli"
+snapshot = "skills/pointback/SKILL.md"
+sources = ["bin/**", "src/cli.js"]        # or a command that prints the contract
+
+[[migrations]]
+id = "d1"
+dir = "migrations"
+dry_run = "sqlite"                         # or a shell command; SCRATCH and NEW_MIGRATIONS are set
+
+[[fact]]
+id = "zizmor-pin"
+now = "1.30.0"
+was = ["1.29.0"]                           # each is swept once, in the change that adds it
+decision = "maintainer decision 2026-10-19, README.md"
+allow = ["CHANGELOG.md"]                   # files that may quote the old statement as history
+```
+
+**Contracts.**
+With `sources`, a change to one of them is refused unless the same change touches the snapshot, so the check needs no build and no tool.
+Its limit is that a source edit that leaves the contract alone still has to touch the snapshot: on `pointback`'s history 13 of the 21 commits that touched `bin/pointback.js` or `src/cli.js` did not touch `SKILL.md` (nine are `fix(...)`, one `chore`, three `feat`), so coarse `sources` raise many alarms and a caller should list the files that define commands and flags.
+That is a reason for the shadow window, and for `command` where the contract can be printed: the output must equal the snapshot byte for byte, whatever changed, with no false alarm of that kind.
+The four generated skills already run that comparison themselves, so no row is proposed for them.
+
+**Migrations.**
+A migration file that is edited or deleted on the change is refused when it is on the base (`git diff B...HEAD`, a rename counting as a delete and an add), because its database has applied it and a fix is a new migration.
+Ordering a new file after the last landed one is a further rule this does not make.
+The dry run applies the directory's files in name order to a scratch database, so a new file that breaks against the landed schema is named with SQLite's message.
+`sqlite` is built in because D1 is SQLite, which also lets the row run with no tool installed; a shell command covers any other engine; `wrangler d1 migrations apply DB --local --persist-to "$SCRATCH"` would be the D1 form, and was not run here.
+A migration is repository code, so the built-in dry run denies `ATTACH`, which would let one write a file elsewhere on the machine.
+Measured on a clone of `halderworks-site` with the row declared: a valid `0002` passes, one that indexes a missing column is named ("no such column: nope"), and an edit of `0001_waitlist.sql` is named.
+
+**Facts.**
+A fact is declared by the change that supersedes it: the old statement moves into `was`, the new truth into `now`, and `decision` says where the decision is recorded.
+A statement is a literal string on one line of a tracked text file, at word boundaries (`1.28.0` does not match `1.28.01` or `11.28.0`); a file listed in `allow` and the declaration file are not swept, and a binary file or one over 1 MB is not read.
+Only a `was` entry that this change added is swept (the base's declaration is the comparison), so a decision made last month does not re-fire, and without `--base` every entry is.
+Literals, not paraphrases, because a sweep that cannot be reproduced cannot be a gate: it will not find a sentence that says the same thing in other words, and it keeps `was` as short as is unambiguous.
+Measured over this repository when it tracked 88 files, with `was = ["1.29.0"]`: 17 lines across 5 files in 0.07 s.
+
+**The rows**, in a caller's `.github/gates.toml`, in shadow until the promotion rule in `run/gate.py` lets them block, and `scoped = true` so a change to a path they do not name does not select them (`inputs` is the caller's list of its own paths):
+
+```toml
+[[gate]]
+id = "contracts"
+inputs = ["bin/**", "src/cli.js", "skills/pointback/SKILL.md", ".github/changes.toml"]
+scoped = true
+tools = { base = 'git merge-base "$BASE_SHA" HEAD' }
+run = 'python3 "$GATES_DIR/run/change-gates.py" contracts --base "$BASE_SHA"'
+shadow_since = 2026-10-19
+
+[[gate]]
+id = "migrations"
+inputs = ["migrations/**", ".github/changes.toml"]
+scoped = true
+tools = { base = 'git merge-base "$BASE_SHA" HEAD' }
+run = 'python3 "$GATES_DIR/run/change-gates.py" migrations --base "$BASE_SHA"'
+shadow_since = 2026-10-19
+
+[[gate]]
+id = "facts"
+inputs = [".github/changes.toml"]
+scoped = true
+tools = { base = 'git merge-base "$BASE_SHA" HEAD' }
+run = 'python3 "$GATES_DIR/run/change-gates.py" facts --base "$BASE_SHA"'
+shadow_since = 2026-10-19
+```
+
+The `facts` row runs when the declaration changes, which is when a decision is recorded; a new file that states an old fact later is not caught by it.
+`.ci/test-change-gates.py` runs these three rows through `run/gate.py`, folds each red one to `shadow`, and shows a change to `src/app.py` leaves them unselected.
+Five registry rows (`contract-snapshot-sources`, `contract-snapshot-command`, `migration-immutable`, `migration-dry-run`, `fact-change-sweep`) prove the script by execution.
+No workflow calls it: `BASE_SHA` and a `.github/changes.toml` come from a caller, and a step is the maintainer's weekly batch.
 
 ## Using the hooks on a machine
 
