@@ -493,6 +493,96 @@ The `facts` row runs when the declaration changes, which is when a decision is r
 Five registry rows (`contract-snapshot-sources`, `contract-snapshot-command`, `migration-immutable`, `migration-dry-run`, `fact-change-sweep`) prove the script by execution.
 No workflow calls it: `BASE_SHA` and a `.github/changes.toml` come from a caller, and a step is the maintainer's weekly batch.
 
+## The slop rows
+
+`run/slop-rules.py ROW [--base B] [root]` holds one change to the slop a tree alone can answer.
+With `--base` a row judges what `git diff B...HEAD` added, so a stale line already on the base is not the change's; without it, every file under `root`.
+Its docstring owns the rules and the exit statuses (0 nothing to name, 1 a finding, 2 could not decide), and each finding is one line, `slop-rules: tests: path:LINE: what`.
+Seven rows, each a registry entry and a row of a caller's `.github/gates.toml` in shadow and `scoped`, so that a change to a path the row does not name does not select it.
+
+**Source-text assertions (`tests`).**
+"A test asserts behaviour through the public entry point, never on source text" is a line of the maintainer's global agent instructions ("Building"), and the learning-loop report's generation-time list carries it as item 7.
+`~/STANDARDS.md`, "Testing", does not hold it: the clause the fleet enforces lives in the global instructions, so that is what the row cites.
+A Python test is read as a syntax tree: an `assert` or an `assert*` call over the text of a source file, whether the read is inline or reached through a variable, a derived result (`hit = re.search(p, text)`) or a file handle.
+A shell test is a `grep` (or `cat` into `grep`) whose file operand is a source file, and a JavaScript, TypeScript, Rust or Go test is a read of a source file in a test file that also asserts.
+A source file has a code extension and is not itself a test or a fixture, and a file the test writes is not one.
+Not judged: a test in a file whose name does not say it is a test, a config file such as a workflow's YAML (a policy lint over config is a different act), and an assertion reached through a helper the syntax tree cannot see.
+
+**Symbol truth (`symbols`).**
+A backticked span in an added line of Markdown, a comment or a Python docstring that names a path, a long flag or a `name()` function the tree does not have.
+The path half is `instruction-truth/path-truth.py`'s own resolution, moved from instruction files to every changed doc and comment, with its `(absent here)` waiver.
+Two further limits, both measured below: a path is judged only when it starts in a directory of this tree, because one that starts elsewhere (`internal/git/git.go`) is another repository's file, and a path that a script spells out (`REGISTRY = ".github/gates.toml"`) is a path the tree names.
+A flag or function resolves when some file has the word outside a backtick span, so a second doc quoting it proves nothing; Markdown contributes its fenced blocks only.
+A builtin needs no definition, and a bare file name is not judged, because on this tree it names another repository's file as often as a stale one.
+
+**The impeccable rules, mapped to `~/STANDARDS.md`.**
+The sources name the linter (`npx impeccable detect --json`, "Frontend design defaults") and the seven rule families it reported over four trees (learning-loop report, 5.5); no source lists its other rules, and it is not installed here, so it was not run and no rule of it was copied.
+Each family and each line of the "Frontend design defaults" is below with the row that enforces it or the reason it has none.
+The bar is that a row fires on a literal or on arithmetic over literals and never on a judgement of taste: a rule that needs a render, a token set or the captain's eye is not a row.
+
+| Rule | STANDARDS clause | Row |
+| --- | --- | --- |
+| bounce easing | "Motion uses exponential ease-out curves, never bounce or elastic" | `easing`: a `cubic-bezier` whose y values leave 0..1, a `linear()` stop that does, a named back, bounce or elastic ease, `animate-bounce` |
+| low contrast | "Keep body text contrast at 4.5:1 or better, including placeholders" | `contrast`: one block that declares a literal color and background (hex, `rgb()`, `oklch()`, `white`, `black`); 3:1 when the block sets large text; a disabled block is exempt |
+| em dash in body text | "Never use the em dash" (global agent instructions and VOICE.md; `~/STANDARDS.md` has no line for it) | `em-dash`: U+2014 in an added line of a UI file, a `LOCAL FORK` header exempting it as `docs-em-dash` does for Markdown |
+| arbitrary z-index | "a semantic z-index scale, never arbitrary `999`/`9999`" | `z-index`: three or more nines, or 2147483647, in `z-index`, `zIndex` or `z-[...]` |
+| reduced motion | "honor `prefers-reduced-motion` always" | `reduced-motion`: added motion when no file of the tree names `prefers-reduced-motion`, `motion-reduce:` or `motion-safe:` |
+
+Left out, with why:
+
+| Rule | Why it is not a row |
+| --- | --- |
+| flat type hierarchy (12 findings in the report) | no clause in `~/STANDARDS.md`; the report says one tree sets every role at 16px possibly by design, so it needs the captain's eye |
+| side-border accent on a rounded box (8) | stylistic, no clause |
+| `transition: width` (3) | plausible, but no clause: "Performance" bounds growth, not layout properties |
+| cramped padding (1) | the report did not judge it; "spacing comes from the design tokens" would need the repository's token set |
+| contrast across rules, through `var()`, inherited or on a translucent color | needs a render; the report counted its three contrast findings as unverified without one |
+| "Use OKLCH for new color work" | whether work is new, against "Match the file you are editing", is a judgement |
+| spacing from tokens | needs a token declaration each repository would have to make |
+| body line length 65-75ch, `text-wrap: balance` on headings | which element is the body or a heading is a judgement |
+| popovers through the popover API or a portal, never `position: absolute` in an overflow container | needs layout |
+
+Soft prose phrases ("leverage" as a verb, "robust" as filler, empty intensifiers) stay out of every row, for the reason the text rows give: the report measured 2.8% precision for them.
+The `contrast` row reads the house syntax, `oklch()`, through the published OKLab matrices; a color it cannot read as one opaque literal makes the block undecided, never a finding.
+Its limits are the ones above: CSS blocks in a stylesheet, a `<style>` element or a Vue or Svelte block, and not a style object in script.
+
+**Measured on this repository's 30 commits** (each row over `git diff C^...C` at that commit, 2026-10-19): `tests`, `easing`, `contrast`, `z-index`, `em-dash` and `reduced-motion` named nothing, which is what a tree with no UI files and no source-text assertion should print, so this history cannot show their precision.
+`symbols` named 58 spans with the path rule as first written, 24 once a path had to start in a directory of the tree, and 2 once a path that a script spells out resolved: `--help` in a sentence about a tool's own flag, and a path of `pointback` that the README quotes.
+Neither is stale, so on this history the row has 0 true findings and 2 false alarms, and it cannot be promoted on this tree's evidence; the shadow window of `run/gate.py` is what measures it, and an upheld false alarm restarts that window.
+`symbols` over the whole tree takes 0.3 s and each UI row under 0.2 s on a megabyte of input.
+
+```toml
+[[gate]]
+id = "slop-tests"
+inputs = ["**/test_*.py", "**/test-*.sh", "**/*.test.*", "**/*_test.*", "tests/**"]
+scoped = true
+tools = { base = 'git merge-base "$BASE_SHA" HEAD' }
+run = 'python3 "$GATES_DIR/run/slop-rules.py" tests --base "$BASE_SHA"'
+shadow_since = 2026-10-19
+
+[[gate]]
+id = "slop-symbols"
+inputs = ["**/*.md", "**/*.py", "**/*.sh"]
+scoped = true
+tools = { base = 'git merge-base "$BASE_SHA" HEAD' }
+run = 'python3 "$GATES_DIR/run/slop-rules.py" symbols --base "$BASE_SHA"'
+shadow_since = 2026-10-19
+
+[[gate]]
+id = "ui-easing"
+inputs = ["**/*.css", "**/*.tsx", "**/*.jsx", "**/*.html"]
+scoped = true
+tools = { base = 'git merge-base "$BASE_SHA" HEAD' }
+run = 'python3 "$GATES_DIR/run/slop-rules.py" easing --base "$BASE_SHA"'
+shadow_since = 2026-10-19
+```
+
+The other four UI rows (`contrast`, `z-index`, `em-dash`, `reduced-motion`) take the same shape with their name in `run`.
+`reduced-motion` reads the whole tree for a handler, so its `inputs` must also name the files that could hold one, or a change to the stylesheet that holds it would not re-run the row.
+`.ci/test-slop-rules.py` runs the rows through `run/gate.py`, folds each red one to `shadow`, and shows a change to an unrelated file leaves all seven unselected.
+Nine registry rows prove the script by execution (`slop-tests-source-text`, `slop-symbols-path`, `slop-symbols-function`, `slop-symbols-flag`, `ui-easing`, `ui-contrast`, `ui-z-index`, `ui-em-dash`, `ui-reduced-motion`).
+No workflow calls it: `BASE_SHA` comes from a caller, and a step is the maintainer's weekly batch.
+
 ## Using the hooks on a machine
 
 ```bash
