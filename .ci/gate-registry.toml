@@ -1207,6 +1207,52 @@ clean = '''mkdir repo && (cd repo && bash "$ROOT/.ci/fixtures/mutation/build.sh"
 run = 'cd repo && python3 "$GATE" typescript --base base .'
 finding = "mutation: refused (missing-tool)"
 
+# A review row's verdict; README.md, "The review rows". The seats are
+# .ci/fixtures/review/claude-recorded.py answering from recorded replies, so no
+# case calls a model: the reproduced case's replies are real captures, and the
+# false alarm the verifier pass cannot reproduce is written into a real envelope.
+[[gate]]
+id = "review-verifier"
+surface = "Code review"
+gates = ["run/review.py"]
+test = ".ci/test-review.py"
+suite = "shell"
+command = "run/review.py"
+red = '''mkdir repo && (cd repo && bash "$ROOT/.ci/fixtures/review/build.sh" --replies reproduced floor)'''
+clean = '''mkdir repo && (cd repo && bash "$ROOT/.ci/fixtures/review/build.sh" --replies unreproduced guard)'''
+run = 'cd repo && PATH="$PWD/.stub:$PATH" python3 "$GATE" --gate code-review --base base --author claude-opus-5-5 --store ../store'
+finding = "review: F1 error calc.py:5: Floor division before multiplying truncates the ratio, so percent(1, 2) returns 0 instead of 50.0 and any part smaller than whole gives 0.: verified, blocks"
+
+# The finder's recorded reply used 1,077 input tokens, so a 1,000 budget is broken
+# and a 2,000 one is not; the clean case's one finding is then downgraded.
+[[gate]]
+id = "review-budget"
+surface = "Code review"
+gates = ["run/review.py"]
+test = ".ci/test-review.py"
+suite = "shell"
+command = "run/review.py"
+red = '''mkdir repo && (cd repo && bash "$ROOT/.ci/fixtures/review/build.sh" --replies unreproduced guard && echo 'budget = { input_tokens = 1000 }' >> .github/gates.toml && git commit -qam budget)'''
+clean = '''mkdir repo && (cd repo && bash "$ROOT/.ci/fixtures/review/build.sh" --replies unreproduced guard && echo 'budget = { input_tokens = 2000 }' >> .github/gates.toml && git commit -qam budget)'''
+run = 'cd repo && PATH="$PWD/.stub:$PATH" python3 "$GATE" --gate code-review --base base --author claude-opus-5-5 --store ../store'
+finding = "review: error: the finder on claude-sonnet-5-5 broke its budget: 1,077 input tokens of 1,000"
+
+# A review sits only on the subscription login, never an API key.
+[[gate]]
+id = "review-harness"
+surface = "Code review"
+gates = ["run/review.py"]
+test = ".ci/test-review.py"
+suite = "shell"
+command = "run/review.py"
+red = '''
+mkdir repo && (cd repo && bash "$ROOT/.ci/fixtures/review/build.sh" --replies unreproduced guard)
+echo '{"loggedIn": true, "authMethod": "api_key", "apiProvider": "firstParty"}' > repo/.stub/replies/auth.json
+'''
+clean = '''mkdir repo && (cd repo && bash "$ROOT/.ci/fixtures/review/build.sh" --replies unreproduced guard)'''
+run = 'cd repo && PATH="$PWD/.stub:$PATH" python3 "$GATE" --gate code-review --base base --author claude-opus-5-5 --store ../store'
+finding = "review: error: refused: claude is logged in with 'api_key' on 'firstParty'"
+
 [[gate]]
 id = "gates-proof"
 surface = "Gate of the gates"
