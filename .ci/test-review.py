@@ -36,6 +36,8 @@ ENV = {
     "PYTHONDONTWRITEBYTECODE": "1",
     "ANTHROPIC_API_KEY": PLANTED,
     "GH_TOKEN": PLANTED,
+    "SSH_AUTH_SOCK": PLANTED,
+    "PLANTED_ARBITRARY": PLANTED,
 }
 FLOOR = "    return part // whole * 100"
 GUARD = "    return part * 100 / whole"
@@ -278,6 +280,20 @@ def seats_get_no_credentials(script):
     return why
 
 
+def reproduction_gets_allowlisted_env(script):
+    f = Fixture(script)
+    probe = 'echo "ssh=${SSH_AUTH_SOCK:-unset} other=${PLANTED_ARBITRARY:-unset} path=${PATH:+set}"; exit 1'
+    f.reply("finder", {"findings": [finding(reproduce=probe)]})
+    f.reply(
+        "verifier-F1", {"reproduced": False, "reason": "no"}, model="claude-opus-5-5"
+    )
+    why = expect("an environment probe", f.review(), 0, "downgraded")
+    seen = f.calls()[-1]["prompt"]
+    if not why and "ssh=unset other=unset path=set" not in seen:
+        why = f"the reproducing command saw {seen[-300:]}"
+    return why
+
+
 def seats_sit_fresh_and_bare(script):
     f = Fixture(script)
     f.reply("finder", {"notes": "SENTINEL-REASONING", "findings": [
@@ -470,6 +486,7 @@ CASES = [
     (verifier_timeout_errors, "the verifier pass's deadline", 'deadline = time.monotonic() + budget["verifier_seconds"]', "deadline = time.monotonic() + 3600"),
     (api_key_login_refused, "the subscription login", "method not in AUTH_METHODS", "False"),
     (seats_get_no_credentials, "the credential scrub", "if k.startswith(keep) or not any(w in k.upper() for w in SECRET_WORDS)", "if True"),
+    (reproduction_gets_allowlisted_env, "the reproduction's environment allowlist", "if k in REPRODUCE_ENV or k.startswith(\"LC_\")", "if True"),
     (seats_sit_fresh_and_bare, "a toolless seat", '"--tools", "", ', ""),
     (independence_labels, "the context-only label", 'return "cross-model" if other != "unknown" and model != other', 'return "cross-model" if model != other'),
     (fallback_model_errors, "the served-model check", "    if served and served != [model]:\n", "    if False:\n"),

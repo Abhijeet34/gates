@@ -66,6 +66,7 @@ SEVERITIES = ("error", "warning", "nit")
 # The subscription login and the setup-token made from it; an API key or a cloud
 # provider's credentials are not the fleet's harness path.
 AUTH_METHODS = ("claude.ai", "oauth_token")
+REPRODUCE_ENV = ("PATH", "LANG", "TERM", "TMPDIR")
 SECRET_WORDS = ("TOKEN", "SECRET", "KEY", "PASSWORD", "CREDENTIAL")
 OUTPUT_TAIL = 4000  # bytes of a reproduction's output the verifier reads
 CLI_SECONDS = 30
@@ -114,6 +115,23 @@ def scrubbed(keep=()):
         k: v
         for k, v in os.environ.items()
         if k.startswith(keep) or not any(w in k.upper() for w in SECRET_WORDS)
+    }
+
+
+def reproduce_env(home):
+    """The few variables a reproducing command may inherit, with every login pointed at `home`."""
+    kept = {
+        k: v
+        for k, v in os.environ.items()
+        if k in REPRODUCE_ENV or k.startswith("LC_")
+    }
+    return {
+        **kept,
+        "HOME": str(home),
+        "XDG_CONFIG_HOME": str(home / ".config"),
+        "GH_CONFIG_DIR": str(home / "gh"),
+        "GIT_CONFIG_GLOBAL": os.devnull,
+        "GIT_CONFIG_SYSTEM": os.devnull,
     }
 
 
@@ -392,14 +410,7 @@ def reproduce(head, command, seconds, store):
                 f"could not export the head: {done.stderr.decode(errors='replace').strip()}"
             )
         # An empty HOME keeps the command off this machine's git, gh and ssh logins.
-        env = {
-            **scrubbed(),
-            "HOME": str(home),
-            "XDG_CONFIG_HOME": str(home / ".config"),
-            "GH_CONFIG_DIR": str(home / "gh"),
-            "GIT_CONFIG_GLOBAL": os.devnull,
-            "GIT_CONFIG_SYSTEM": os.devnull,
-        }
+        env = reproduce_env(home)
         done = bounded(["bash", "-e", "-c", command], seconds, cwd=tree, env=env)
     if done is None:
         return None
