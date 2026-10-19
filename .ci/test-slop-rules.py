@@ -81,7 +81,9 @@ def since(name, row, base_files, change_files, want, finding=None):
 
 
 def since_in_subdir(name, row, sub, change_files, want, finding=None):
-    here = repo({"README.md": "x\n"}, {f"{sub}/{k}": v for k, v in change_files.items()})
+    here = repo(
+        {"README.md": "x\n"}, {f"{sub}/{k}": v for k, v in change_files.items()}
+    )
     rc, out = run(
         sys.executable, str(GATE), row, "--base", "base", str(here / sub), cwd=here
     )
