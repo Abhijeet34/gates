@@ -361,7 +361,8 @@ def main():
     ap.add_argument("row", choices=ROWS)
     ap.add_argument("--base")
     ap.add_argument("root", nargs="?", default=".")
-    args = ap.parse_args()
+    # Plain parse_args consumes the optional root early on Python before 3.12.7 and rejects it after --base.
+    args = ap.parse_intermixed_args()
     root = Path(args.root).resolve()
     try:
         base = None
