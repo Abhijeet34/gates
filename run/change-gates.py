@@ -86,8 +86,10 @@ def changes(root, base):
     else:
         spec = [f"{base}...HEAD"]
     out = git(root, "diff", "--name-status", "--no-renames", "-z", *spec).decode()
-    parts = out.split("\0")
-    return {path: status[0] for status, path in zip(parts[0::2], parts[1::2])}
+    parts = out.split("\0")[:-1]
+    return {
+        path: status[0] for status, path in zip(parts[0::2], parts[1::2], strict=True)
+    }
 
 
 def declarations(text, table):
@@ -96,7 +98,9 @@ def declarations(text, table):
     except tomllib.TOMLDecodeError as e:
         raise Refused("bad-declaration", f"{CONFIG}: {e}") from e
     if not isinstance(found, list) or not all(isinstance(d, dict) for d in found):
-        raise Refused("bad-declaration", f"{CONFIG}: `{table}` must be [[{table}]] tables")
+        raise Refused(
+            "bad-declaration", f"{CONFIG}: `{table}` must be [[{table}]] tables"
+        )
     return found
 
 
@@ -120,7 +124,9 @@ def need(root, table):
 
 def strings(decl, key, table, required=True):
     value = decl.get(key, [] if not required else None)
-    ok = isinstance(value, list) and all(isinstance(v, str) and v.strip() for v in value)
+    ok = isinstance(value, list) and all(
+        isinstance(v, str) and v.strip() for v in value
+    )
     if not ok or (required and not value):
         raise Refused(
             "bad-declaration",
@@ -154,7 +160,10 @@ def run_command(root, command, env=None):
     except subprocess.TimeoutExpired as e:
         raise Refused("tool-error", f"{command!r} timed out after {TIMEOUT}s") from e
     if proc.returncode == 127:
-        raise Refused("missing-tool", f"{command!r} exited 127: a program it calls is not installed")
+        raise Refused(
+            "missing-tool",
+            f"{command!r} exited 127: a program it calls is not installed",
+        )
     return proc
 
 
@@ -178,7 +187,8 @@ def contracts(root, base):
             proc = run_command(root, command)
             if proc.returncode:
                 raise Refused(
-                    "tool-error", f"contract {cid!r}: {command!r} exited {proc.returncode}"
+                    "tool-error",
+                    f"contract {cid!r}: {command!r} exited {proc.returncode}",
                 )
             if proc.stdout != shot.read_bytes():
                 found.append(
@@ -200,7 +210,10 @@ def contracts(root, base):
 
 def first_difference(a, b):
     la, lb = a.split(b"\n"), b.split(b"\n")
-    return next((i for i, (x, y) in enumerate(zip(la, lb), 1) if x != y), min(len(la), len(lb)) + 1)
+    return next(
+        (i for i, (x, y) in enumerate(zip(la, lb, strict=False), 1) if x != y),
+        min(len(la), len(lb)) + 1,
+    )
 
 
 def sqlite_dry_run(root, files):
@@ -209,9 +222,9 @@ def sqlite_dry_run(root, files):
         db = sqlite3.connect(Path(scratch) / "scratch.db")
         # A migration is repository code, so it may not reach another file of the machine.
         db.set_authorizer(
-            lambda action, *_: sqlite3.SQLITE_DENY
-            if action == SQLITE_ATTACH
-            else sqlite3.SQLITE_OK
+            lambda action, *_: (
+                sqlite3.SQLITE_DENY if action == SQLITE_ATTACH else sqlite3.SQLITE_OK
+            )
         )
         try:
             for name in files:
@@ -224,6 +237,11 @@ def sqlite_dry_run(root, files):
     return None, None
 
 
+def in_folder(path, folder, pattern):
+    head, _, name = path.rpartition("/")
+    return head == folder and fnmatch.fnmatchcase(name, pattern)
+
+
 def migrations(root, base):
     found, ran = [], 0
     changed = changes(root, base)
@@ -233,18 +251,16 @@ def migrations(root, base):
         pattern = text_key(decl, "pattern", "migrations", required=False) or "*.sql"
         dry_run = text_key(decl, "dry_run", "migrations", required=False)
 
-        def mine(path):
-            head, _, name = path.rpartition("/")
-            return head == folder and fnmatch.fnmatchcase(name, pattern)
-
         for path, status in sorted(changed.items()):
-            if mine(path) and status != "A":
+            if in_folder(path, folder, pattern) and status != "A":
                 verb = "deleted" if status == "D" else "edited"
                 found.append(
                     f"migrations: {mid}: {path} was {verb}; it is already on the base,"
                     " so a fix is a new migration"
                 )
-        added = sorted(p for p, s in changed.items() if s == "A" and mine(p))
+        added = sorted(
+            p for p, s in changed.items() if s == "A" and in_folder(p, folder, pattern)
+        )
         if not added or dry_run is None:
             continue
         ran += 1
@@ -256,14 +272,21 @@ def migrations(root, base):
             )
             name, err = sqlite_dry_run(root, every)
             if name:
-                found.append(f"migrations: {mid}: {name} failed in a scratch database: {err}")
+                found.append(
+                    f"migrations: {mid}: {name} failed in a scratch database: {err}"
+                )
             continue
         with tempfile.TemporaryDirectory(prefix="change-gates.") as scratch:
             proc = run_command(
                 root, dry_run, {"SCRATCH": scratch, "NEW_MIGRATIONS": "\n".join(added)}
             )
         if proc.returncode:
-            tail = (proc.stdout + proc.stderr).decode(errors="replace").strip().splitlines()[-3:]
+            tail = (
+                (proc.stdout + proc.stderr)
+                .decode(errors="replace")
+                .strip()
+                .splitlines()[-3:]
+            )
             found.append(
                 f"migrations: {mid}: the dry run {dry_run!r} exited {proc.returncode}"
                 + "".join(f"\n  {line}" for line in tail)
@@ -298,10 +321,18 @@ def facts(root, base):
         decision = text_key(decl, "decision", "fact")
         allow = [glob_re(g) for g in strings(decl, "allow", "fact", required=False)]
         if now in was:
-            raise Refused("bad-declaration", f"{CONFIG}: [[fact]] {fid!r}: now is also a was")
+            raise Refused(
+                "bad-declaration", f"{CONFIG}: [[fact]] {fid!r}: now is also a was"
+            )
         fresh = [w for w in was if w not in old.get(fid, [])]
         sweep += [
-            (fid, w, decision, allow, re.compile(rf"(?<![\w.]){re.escape(w)}(?!\w|\.\d)"))
+            (
+                fid,
+                w,
+                decision,
+                allow,
+                re.compile(rf"(?<![\w.]){re.escape(w)}(?!\w|\.\d)"),
+            )
             for w in fresh
         ]
     found = []
@@ -337,7 +368,11 @@ def main():
         if args.base:
             base = args.base
             if base != NO_BASE:
-                base = git(root, "rev-parse", "--verify", f"{base}^{{commit}}").decode().strip()
+                base = (
+                    git(root, "rev-parse", "--verify", f"{base}^{{commit}}")
+                    .decode()
+                    .strip()
+                )
         found, clean = ROWS[args.row](root, base)
     except Refused as e:
         print(f"change-gates: refused ({e.kind}): {e}")

@@ -793,6 +793,121 @@ clean = '''mkdir tree tmpd && echo 'echo x > "$TMPDIR/stray"' > cmd.sh'''
 run = 'TMPDIR="$PWD/tmpd" python3 "$GATE" --root tree -- sh "$PWD/cmd.sh" "$PWD/tmpd"'
 finding = "scratch-guard: left behind: stray (temp)"
 
+# A repository's declared contracts, migrations and facts, judged against the change that
+# touches them; README.md, "The change rows". Each input is a git repository with a tag `base`.
+[[gate]]
+id = "contract-snapshot-sources"
+surface = "Public contracts"
+gates = ["run/change-gates.py"]
+test = ".ci/test-change-gates.py"
+suite = "shell"
+command = "run/change-gates.py"
+red = '''
+git init -q -b main && mkdir -p .github skills/cli src
+printf '[[contract]]\nid = "cli"\nsnapshot = "skills/cli/SKILL.md"\nsources = ["src/**"]\n' > .github/changes.toml
+echo v1 > skills/cli/SKILL.md && echo a > src/cli.js && git add -A && git commit -qm base && git tag base
+echo b > src/cli.js && git commit -qam change
+'''
+clean = '''
+git init -q -b main && mkdir -p .github skills/cli src
+printf '[[contract]]\nid = "cli"\nsnapshot = "skills/cli/SKILL.md"\nsources = ["src/**"]\n' > .github/changes.toml
+echo v1 > skills/cli/SKILL.md && echo a > src/cli.js && git add -A && git commit -qm base && git tag base
+echo b > src/cli.js && echo v2 > skills/cli/SKILL.md && git commit -qam change
+'''
+run = 'python3 "$GATE" contracts --base base .'
+finding = "contracts: cli: src/cli.js changed and skills/cli/SKILL.md did not"
+
+# The other way to declare a contract: a command prints it and the snapshot must equal that.
+[[gate]]
+id = "contract-snapshot-command"
+surface = "Public contracts"
+gates = ["run/change-gates.py"]
+test = ".ci/test-change-gates.py"
+suite = "shell"
+command = "run/change-gates.py"
+red = '''
+mkdir -p .github skills/cli
+printf '[[contract]]\nid = "cli"\nsnapshot = "skills/cli/SKILL.md"\ncommand = "echo usage: cli --new"\n' > .github/changes.toml
+echo 'usage: cli' > skills/cli/SKILL.md
+'''
+clean = '''
+mkdir -p .github skills/cli
+printf '[[contract]]\nid = "cli"\nsnapshot = "skills/cli/SKILL.md"\ncommand = "echo usage: cli --new"\n' > .github/changes.toml
+echo 'usage: cli --new' > skills/cli/SKILL.md
+'''
+run = 'python3 "$GATE" contracts .'
+finding = "contracts: cli: the output of 'echo usage: cli --new' differs from skills/cli/SKILL.md"
+
+[[gate]]
+id = "migration-immutable"
+surface = "Migrations"
+gates = ["run/change-gates.py"]
+test = ".ci/test-change-gates.py"
+suite = "shell"
+command = "run/change-gates.py"
+red = '''
+git init -q -b main && mkdir -p .github migrations
+printf '[[migrations]]\nid = "d1"\ndir = "migrations"\n' > .github/changes.toml
+echo 'CREATE TABLE t (a TEXT);' > migrations/0001_t.sql && git add -A && git commit -qm base && git tag base
+echo 'CREATE TABLE t (a TEXT, b TEXT);' > migrations/0001_t.sql && git commit -qam change
+'''
+clean = '''
+git init -q -b main && mkdir -p .github migrations
+printf '[[migrations]]\nid = "d1"\ndir = "migrations"\n' > .github/changes.toml
+echo 'CREATE TABLE t (a TEXT);' > migrations/0001_t.sql && git add -A && git commit -qm base && git tag base
+echo 'ALTER TABLE t ADD COLUMN b TEXT;' > migrations/0002_b.sql && git add -A && git commit -qm change
+'''
+run = 'python3 "$GATE" migrations --base base .'
+finding = "migrations: d1: migrations/0001_t.sql was edited"
+
+# The scratch database is SQLite, which is also D1's dialect.
+[[gate]]
+id = "migration-dry-run"
+surface = "Migrations"
+gates = ["run/change-gates.py"]
+test = ".ci/test-change-gates.py"
+suite = "shell"
+command = "run/change-gates.py"
+red = '''
+git init -q -b main && mkdir -p .github migrations
+printf '[[migrations]]\nid = "d1"\ndir = "migrations"\ndry_run = "sqlite"\n' > .github/changes.toml
+echo 'CREATE TABLE t (a TEXT);' > migrations/0001_t.sql && git add -A && git commit -qm base && git tag base
+echo 'ALTER TABLE gone ADD COLUMN b TEXT;' > migrations/0002_b.sql && git add -A && git commit -qm change
+'''
+clean = '''
+git init -q -b main && mkdir -p .github migrations
+printf '[[migrations]]\nid = "d1"\ndir = "migrations"\ndry_run = "sqlite"\n' > .github/changes.toml
+echo 'CREATE TABLE t (a TEXT);' > migrations/0001_t.sql && git add -A && git commit -qm base && git tag base
+echo 'ALTER TABLE t ADD COLUMN b TEXT;' > migrations/0002_b.sql && git add -A && git commit -qm change
+'''
+run = 'python3 "$GATE" migrations --base base .'
+finding = "migrations: d1: migrations/0002_b.sql failed in a scratch database: no such table: gone"
+
+# The decision is in the declaration: the old statement moved to `was`, and a file still states it.
+[[gate]]
+id = "fact-change-sweep"
+surface = "Fact changes"
+gates = ["run/change-gates.py"]
+test = ".ci/test-change-gates.py"
+suite = "shell"
+command = "run/change-gates.py"
+red = '''
+git init -q -b main && mkdir -p .github
+printf '[[fact]]\nid = "pin"\nnow = "tool 1.2"\nwas = []\ndecision = "none yet"\n' > .github/changes.toml
+echo 'Pinned to tool 1.2.' > README.md && git add -A && git commit -qm base && git tag base
+printf '[[fact]]\nid = "pin"\nnow = "tool 1.3"\nwas = ["tool 1.2"]\ndecision = "decided in review"\n' > .github/changes.toml
+git commit -qam change
+'''
+clean = '''
+git init -q -b main && mkdir -p .github
+printf '[[fact]]\nid = "pin"\nnow = "tool 1.2"\nwas = []\ndecision = "none yet"\n' > .github/changes.toml
+echo 'Pinned to tool 1.2.' > README.md && git add -A && git commit -qm base && git tag base
+printf '[[fact]]\nid = "pin"\nnow = "tool 1.3"\nwas = ["tool 1.2"]\ndecision = "decided in review"\n' > .github/changes.toml
+echo 'Pinned to tool 1.3.' > README.md && git commit -qam change
+'''
+run = 'python3 "$GATE" facts --base base .'
+finding = "facts: README.md:1: still states 'tool 1.2', superseded (pin; decided in review)"
+
 [[gate]]
 id = "gates-proof"
 surface = "Gate of the gates"

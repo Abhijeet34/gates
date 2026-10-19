@@ -103,6 +103,8 @@ check_shell() {
     # The pinned-tool gates against stub tools, and their rows in shadow under the runner.
     # `--real`, with the pinned binaries, is not run here: README.md, "The tool rows".
     python3 .ci/test-tool-gates.py || rc=1
+    # The contract, migration and fact rows over a change, and their scoped shadow rows under the runner.
+    python3 .ci/test-change-gates.py || rc=1
     # The exposure and signature gates, through real pushes into throwaway repositories.
     bash system-maintenance/git-hooks/test-exposure-scan.sh || rc=1
     bash system-maintenance/git-hooks/test-signature-check.sh || rc=1
