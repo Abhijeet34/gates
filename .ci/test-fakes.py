@@ -1049,6 +1049,19 @@ def kept_reply():
     return None
 
 
+def first_recording():
+    """A replay with no recording yet is refused, and --out still keeps the reply to record."""
+    here = tree({CONFIG: github()})
+    out_dir = Path(tempfile.mkdtemp(dir=workdir))
+    rc, out, _ = serve(here, {"/repos/o/r": reply(REPO)}, "--out", str(out_dir))
+    kept = out_dir / "tests/fixtures/repo.json"
+    if rc != 2 or "does not exist" not in out or not kept.is_file():
+        return (
+            f"a first recording through --out: exit {rc}, kept {kept.is_file()}:\n{out}"
+        )
+    return None
+
+
 def one_by_id():
     """--id compares one fake and asks for nothing else."""
     config = github() + github(
@@ -1193,6 +1206,7 @@ def main():
         unreachable,
         only_get_and_no_token,
         kept_reply,
+        first_recording,
         one_by_id,
         drift_beside_a_refusal,
         drift_marks_stale,

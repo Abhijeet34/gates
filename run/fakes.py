@@ -28,8 +28,9 @@ compare      Each `[[fake.github]]` replay of a [[fake]] whose recorded reply no
              compared. Every declared GitHub fake, or the one `--id` names; this
              is the daily real smoke. `--api` replaces https://api.github.com,
              `--out` keeps each fresh reply under DIR at its recording's path,
-             and `--write` moves a matching fake's `recorded` to today and gives
-             a drifted one a `drift`, which `stale` then refuses.
+             a new replay's first recording included, and `--write` moves a
+             matching fake's `recorded` to today and gives a drifted one a
+             `drift`, which `stale` then refuses.
 
 Exit status: 0 nothing to name, 1 a finding, 2 could not decide. Every exit 2
 prints `fakes: refused (TYPE): ...`, and TYPE is one of:
@@ -708,18 +709,18 @@ def compare_fake(root, api, out, f):
     found = []
     for r in f["github"]:
         where = f"{r['recording']} (GET {r['request']})"
-        path = root / r["recording"]
-        try:
-            recorded = json.loads(path.read_bytes())
-        except FileNotFoundError as e:
-            raise bad(f["id"], f"recording {r['recording']} does not exist") from e
-        except (ValueError, OSError) as e:
-            raise bad(f["id"], f"recording {r['recording']} is not JSON: {e}") from e
         status, body = fetch(api, r["request"])
         if out:
             kept = out / r["recording"]
             kept.parent.mkdir(parents=True, exist_ok=True)
             kept.write_bytes(body)
+        # Read after the fetch, so `--out` gives a new replay its first recording.
+        try:
+            recorded = json.loads((root / r["recording"]).read_bytes())
+        except FileNotFoundError as e:
+            raise bad(f["id"], f"recording {r['recording']} does not exist") from e
+        except (ValueError, OSError) as e:
+            raise bad(f["id"], f"recording {r['recording']} is not JSON: {e}") from e
         if status != r["status"]:
             found.append(f"{where}: status {r['status']} recorded, {status} now")
             continue
