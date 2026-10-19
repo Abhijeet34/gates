@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regression tests for run/docs-truth.py, and its three rows in shadow under run/gate.py.
+"""Regression tests for run/docs-truth.py, and its four rows in shadow under run/gate.py.
 
     .ci/test-docs-truth.py
 
@@ -9,6 +9,7 @@ for a refusal, a line of its output. A file whose text is a tuple is executable.
 
 import datetime
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -28,6 +29,7 @@ ENV = {
     "PYTHONDONTWRITEBYTECODE": "1",
 }
 workdir = tempfile.mkdtemp()
+DASH = "\u2014"
 
 
 def run(*args, cwd, env=ENV):
@@ -358,6 +360,54 @@ CASES = [
         None,
     ),
     ("a CLAUDE.md has no budget", "budget", {"CLAUDE.md": "x" * 9000}, 0, None),
+    (
+        "an em dash in a README",
+        "emdash",
+        {"README.md": f"# R\n\nOne {DASH} two.\n"},
+        1,
+        "README.md:3: carries an em dash",
+    ),
+    (
+        "an em dash in a nested instruction file",
+        "emdash",
+        {"skills/x/SKILL.md": f"---\nname: x\n---\nA {DASH} B\n"},
+        1,
+        "skills/x/SKILL.md:4: carries an em dash",
+    ),
+    (
+        "a hyphen, an en dash and a minus",
+        "emdash",
+        {"README.md": "a - b, 1\u20132, 3\u22124\n"},
+        0,
+        None,
+    ),
+    ("a tree without Markdown", "emdash", {"a.py": f"x = '{DASH}'\n"}, 0, None),
+    (
+        "a forked file is exempt from the em dash rule",
+        "emdash",
+        {
+            "skills/y/SKILL.md": f"---\nname: y\n---\n\n<!-- LOCAL FORK of the npm y skill: drops npx -->\nA {DASH} B\n"
+        },
+        0,
+        None,
+    ),
+    (
+        "the fork header is not the exemption when it sits past the first 30 lines",
+        "emdash",
+        {"README.md": f"{DASH}\n" + "x\n" * 40 + "<!-- LOCAL FORK quoted -->\n"},
+        1,
+        "README.md:1: carries an em dash",
+    ),
+    (
+        "the fork exemption covers its own file only",
+        "emdash",
+        {
+            "skills/y/SKILL.md": f"<!-- LOCAL FORK of y -->\n{DASH}\n",
+            "README.md": f"{DASH}\n",
+        },
+        1,
+        "README.md:1: carries an em dash",
+    ),
 ]
 
 
@@ -385,17 +435,28 @@ run = 'python3 "$GATES_DIR/run/docs-truth.py" commands .'
 id = "docs-agents-budget"
 inputs = ["AGENTS.md"]
 run = 'python3 "$GATES_DIR/run/docs-truth.py" budget .'
+{shadow}
+[[gate]]
+id = "docs-no-em-dash"
+inputs = ["**/*.md"]
+run = 'python3 "$GATES_DIR/run/docs-truth.py" emdash .'
 {shadow}"""
-IDS = ("docs-owner-reader", "docs-commands-run", "docs-agents-budget")
+IDS = (
+    "docs-owner-reader",
+    "docs-commands-run",
+    "docs-agents-budget",
+    "docs-no-em-dash",
+)
 
 
 def shadow(since):
-    """(run's exit, fold's exit, fold's output) for a tree that breaks all three rules under gate.py."""
+    """(run's exit, fold's exit, fold's output) for a tree that breaks all four rules under gate.py."""
     registry = ROWS.format(shadow=f"shadow_since = {since}\n" if since else "")
     repo = tree(
         {
             "AGENTS.md": "x" * 8001,
             "README.md": doc("./gone.sh"),
+            "NOTES.md": f"one {DASH} two\n",
             ".github/gates.toml": registry,
         }
     )
@@ -445,4 +506,8 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    finally:
+        # Best effort: the fixtures are throwaway and a leftover only costs disk.
+        shutil.rmtree(workdir, ignore_errors=True)

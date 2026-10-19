@@ -17,6 +17,7 @@ The registry is `.github/gates.toml` in the tree under test, read at H, one
   blocks = true                                      # optional: false reports only
   kind   = "check"                                   # optional: check, review or docs
   shadow_since = 2026-10-19                          # optional: date it entered shadow
+  scoped = true                                      # optional: only its inputs select it
 
 A `review` or `docs` row has no `run`: the review pipeline appends its verdict
 to DIR/records.jsonl in the same record shape, `run` skips it, and the fold
@@ -25,7 +26,11 @@ reads it like any other, so an absent or `error` review never folds to pass.
 Selection maps `git diff --name-only B...H` through each gate's inputs, and
 selects every gate when a changed path is named by no gate, is the registry or
 is under `.github/`, or when there is no base or no change: over-testing is
-cheap with the cache, under-testing is not.
+cheap with the cache, under-testing is not. A `scoped` row is the exception for
+the first two: it is for a row too slow to run on an unrelated change (the
+advisory row, README.md, "The tool rows"), so it is selected only when a changed
+path matches its inputs or the registry changes, and an unnamed path or another
+file under `.github/` leaves it out. No base and no change still select it.
 
 A gate's key is a sha256 over its id, its registry row, this file, the runner
 class, each tool probe's output and the (mode, blob, path) of every file at H
@@ -62,7 +67,7 @@ import tomllib
 from pathlib import Path
 
 REGISTRY = ".github/gates.toml"
-ROW_KEYS = {"id", "inputs", "run", "tools", "blocks", "kind", "shadow_since"}
+ROW_KEYS = {"id", "inputs", "run", "tools", "blocks", "kind", "shadow_since", "scoped"}
 KINDS = {"check", "review", "docs"}
 VERDICTS = {"pass", "fail", "error"}
 EVENTS = {"false-alarm", "proof-failed"}
@@ -151,8 +156,9 @@ def load(head):
             isinstance(tools, dict) and all(isinstance(v, str) for v in tools.values())
         ):
             problems.append("tools must map a name to a probe command")
-        if not isinstance(row.get("blocks", True), bool):
-            problems.append("blocks must be true or false")
+        for flag in ("blocks", "scoped"):
+            if not isinstance(row.get(flag, True), bool):
+                problems.append(f"{flag} must be true or false")
         if problems:
             raise Undecided(f"{REGISTRY}: gate {gid!r}: {'; '.join(problems)}")
         seen.add(gid)
@@ -180,16 +186,25 @@ def select(rows, base, head):
         return dict.fromkeys(
             everyone, "no change to compare, so nothing is proved unaffected"
         )
-    why = {}
+    why, wide, registry_changed = {}, None, False
     for path in changed:
-        if path == REGISTRY or path.startswith(".github/"):
-            return dict.fromkeys(everyone, f"{path} can change how every gate runs")
         hits = [r["id"] for r in rows if matches(r, path)]
-        if not hits:
-            return dict.fromkeys(everyone, f"{path} is named by no gate")
         for gid in hits:
             why.setdefault(gid, path)
-    return {gid: why[gid] for gid in everyone if gid in why}
+        registry_changed |= path == REGISTRY
+        if wide is None and path.startswith(".github/"):
+            wide = f"{path} can change how every gate runs"
+        elif wide is None and not hits:
+            wide = f"{path} is named by no gate"
+    if wide is None:
+        return {gid: why[gid] for gid in everyone if gid in why}
+    # A scoped row is the slow one, so only its inputs or its own definition select it.
+    scoped = set() if registry_changed else {r["id"] for r in rows if r.get("scoped")}
+    return {
+        gid: why[gid] if gid in scoped else wide
+        for gid in everyone
+        if gid not in scoped or gid in why
+    }
 
 
 def probe(row):
