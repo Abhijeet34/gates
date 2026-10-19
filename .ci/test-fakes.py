@@ -1166,7 +1166,10 @@ def unwritable_layout():
 def drift_beside_an_unwritable_fake():
     """A drift is still reported when --write cannot edit a later fake: exit 1, with the tool-error beside it."""
     config = github("a", (("/a", "tests/fixtures/repo.json"),)) + github(
-        "b", (("/b", "tests/fixtures/repo.json"),), recorded=None, **{'"recorded"': "2026-10-15"}
+        "b",
+        (("/b", "tests/fixtures/repo.json"),),
+        recorded=None,
+        **{'"recorded"': "2026-10-15"},
     )
     here = tree(recorded(config=config))
     replies = {"/a": reply({"id": 1}), "/b": reply(REPO)}
