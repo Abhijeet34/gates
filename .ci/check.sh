@@ -96,6 +96,9 @@ check_shell() {
     python3 .ci/test-docs-truth.py || rc=1
     python3 run/docs-truth.py owner . || rc=1
     python3 run/docs-truth.py commands . || rc=1
+    # The pinned-tool gates against stub tools, and their rows in shadow under the runner.
+    # `--real`, with the pinned binaries, is not run here: README.md, "The tool rows".
+    python3 .ci/test-tool-gates.py || rc=1
     # The exposure and signature gates, through real pushes into throwaway repositories.
     bash system-maintenance/git-hooks/test-exposure-scan.sh || rc=1
     bash system-maintenance/git-hooks/test-signature-check.sh || rc=1
