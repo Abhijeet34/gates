@@ -112,7 +112,7 @@ check_shell() {
     # The mutation rows against a stub tool, and their scoped shadow row under the runner.
     # `--real`, with cargo-mutants and Stryker, is not run here: README.md, "The mutation rows".
     python3 .ci/test-mutation.py || rc=1
-    # The review row's seats, budgets and verifier pass against recorded model replies, and its row folded in shadow.
+    # The review row's seats, budgets, verifier pass, router and veto against recorded model replies, and its rows folded in shadow.
     python3 .ci/test-review.py || rc=1
     # The exposure and signature gates, through real pushes into throwaway repositories.
     bash system-maintenance/git-hooks/test-exposure-scan.sh || rc=1

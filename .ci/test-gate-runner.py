@@ -480,6 +480,26 @@ def errored_doc_refuses(runner):
     return None
 
 
+def sat_review_folds_unselected(runner):
+    f = Fixture(runner)
+    narrow = REVIEWED.replace(
+        'kind = "review"\ninputs = ["**"]', 'kind = "review"\ninputs = ["src/**"]'
+    )
+    base = f.commit({".github/gates.toml": narrow})
+    head = f.commit({"docs/index.md": "# Moved\n"})
+    f.append(
+        "records.jsonl",
+        [
+            verdict("docs", head, "pass", "current"),
+            verdict("review", head, "fail", "1 verified blocking finding"),
+        ],
+    )
+    rc, out = f.gate("fold", "--base", base, "--store", str(f.store))
+    if rc == 0 or "FAIL review: fail: 1 verified blocking finding" not in out:
+        return f"a failed review of an unselected row folded to {out.strip()!r} (exit {rc})"
+    return None
+
+
 def review_keys_only_on_review_rows(runner):
     f = Fixture(runner)
     keys = 'lens = "code"\nreviewers = ["claude-sonnet-5-5"]\nbudget = { finder_seconds = 60 }\n'
@@ -598,6 +618,12 @@ CASES = [
         "only a pass record passing",
         'if verdict == "pass":',
         'if verdict in ("pass", "error"):',
+    ),
+    (
+        sat_review_folds_unselected,
+        "a review that sat folding though selection left its row out",
+        'if gid not in chosen and not (row["kind"] == "review" and gid in latest):',
+        "if gid not in chosen:",
     ),
     (
         review_keys_only_on_review_rows,
