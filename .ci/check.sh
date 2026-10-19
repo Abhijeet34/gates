@@ -109,6 +109,9 @@ check_shell() {
     python3 .ci/test-slop-rules.py || rc=1
     # The fake rows (undeclared doubles, counterparts, freshness), and their scoped shadow rows under the runner.
     python3 .ci/test-fakes.py || rc=1
+    # The mutation rows against a stub tool, and their scoped shadow row under the runner.
+    # `--real`, with cargo-mutants and Stryker, is not run here: README.md, "The mutation rows".
+    python3 .ci/test-mutation.py || rc=1
     # The exposure and signature gates, through real pushes into throwaway repositories.
     bash system-maintenance/git-hooks/test-exposure-scan.sh || rc=1
     bash system-maintenance/git-hooks/test-signature-check.sh || rc=1
