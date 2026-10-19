@@ -73,13 +73,19 @@ class Refused(Exception):
         self.kind = kind
 
 
-def sibling(path):
+def sibling(path, *names):
     """A script of this checkout whose name is not an identifier, imported by file."""
-    spec = importlib.util.spec_from_file_location(
-        Path(path).stem.replace("-", "_"), HERE / path
-    )
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    try:
+        spec = importlib.util.spec_from_file_location(
+            Path(path).stem.replace("-", "_"), HERE / path
+        )
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+    except (ImportError, OSError, SyntaxError, AttributeError) as e:
+        raise Refused("tool-error", f"cannot load {path}: {e}") from e
+    missing = [n for n in names if not hasattr(module, n)]
+    if missing:
+        raise Refused("tool-error", f"{path} lacks {', '.join(missing)}")
     return module
 
 
@@ -428,7 +434,7 @@ def vocabulary(root):
 
 
 def symbols(root, change):
-    path_truth = sibling("instruction-truth/path-truth.py")
+    path_truth = sibling("instruction-truth/path-truth.py", "walk", "candidate")
     suffixes = path_truth.walk(root)[1]
     # A path is judged only when it starts in a directory of this tree: one that starts
     # elsewhere (`internal/git/git.go`, `repos/owner/name`) names another repository's file
@@ -573,7 +579,7 @@ def z_index(root, change):
 
 
 def em_dash(root, change):
-    docs = sibling("docs-truth.py")
+    docs = sibling("docs-truth.py", "FORK_MARKER", "FORK_LINES")
     found = []
     for rel, text, added in texts(root, change, MARKUP_EXT):
         lines = text.splitlines()

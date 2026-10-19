@@ -674,6 +674,18 @@ RED = {
 }
 
 
+def without_siblings():
+    """The script copied alone cannot load the scripts it reads, which is no finding."""
+    lone = Path(tempfile.mkdtemp(dir=workdir)) / "run"
+    lone.mkdir()
+    shutil.copy(GATE, lone / GATE.name)
+    here = tree({"README.md": "A stale `run/gone.py` line.\n"})
+    rc, out = run(sys.executable, str(lone / GATE.name), "symbols", str(here), cwd=here)
+    if rc != 2 or "refused (tool-error)" not in out:
+        return f"a missing sibling script: exit {rc}, wanted 2 refused (tool-error):\n{out}"
+    return None
+
+
 def under_the_runner():
     """Scoped rows stay out of an unrelated change, and a red one is shadow, not a block."""
     date = datetime.datetime.now(datetime.UTC).date().isoformat()
@@ -717,9 +729,10 @@ def main():
             "z-index",
         )
     )
+    failures.append(without_siblings())
     failures.append(under_the_runner())
     failures = [f for f in failures if f]
-    total = len(SWEEPS) + len(SINCE) + 2
+    total = len(SWEEPS) + len(SINCE) + 3
     for f in failures:
         print(f"FAIL {f}", file=sys.stderr)
     print(f"test-slop-rules: {total - len(failures)} of {total} cases passed")
