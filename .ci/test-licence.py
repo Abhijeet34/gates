@@ -297,7 +297,7 @@ CASES = [
     (unlisted_licence_needs_review, "an unlisted id needing review", 'return "review", f"{tok} is in no list of the policy"', 'return "allowed", f"{tok} is in no list of the policy"'),
     (malformed_expression_needs_review, "a whole expression required", 'raise ValueError(f"{peek()} after a whole expression")', "pass"),
     (missing_licence_needs_declaring, "a dependency with no licence needing one", '    if expr is None:\n        state, why = "review", missing\n', '    if expr is None:\n        state, why = "allowed", missing\n'),
-    (project_and_links_skipped, "the project and links skipped", 'if "node_modules/" not in where or not isinstance(item, dict) or item.get("link"):', "if not where or not isinstance(item, dict):"),
+    (project_and_links_skipped, "the project and links skipped", 'if (\n                "node_modules/" not in where\n                or not isinstance(item, dict)\n                or item.get("link")\n            ):', "if not where or not isinstance(item, dict):"),
     (vendored_file_header, "a vendored file's own header read", "            return m.group(1).strip()\n", "            return None\n"),
     (notice_files_not_judged, "a vendored tree's notice files skipped", ' or NOTICES.match(\n            rel.rsplit("/", 1)[-1]\n        )', ""),
     (policy_contradiction_undecided, "a licence in two lists refused", 'problems.append(f"{lid!r} is in both {named[lid]} and {k}")', "pass"),

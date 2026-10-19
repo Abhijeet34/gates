@@ -186,7 +186,11 @@ def npm(path, text):
     if isinstance(packages, dict):
         for where, item in packages.items():
             # Only a node_modules entry is a dependency: "", a workspace member's own entry and a link are the project's code.
-            if "node_modules/" not in where or not isinstance(item, dict) or item.get("link"):
+            if (
+                "node_modules/" not in where
+                or not isinstance(item, dict)
+                or item.get("link")
+            ):
                 continue
             name = item.get("name") or where.rsplit("node_modules/", 1)[-1]
             out.append(
