@@ -185,8 +185,8 @@ def npm(path, text):
     packages = data.get("packages")
     if isinstance(packages, dict):
         for where, item in packages.items():
-            # "" is the project itself, and a link is a workspace member: both are its own code.
-            if not where or not isinstance(item, dict) or item.get("link"):
+            # Only a node_modules entry is a dependency: "", a workspace member's own entry and a link are the project's code.
+            if "node_modules/" not in where or not isinstance(item, dict) or item.get("link"):
                 continue
             name = item.get("name") or where.rsplit("node_modules/", 1)[-1]
             out.append(
