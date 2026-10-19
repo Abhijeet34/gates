@@ -908,6 +908,120 @@ echo 'Pinned to tool 1.3.' > README.md && git commit -qam change
 run = 'python3 "$GATE" facts --base base .'
 finding = "facts: README.md:1: still states 'tool 1.2', superseded (pin; decided in review)"
 
+# Slop a tree can answer, one row per rule over one script, in shadow and scoped to the files
+# each judges; README.md, "The slop rows". With no --base a row judges every file under the
+# working directory, so each input is a few files and no repository.
+[[gate]]
+id = "slop-tests-source-text"
+surface = "Test quality"
+gates = ["run/slop-rules.py"]
+test = ".ci/test-slop-rules.py"
+suite = "shell"
+command = "run/slop-rules.py"
+red = '''printf "from pathlib import Path\nassert 'x' in Path('run/gate.sh').read_text()\n" > test_gate.py'''
+clean = '''printf "from pathlib import Path\nassert 'x' in Path('fixtures/out.json').read_text()\n" > test_gate.py'''
+run = 'python3 "$GATE" tests .'
+finding = "test_gate.py:2: asserts on the text of run/gate.sh"
+
+[[gate]]
+id = "slop-symbols-path"
+surface = "Documentation"
+gates = ["run/slop-rules.py"]
+test = ".ci/test-slop-rules.py"
+suite = "shell"
+command = "run/slop-rules.py"
+red = '''mkdir run && echo 'x = 1' > run/new.py && echo 'Run `run/old.py` first.' > README.md'''
+clean = '''mkdir run && echo 'x = 1' > run/new.py && echo 'Run `run/new.py` first.' > README.md'''
+run = 'python3 "$GATE" symbols .'
+finding = "README.md:1: `run/old.py` names a path that is not in the tree"
+
+[[gate]]
+id = "slop-symbols-function"
+surface = "Documentation"
+gates = ["run/slop-rules.py"]
+test = ".ci/test-slop-rules.py"
+suite = "shell"
+command = "run/slop-rules.py"
+red = '''echo 'Call `gate_run()` here.' > README.md'''
+clean = '''printf 'def gate_run():\n    pass\n' > a.py && echo 'Call `gate_run()` here.' > README.md'''
+run = 'python3 "$GATE" symbols .'
+finding = "README.md:1: `gate_run()` names a function that no file of the tree has"
+
+[[gate]]
+id = "slop-symbols-flag"
+surface = "Documentation"
+gates = ["run/slop-rules.py"]
+test = ".ci/test-slop-rules.py"
+suite = "shell"
+command = "run/slop-rules.py"
+red = '''echo 'Pass `--bogus`.' > README.md'''
+clean = '''printf 'ap.add_argument("--base")\n' > a.py && echo 'Pass `--base`.' > README.md'''
+run = 'python3 "$GATE" symbols .'
+finding = "README.md:1: `--bogus` names a flag that no file of the tree has"
+
+# The five rows below are the deterministic part of the impeccable rule set, each tied to a line of
+# ~/STANDARDS.md, "Frontend design defaults"; the rest of the set is left out with its reason in the README.
+[[gate]]
+id = "ui-easing"
+surface = "UI standards"
+gates = ["run/slop-rules.py"]
+test = ".ci/test-slop-rules.py"
+suite = "shell"
+command = "run/slop-rules.py"
+red = '''echo '.a { transition: 1s cubic-bezier(.34,1.56,.64,1); }' > a.css'''
+clean = '''echo '.a { transition: 1s cubic-bezier(0.16, 1, 0.3, 1); }' > a.css'''
+run = 'python3 "$GATE" easing .'
+finding = "a.css:1: cubic-bezier(.34,1.56,.64,1) overshoots 0..1"
+
+[[gate]]
+id = "ui-contrast"
+surface = "UI standards"
+gates = ["run/slop-rules.py"]
+test = ".ci/test-slop-rules.py"
+suite = "shell"
+command = "run/slop-rules.py"
+red = '''echo '.a { color: #888; background: #999; }' > a.css'''
+clean = '''echo '.a { color: #000; background: #fff; }' > a.css'''
+run = 'python3 "$GATE" contrast .'
+finding = "a.css:1: color #888 on #999 is 1.2:1, under 4.5:1"
+
+[[gate]]
+id = "ui-z-index"
+surface = "UI standards"
+gates = ["run/slop-rules.py"]
+test = ".ci/test-slop-rules.py"
+suite = "shell"
+command = "run/slop-rules.py"
+red = '''echo '.a { z-index: 9999; }' > a.css'''
+clean = '''echo '.a { z-index: var(--z-modal); }' > a.css'''
+run = 'python3 "$GATE" z-index .'
+finding = "a.css:1: z-index: 9999 is an arbitrary z-index"
+
+[[gate]]
+id = "ui-em-dash"
+surface = "UI standards"
+gates = ["run/slop-rules.py"]
+test = ".ci/test-slop-rules.py"
+suite = "shell"
+command = "run/slop-rules.py"
+# The dash is written as bytes so this file carries none.
+red = '''printf '<p>a \xe2\x80\x94 b</p>\n' > a.html'''
+clean = '''printf '<!-- LOCAL FORK of upstream -->\n<p>a \xe2\x80\x94 b</p>\n' > a.html'''
+run = 'python3 "$GATE" em-dash .'
+finding = "a.html:1: carries an em dash"
+
+[[gate]]
+id = "ui-reduced-motion"
+surface = "UI standards"
+gates = ["run/slop-rules.py"]
+test = ".ci/test-slop-rules.py"
+suite = "shell"
+command = "run/slop-rules.py"
+red = '''echo '.a { transition: opacity 200ms; }' > a.css'''
+clean = '''echo '.a { transition: opacity 200ms; }' > a.css && echo '@media (prefers-reduced-motion: reduce) { * { transition: none; } }' > b.css'''
+run = 'python3 "$GATE" reduced-motion .'
+finding = "a.css:1: adds motion and no file of the tree names prefers-reduced-motion"
+
 [[gate]]
 id = "gates-proof"
 surface = "Gate of the gates"
