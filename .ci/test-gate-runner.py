@@ -198,6 +198,45 @@ def unknown_path_selects_all(runner):
     return None
 
 
+SCOPED_ROW = """
+[[gate]]
+id = "advisories"
+inputs = ["**/package-lock.json", "**/Cargo.lock"]
+scoped = true
+run = 'echo run >> "$RUNS/advisories"'
+"""
+
+
+def scoped_row_ignores_unrelated_paths(runner):
+    f = Fixture(runner)
+    base = f.commit({".github/gates.toml": REGISTRY + SCOPED_ROW})
+    f.commit({"notes/plan.txt": "named by no gate\n"})
+    rc, ids, out = f.selected(base)
+    if rc != 0 or ids != ALL:
+        return f"a change to a path no gate names selected {ids}, not {ALL} (exit {rc}): {out.strip()}"
+    lock = f.commit({"notes/plan.txt": "again\n", "web/package-lock.json": "{}\n"})
+    rc, ids, out = f.selected(base)
+    if rc != 0 or ids != [*ALL, "advisories"]:
+        return f"an unnamed path beside a lockfile selected {ids}, not {[*ALL, 'advisories']} (exit {rc})"
+    f.commit({"notes/plan.txt": "third\n"})
+    rc, ids, out = f.selected(lock)
+    if rc != 0 or ids != ALL:
+        return f"a change after the lockfile selected {ids}, not {ALL} (exit {rc})"
+    after = f.commit({"web/package-lock.json": '{"a": 1}\n'})
+    rc, ids, out = f.selected(after + "~1")
+    if rc != 0 or ids != ["advisories"]:
+        return f"a lockfile-only change selected {ids}, not just advisories (exit {rc})"
+    f.commit({".github/gates.toml": REGISTRY + SCOPED_ROW + "\n"})
+    rc, ids, out = f.selected(lock)
+    if rc != 0 or ids != [*ALL, "advisories"]:
+        return f"a change to the registry selected {ids}, not every gate (exit {rc})"
+    f.commit({".github/gates.toml": REGISTRY + SCOPED_ROW.replace("true", '"yes"')})
+    rc, ids, out = f.selected(lock)
+    if rc != 2 or "scoped must be true or false" not in out:
+        return f'scoped = "yes" was not refused as a bad registry (exit {rc}): {out.strip()}'
+    return None
+
+
 def migration_change_selects_migration_gate(runner):
     f = Fixture(runner)
     f.commit({"migrations/2026/0002_add_index.sql": "create index i on t (id);\n"})
@@ -446,8 +485,8 @@ CASES = [
     (
         unknown_path_selects_all,
         "rule 1, a path no gate names selects every gate",
-        'return dict.fromkeys(everyone, f"{path} is named by no gate")',
-        "continue",
+        "elif wide is None and not hits:",
+        "elif False:",
     ),
     (
         migration_change_selects_migration_gate,
@@ -538,6 +577,12 @@ CASES = [
         "only a pass record passing",
         'if verdict == "pass":',
         'if verdict in ("pass", "error"):',
+    ),
+    (
+        scoped_row_ignores_unrelated_paths,
+        "a scoped row staying out of an unrelated change",
+        'scoped = set() if registry_changed else {r["id"] for r in rows if r.get("scoped")}',
+        "scoped = set()",
     ),
 ]
 

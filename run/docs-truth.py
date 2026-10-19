@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Hold a repository's documents to three rules a tree alone can answer.
+"""Hold a repository's documents to four rules a tree alone can answer.
 
-Usage: docs-truth.py owner|commands|budget [root]    (default root: the current directory)
+Usage: docs-truth.py owner|commands|budget|emdash [root]    (default root: the current directory)
 
 owner     Every AGENTS.md and CLAUDE.md is listed in `.github/docs.toml` with an
           `owner` (any non-empty name or role) and a `reader` (agents, compliance
@@ -16,6 +16,15 @@ commands  Every command in a shell-tagged fence (bash, sh, shell, zsh) of any
           command word holding `$`, a backtick, a glob or `~`, heredoc bodies,
           and every inline span, which path-truth.py owns when it names a path.
 budget    The root AGENTS.md is at most BUDGET bytes.
+emdash    No Markdown file carries an em dash ("Never use the em dash", the
+          maintainer's global agent instructions, and the draft skill's hard rule
+          1), except a forked file: upstream text this tree cannot edit without
+          the next upstream sync reporting a change upstream never made. A fork
+          is the file that carries the `<!-- LOCAL FORK` header the fork policy
+          (FORKS.md, "What is forked") puts at the top of a forked SKILL.md, in
+          its first FORK_LINES lines, so a quotation of the header deep in a file
+          exempts nothing. The factory plan r5 row "Docs and writing, no AI slop"
+          records the exemption: "em dashes (forked files exempt)".
 
 BUDGET is the repository figure of the instruction-surface budgets, "each
 repository's under 8,000 bytes" (factory plan r5, section 7 "Budgets", and report
@@ -38,6 +47,9 @@ SKIP_DIRS = {".git", "node_modules", "target", "vendor", ".venv"}
 MANIFEST = ".github/docs.toml"
 READERS = {"agents", "compliance", "clients"}
 BUDGET = 8000
+EM_DASH = "\u2014"
+FORK_MARKER = "<!-- LOCAL FORK"
+FORK_LINES = 30
 SHELL_FENCES = {"bash", "sh", "shell", "zsh"}
 BASH = shutil.which("bash") or "bash"
 INTERPRETERS = {"bash", "sh", "python3"}
@@ -295,10 +307,29 @@ def judge(doc, units, root, suffixes, tools):
     return bad
 
 
+def emdash(root):
+    docs, _ = walk(root)
+    bad = []
+    for rel in docs:
+        with open(
+            os.path.join(root, rel), encoding="utf-8", errors="replace"
+        ) as handle:
+            lines = handle.read().splitlines()
+        if any(FORK_MARKER in line for line in lines[:FORK_LINES]):
+            continue
+        bad += [
+            f"{rel}:{number}: carries an em dash; use a hyphen or reword (a file under {FORK_MARKER} is exempt)"
+            for number, line in enumerate(lines, 1)
+            if EM_DASH in line
+        ]
+    return bad
+
+
 CHECKS = {
     "owner": (owner, "Every instruction file names an owner and a reader."),
     "commands": (commands, "Every command in a shell fence parses and exists."),
     "budget": (budget, "The root AGENTS.md is within its byte budget."),
+    "emdash": (emdash, "No Markdown file carries an em dash outside a forked file."),
 }
 
 

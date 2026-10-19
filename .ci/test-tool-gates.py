@@ -15,6 +15,7 @@ part of .ci/check.sh until the CI jobs install them (README.md, "The tool rows")
 
 import datetime
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -531,4 +532,8 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    finally:
+        # Best effort: the fixtures are throwaway and a leftover only costs disk.
+        shutil.rmtree(workdir, ignore_errors=True)
