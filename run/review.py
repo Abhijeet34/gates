@@ -121,9 +121,7 @@ def scrubbed(keep=()):
 def reproduce_env(home):
     """The few variables a reproducing command may inherit, with every login pointed at `home`."""
     kept = {
-        k: v
-        for k, v in os.environ.items()
-        if k in REPRODUCE_ENV or k.startswith("LC_")
+        k: v for k, v in os.environ.items() if k in REPRODUCE_ENV or k.startswith("LC_")
     }
     return {
         **kept,
