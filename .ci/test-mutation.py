@@ -475,7 +475,13 @@ def main():
         results = real_cases(seen)
     else:
         results = shapes("rust", SURVIVOR_RS) + shapes("typescript", SURVIVOR_TS)
-        results += [base_survivor(), new_code_survivor(), *weakenings(), *scoping(), *refusals()]
+        results += [
+            base_survivor(),
+            new_code_survivor(),
+            *weakenings(),
+            *scoping(),
+            *refusals(),
+        ]
         results += runner_cases()
     failures = [r for r in results if r]
     for f in failures:
