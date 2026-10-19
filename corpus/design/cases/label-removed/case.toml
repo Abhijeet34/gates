@@ -1,0 +1,4 @@
+defect = "The icon-only close button loses its aria-label, so it has no accessible name (report 3.2: a removed aria-label)."
+[[seed]]
+path = "components/dialog.html"
+lines = [4, 6]

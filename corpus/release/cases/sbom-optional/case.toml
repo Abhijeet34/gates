@@ -1,0 +1,4 @@
+defect = "The bill of materials is built only when WITH_SBOM is set, so a default release ships without one (report 3.2: SBOM and attestation)."
+[[seed]]
+path = "release/build.sh"
+lines = [8, 10]

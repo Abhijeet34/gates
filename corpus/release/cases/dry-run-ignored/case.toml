@@ -1,0 +1,4 @@
+defect = "A failing publish dry run no longer stops the publish (report 3.2: a failing publish dry run blocks)."
+[[seed]]
+path = "release/publish.sh"
+lines = [7, 7]

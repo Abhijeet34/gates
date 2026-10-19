@@ -114,6 +114,9 @@ check_shell() {
     python3 .ci/test-mutation.py || rc=1
     # The review row's seats, budgets, verifier pass, router and veto against recorded model replies, and its rows folded in shadow.
     python3 .ci/test-review.py || rc=1
+    # The seeded corpus runner against recorded replies of its live run, and the licence policy row folded in shadow.
+    python3 .ci/test-corpus.py || rc=1
+    python3 .ci/test-licence.py || rc=1
     # The exposure and signature gates, through real pushes into throwaway repositories.
     bash system-maintenance/git-hooks/test-exposure-scan.sh || rc=1
     bash system-maintenance/git-hooks/test-signature-check.sh || rc=1

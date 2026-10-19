@@ -1,0 +1,4 @@
+defect = "The row stops wrapping and its two parts need 352px, so they overflow and overlap at a 300px width (report 3.2: the .hw-row overlap at 300px)."
+[[seed]]
+path = "styles/row.css"
+lines = [3, 13]

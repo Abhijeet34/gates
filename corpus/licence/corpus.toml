@@ -1,0 +1,6 @@
+# The licence lens's seeded corpus; README.md, "The seeded corpus", owns the shape.
+# A licence finding refuses the change (report 3.5), so only a verified block catches.
+lens = "licence"
+catch = "blocks"
+author = "claude-opus-5-5"
+reviewers = ["claude-sonnet-5-5", "claude-opus-5-5"]

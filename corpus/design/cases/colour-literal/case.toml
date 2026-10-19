@@ -1,0 +1,4 @@
+defect = "The hover state hard-codes #fff where the on-accent token belongs (report 3.2: a literal #fff)."
+[[seed]]
+path = "styles/button.css"
+lines = [19, 19]

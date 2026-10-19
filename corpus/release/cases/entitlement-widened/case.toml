@@ -1,0 +1,4 @@
+defect = "The app gains com.apple.security.cs.disable-library-validation, a widened entitlement (report 3.2: a seeded entitlement widening)."
+[[seed]]
+path = "release/entitlements.plist"
+lines = [11, 12]

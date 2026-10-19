@@ -1,0 +1,16 @@
+/* Every colour and space a component uses comes from a token here. */
+:root {
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --radius: 6px;
+  --color-text: #1b1b1f;
+  --color-surface: #ffffff;
+  --color-accent: #1f5fbf;
+  --color-on-accent: #ffffff;
+  --color-muted-fill: #5c5f66;
+  --color-on-muted: #ffffff;
+  --color-subtle-fill: #b9b9b9;
+  --color-on-subtle: #ffffff;
+}

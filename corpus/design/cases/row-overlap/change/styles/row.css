@@ -1,0 +1,14 @@
+.hw-row {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.hw-row__title {
+  flex: 0 0 200px;
+}
+
+.hw-row__actions {
+  flex: 0 0 140px;
+}

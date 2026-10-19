@@ -1,0 +1,4 @@
+defect = "A file vendored under GPL-2.0-only comes into an Apache-2.0 project."
+[[seed]]
+path = "vendor/levenshtein.js"
+lines = [1, 2]

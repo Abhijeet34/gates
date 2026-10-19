@@ -1,0 +1,15 @@
+.hw-badge {
+  display: inline-block;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius);
+}
+
+.hw-badge--muted {
+  background: var(--color-muted-fill);
+  color: var(--color-on-muted);
+}
+
+.hw-badge--subtle {
+  background: var(--color-subtle-fill);
+  color: var(--color-on-subtle);
+}

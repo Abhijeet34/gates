@@ -23,6 +23,8 @@ Licensed under the Apache License 2.0; see `LICENSE` and `NOTICE`.
 | `run/fakes.py` | The fake rows: test doubles a caller's `.github/fakes.toml` does not declare, declared fakes with no real counterpart, fakes past their freshness or drifted, and the GitHub record-and-compare and daily real smoke; see "The fake rows". |
 | `run/mutation.py` | The mutation rows: a mutant of a change's lines that no test kills, with a full run when the change deletes or weakens a test; see "The mutation rows". |
 | `run/review.py` | The review rows: a finder session on a model other than the author's, then a verifier pass that must reproduce each blocking finding before it blocks, each seat within its token and time budget, with a Haiku router checked by a rule floor and a veto rule that settles disagreement; see "The review rows". |
+| `run/corpus.py`, `corpus/` | The seeded corpus for the design, licence and release reviews and the runner that counts what a review row catches and what it flags on it; see "The seeded corpus". |
+| `run/licence.py` | The licence row: dependency and vendored-file licences against a caller's `.github/licence-policy.toml`; see "The licence row". |
 | `run/budget-monitor.py` | The gate budget monitor: prints each budgeted step's weekly p50/p95, the alarm and the fix task text; see "The budget monitor". |
 | `bin/gates.py`, `bin/rollout.toml` | `gates bump` and `gates rollback`, which move callers' locks; see "Bumping". |
 | `.ci/` | The contract test for each gate script, the gitleaks rule and allowlist suites, and `check.sh`, which runs all of them. |
@@ -888,7 +890,7 @@ No workflow calls `run/mutation.py`.
 
 `run/review.py --gate ID --base B --author MODEL --store DIR` runs one `kind = "review"` row of a caller's `.github/gates.toml` and appends its verdict to the store `run/gate.py fold` reads, so an absent or `error` review never folds to a pass.
 It carries the first two slices of the factory plan's review pipeline row (r5, "P3a-RP"): review rows with the reviewer-independence rule and budgets, the verifier pass, the Haiku router, the veto rule, and dissent and independence fields on every verdict.
-The seeded corpus and the licence row are the third slice.
+The seeded corpus and the licence row are the third slice ("The seeded corpus" and "The licence row", below).
 `run/review.py --class C --base B --author MODEL --store DIR` routes a change instead of naming one row, as "The router" below sets out.
 Its docstring owns the exit statuses (0 pass, 1 a verified blocking finding, 2 could not decide); each finding prints as one line, `review: F1 error FILE:LINE: CLAIM: verified, blocks`, `does not block` or `downgraded: WHY`.
 
@@ -996,6 +998,119 @@ No case calls a model.
 `replies/router-skips.json` and `replies/adjudicator-clears.json` write a skip and a clearing answer into those real envelopes.
 The gates-proof rows are `review-verifier` (reproduced and refused, against unreproduced and downgraded), `review-budget`, `review-harness`, `review-router` (a router skipping the required row on the floor change, caught and refused, against the real route of the guard change) and `review-veto` (an adjudicator upholding over the verifier's dissent, against one clearing it).
 No workflow calls `run/review.py`; wiring it beside the runner waits for the maintainer's weekly batch.
+
+## The seeded corpus
+
+`run/corpus.py --corpus DIR --store DIR [--case NAME]... [--record DIR]` runs one lens's seeded corpus through its review row and counts what the row catches and what it flags.
+It is the third slice of the review pipeline row (r5, "P3a-RP"): the "seeded corpus for design, licence and release reviews", the set each review row's recall "is measured on" (report 3.1).
+Its docstring owns the exit statuses (0 every seed caught and no clean case flagged, 1 a seed missed or a clean case flagged, 2 undecided); each case prints one line, `corpus: LENS/NAME: caught|missed|clean|flagged|undecided: ...`, and the run ends with `corpus: LENS: caught N of S seeded, F false alarms on C clean, U undecided`.
+
+**The shape.**
+`corpus/LENS/corpus.toml` names the lens, how a catch is scored, the author the cases are written as and the reviewers, with an optional `budget` table passed to the row (the design lens takes report 3.2's "design lens at most 3 min").
+`base/` is the tree every case changes.
+Each `cases/NAME/` holds `change/`, the files the change writes over `base/`, and `case.toml`: a seeded case gives `defect`, one sentence naming the planted defect and its source, and a `[[seed]]` `{path, lines = [first, last]}` for each place it sits at the head; a clean case gives `clean`, the near miss it is, and no seed.
+A key the shape does not name, or a case that is both or neither, makes the run undecided.
+
+Each case runs as a caller's row runs: `base/` committed and tagged `base`, the change committed over it, one review row (`id = "LENS-review"`, `inputs = ["**"]`) in `.github/gates.toml`, and `run/review.py --gate` on it, so the finder, the verifier pass, the veto and every budget of "The review rows" apply unchanged.
+`GATES_CORPUS_CASE=LENS/NAME` is in review.py's environment, which the real CLI ignores and the recorded one answers by.
+
+**Scoring.**
+A finding sits at a seed when its path is the seed's and its line is within the seed's lines.
+
+| `catch` | Lens | A seeded case is caught by | A clean case is flagged by |
+| --- | --- | --- | --- |
+| `blocks` | licence, release | a finding that blocks, verified, at a seed | a `fail` verdict |
+| `flags` | design | an `error` or `warning` finding at a seed | any `error` or `warning` finding |
+
+Licence and release are `blocks` because their findings refuse or hold the change (report 3.5: a licence finding goes to "the PR, with the rule that refused it", a release finding to the approval queue "until approved"); design is `flags` because "design findings auto-fix and never park a run" (report 3.2), so a design warning reaches the fix loop and is the catch.
+A `nit` never counts either way: style "never blocks" (r5, the code row), and counting it only on seeds would reward noise.
+A review that could not decide is `undecided`, never a catch and never a clean pass.
+
+**The cases**, one planted defect each, 14 seeded and 14 clean:
+
+| Lens | Seeded (source) | Clean near misses |
+| --- | --- | --- |
+| design | report 3.2's six: a 1px off-scale `.hw-btn` padding, a removed `aria-label` on an icon-only button, a badge fill at 1.96:1 (white on `#b9b9b9`), a `.hw-row` that stops wrapping and needs 352px so it overlaps at 300px, a literal `#fff`, a "Submit" label | the same files changed rightly: padding moved along the scale, a Cancel button beside a kept label, a badge at 10.25:1, a row that still wraps, a hover colour from a new token, a label naming its outcome |
+| licence | report 3.2's GPL-3.0-only dependency into an Apache-2.0 project, an AGPL-3.0-or-later one, a vendored GPL-2.0-only file, copied MIT code without its notice | an MIT and an Apache-2.0 dependency, an `MIT OR GPL-3.0-only` one, a vendored MIT file with its header |
+| release | report 3.2's signing of an artefact no approved release built (an environment bypass), an entitlement widening (`disable-library-validation`), a publish whose failing dry run no longer stops it (`\|\| true`), and a bill of materials made opt-in | a verify step after signing, a version bump, a tag check before the dry run, a second bill-of-materials format |
+
+The design cases are text: the plan's design lens reads screenshots (r5, "The nine reviews"), which no row takes yet, so these measure the lens on the change alone.
+
+**Measured** 2026-10-19 with CLI 2.1.302 through the subscription login, author `claude-opus-5-5`, finder `claude-sonnet-5-5`, verifier `claude-opus-5-5`, every case of the three corpora:
+
+| Lens | Seeds caught | Clean cases flagged | Undecided |
+| --- | --- | --- | --- |
+| design | 5 of 6 | 0 of 6 | 0 |
+| licence | 3 of 4 | 0 of 4 | 0 |
+| release | 0 of 4 | 0 of 4 | 0 |
+
+The six misses, each from its record:
+
+- design `padding-off-scale`: the finder reported nothing.
+- licence `vendored-gpl`: the finder named the GPL-2.0-only file as a `warning` ("confirm compatibility before merging"), which cannot block.
+- release `entitlement-widened` and `sbom-optional`: each named at the seed as a `warning`.
+- release `sign-unapproved` and `dry-run-ignored`: each named at the seed as an `error`, then downgraded by the verifier, because the reproducing command was a `grep` for the changed text, which "does not demonstrate" the defect; the licence verifier upheld `grep` checks of the same kind on all three licence catches.
+
+The 35 seats used 1,032 to 1,643 input tokens and 9 to 1,260 output tokens each, inside the 60,000 and 4,000 budgets, and every seat finished in under 23 s.
+At 4 to 6 seeds a lens these are smoke counts, not calibration: r4 7.1 bounds the miss rate below 3/n only after n clean catches, so the 138-case labelled set (r4 7.4) is what calibrates a seat.
+The rows stay in shadow, and the misses are what the measurement is for: a lens rubric for the finder and a rule for when a text check reproduces a finding would each be measured on this corpus before either changes a row.
+
+**Proof.**
+`.ci/test-corpus.py` replays the recorded seats of that run, `.ci/fixtures/review/corpus/LENS/NAME/`, through `.ci/fixtures/review/corpus-case.sh` and `claude-recorded.py`, then again against a copy of the runner with each case's control removed; its first case pins the three counts above.
+No case calls a model; a miss, a nit and a false alarm the live run did not give are written into the real finder's envelope.
+The gates-proof rows are `review-corpus-miss` (the approval bypass the verifier cleared, against the GPL dependency it upheld) and `review-corpus-false-alarm` (a warning written onto a clean design case, against its real empty reply).
+`run/corpus.py --record DIR` copies each seat's envelope and the CLI version per case, which is how the recordings were made; a model or CLI change re-runs the corpus live (r4 7.3: "a model or CLI change reruns the labelled set before that seat can block or pass").
+
+## The licence row
+
+`run/licence.py [--policy FILE] [root]` judges the licence of every dependency and vendored file a repository tracks against its `.github/licence-policy.toml`.
+It is report 3.2's "licence allowlist row for npm and uv (new, P3a-RP)", accepted when "a GPL-only dependency into an Apache-2.0 repository is refused".
+Its docstring owns the exit statuses (0 every licence allowed or reviewed, 1 a finding, 2 could not decide, with a typed `undecided (TYPE)` line); a finding is `licence: refused: WHERE: WHY` or `licence: review: WHERE: WHY`.
+
+```toml
+allowed = ["MIT", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause", "ISC", "0BSD"]
+review = ["MPL-2.0", "LGPL-2.1-or-later"]
+refused = ["GPL-2.0-only", "GPL-3.0-only", "GPL-3.0-or-later", "AGPL-3.0-only", "AGPL-3.0-or-later"]
+vendored = ["vendor/**"]                     # files whose own licence is judged
+
+[declared]                                   # a licence the lockfile does not record
+"uv:requests" = "Apache-2.0"                 # npm:NAME, uv:NAME, either @VERSION, or path:GLOB
+"path:vendor/leftpad/**" = "MIT"
+
+[reviewed]                                   # why a licence needing review was accepted
+"npm:some-mpl-lib" = "maintainer decision 2026-10-19: used unmodified"
+```
+
+| Source | Its licence |
+| --- | --- |
+| a tracked `package-lock.json` (none under `node_modules`) | each entry's `license`, the legacy object and list forms included; the project's own entry and workspace links are its code and are skipped; a lockfileVersion 1 records none |
+| a tracked `uv.lock` | none is recorded, so a `[declared]` entry; the editable or virtual project is skipped |
+| a tracked file under a `vendored` glob | its own `SPDX-License-Identifier` in its first 30 lines, else a `[declared]` path entry; a vendored tree's `LICENSE`, `COPYING`, `NOTICE` and `README` files are its notices and are skipped |
+
+A dependency's exact `@VERSION` entry wins over its name, because a licence can change between releases.
+The expression is SPDX: `OR` takes its best alternative and `AND` its worst part, so `MIT OR GPL-3.0-only` is allowed and `MIT AND AGPL-3.0-only` refused; an `X WITH EXCEPTION` pair counts only as listed, since an exception changes the terms.
+An id no list names, an expression that does not parse, and a dependency or file with no licence each need review, never pass: an unknown licence is the case the row exists for.
+Needing review refuses until `[reviewed]` records why it was accepted, and no entry accepts a refused licence; the policy is the one place a reviewed decision lives, so the next change reads it.
+An id in two lists, an unknown key or a malformed table is `bad-policy`.
+
+Left out: `Cargo.lock`, whose licences `cargo deny` already judges (report 3.2); recognising a licence from its text, which a header or a `[declared]` entry states instead; and any registry lookup, which would make the row neither offline nor deterministic.
+The whole tracked tree is judged, not only the change, so a lockfile change also reports an older dependency no policy covers; a caller's first run is where those become `[declared]` or `[reviewed]` entries.
+
+**The row**, in a caller's `.github/gates.toml`, in shadow until the promotion rule in `run/gate.py` lets it block, and scoped to the files it reads:
+
+```toml
+[[gate]]
+id = "licence"
+inputs = ["**/package-lock.json", "**/uv.lock", "vendor/**", ".github/licence-policy.toml"]
+scoped = true
+run = 'python3 "$GATES_DIR/run/licence.py"'
+shadow_since = 2026-10-19
+```
+
+Measured on the licence corpus above: the row refuses 4 of 4 seeded head trees (three refused licences, and the copied file with no licence needing review) and passes 4 of 4 clean ones, where the model review caught 3 of 4.
+`.ci/test-licence.py` runs each rule with its control removed, folds the row above to `shadow` under `run/gate.py` and shows an unrelated change leaves it unselected, and runs the corpus check.
+The gates-proof rows are `licence-refused`, `licence-review` and `licence-vendored`.
+No workflow calls `run/licence.py` or `run/corpus.py`: a step is the maintainer's weekly batch.
 
 ## Using the hooks on a machine
 

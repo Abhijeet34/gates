@@ -1,0 +1,4 @@
+defect = "The button's vertical padding moves 1px off the spacing scale (report 3.2: a 1px .hw-btn padding change)."
+[[seed]]
+path = "styles/button.css"
+lines = [5, 5]
