@@ -154,7 +154,7 @@ shadow_since = 2026-10-19
 
 ## The documentation rows
 
-`run/docs-truth.py owner|commands|budget [root]` answers three rules from the tree alone; its docstring owns the exact scope.
+`run/docs-truth.py owner|commands|budget|emdash [root]` answers four rules from the tree alone; its docstring owns the exact scope.
 Path truth (`run/instruction-truth/path-truth.py`) and the instruction size caps (`run/instruction-truth/size-limit.py`) already exist and are not repeated: this script judges what they skip.
 
 - **`owner`**: every `AGENTS.md` and `CLAUDE.md` is listed in `.github/docs.toml` with a non-empty `owner` and a `reader` of `agents`, `compliance` or `clients` (report 7.3's three readers). Any other Markdown file is judged only when it is listed.
@@ -164,6 +164,13 @@ Path truth (`run/instruction-truth/path-truth.py`) and the instruction size caps
   A command word holding `$`, a glob or `~`, a heredoc body and inline backtick spans are not judged: a span such as `git push` is as often a noun as an instruction.
 - **`budget`**: the root `AGENTS.md` is at most 8,000 bytes. The plan asks for a word budget, but the fleet's instruction budgets are all bytes or lines: a home file under 5,000 bytes (factory plan r5, "Budgets"; enforced by `size-limit.py`), a repository file under 8,000 bytes (the same section and report 7.2, "a root `AGENTS.md` of at most 8,000 bytes") and 200 lines (report 7.2, quoth's target; `size-limit.py`).
   No word figure exists to take, and converting bytes to words would invent one, so the 8,000 is the only new number and it keeps its unit. A nested `AGENTS.md` has no fleet budget and is not judged.
+
+- **`emdash`**: no Markdown file carries an em dash, except a forked file.
+  The rule is "Never use the em dash" in the maintainer's global agent instructions and in the draft skill's hard rule 1.
+  The exemption is recorded in factory plan r5, "Docs and writing, no AI slop" ("em dashes (forked files exempt)").
+  A fork is a file with the `<!-- LOCAL FORK` header that the fork policy (FORKS.md, "What is forked") puts at the top of a forked `SKILL.md`, found in its first 30 lines so that a quotation of the header lower down exempts nothing.
+  The exemption is for the dash only: this rule judges nothing else.
+  Measured on this tree, 2026-10-19: 0 findings.
 
 Read tracking is left out. Report 7.3 counts reads from the event log (`record.read`) and retires a document unread for a quarter, and a gate cannot decide that deterministically:
 
@@ -194,10 +201,16 @@ id = "docs-agents-budget"
 inputs = ["AGENTS.md"]
 run = 'python3 "$GATES_DIR/run/docs-truth.py" budget .'
 shadow_since = 2026-10-19
+
+[[gate]]
+id = "docs-no-em-dash"
+inputs = ["**/*.md"]
+run = 'python3 "$GATES_DIR/run/docs-truth.py" emdash .'
+shadow_since = 2026-10-19
 ```
 
-`.ci/test-docs-truth.py` runs the cases of all three rules and runs these rows through `run/gate.py`, which folds each to `shadow` with a `shadow_since` and refuses without one. No workflow calls the script: a step in `shared-instruction-truth.yml` is the maintainer's to add in the weekly batch.
-`.ci/check.sh` runs `owner` and `commands` on this tree and not `budget`, because this tree's own `AGENTS.md` is over it.
+`.ci/test-docs-truth.py` runs the cases of all four rules and runs these rows through `run/gate.py`, which folds each to `shadow` with a `shadow_since` and refuses without one. No workflow calls the script: a step in `shared-instruction-truth.yml` is the maintainer's to add in the weekly batch.
+`.ci/check.sh` runs `owner`, `commands` and `emdash` on this tree and not `budget`, because this tree's own `AGENTS.md` is over it.
 
 ## The budget monitor
 
@@ -260,8 +273,18 @@ A tree that uses an ecosystem the directory lacks is refused `missing-database`;
 
 The advisory row does not hold the 10-second pre-push budget by itself: it parses the whole 218 MB npm archive on every call, so it is CPU-bound and loses time to any other work running beside it.
 The pre-push hook starts four gates together, so the row is only affordable when the push touches a lockfile.
-`run/gate.py` already selects it that way through `inputs`, and the sample row below lists the lockfile globs for that reason.
+`inputs` alone did not do that: the runner selects every row when a changed path is named by no row, so a change to a source file that no row names still ran the advisory row.
+The row therefore carries `scoped = true` (`run/gate.py`, docstring), which keeps it out of an unnamed path and out of another file under `.github/`, and selects it for a changed lockfile or a change to the registry.
+Measured 2026-10-19 on this machine, with the real osv-scanner 2.6.0 and the 218 MB npm database, three runs each of `gate.py run` over a registry holding this row and a `docs` row (load average 5 to 6.6):
+
+| The change touches | Before (inputs only) | After (`scoped = true`) |
+| --- | --- | --- |
+| no lockfile (`src/app.py`, named by no row) | 6.82 to 7.14 s; the row runs | 0.12 s; the row is not selected |
+| a lockfile | 6.87 to 7.17 s | 6.74 to 7.61 s |
+
+A push that touches a lockfile still pays the whole row, which was 8.4 to 12.5 s under the heavier load above, so scoping removes the row from every other push and does not make a lockfile push fit.
 Whether the hook should call it at all, or whether a smaller database (one ecosystem, or the advisories for packages in the lockfile) should be built at refresh time, is the maintainer's to decide; the figures are the input.
+No base and no change still select a scoped row, because nothing is proved unaffected then, so a hook that calls the runner must pass a real base.
 
 **Against the custom workflow rules.**
 `.ci/test-workflow-policy.sh` bans eight shapes by `grep`.
@@ -308,6 +331,7 @@ shadow_since = 2026-10-19
 [[gate]]
 id = "advisories-osv"
 inputs = ["**/*lock.json", "**/*lock.yaml", "**/*.lock", "**/go.mod", "**/requirements*.txt"]
+scoped = true
 tools = { osv = "osv-scanner --version", database = 'python3 "$GATES_DIR/run/tool-gates.py" osv-stamp' }
 run = 'python3 "$GATES_DIR/run/tool-gates.py" osv .'
 shadow_since = 2026-10-19
@@ -325,6 +349,59 @@ OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY=$HOME/.cache/osv-db python3 .ci/test-tool-g
 
 Installing the pinned tools in the `shell` job and adding `--real` to `check_shell` is a workflow edit, so it waits for the maintainer's weekly batch.
 No workflow calls `run/tool-gates.py` either.
+
+## The text rows
+
+`run/pr-text.py` scans a pull request's title and body: `gh pr view N --json title,body | python3 run/pr-text.py`. Its docstring owns the rules and the exit statuses (0 clean, 1 a finding, 2 could not decide).
+Each finding is one line, `pr-text: body:3: em-dash: "..."`, with the line of the title or body.
+
+| Rule | What it refuses | Where the rule is written |
+| --- | --- | --- |
+| `em-dash` | U+2014 | "Never use the em dash" in the maintainer's global agent instructions; the draft skill's hard rule 1; VOICE.md, "What to avoid" |
+| `slop-phrase` | 14 phrase patterns, among them "delve", "seamless", "game-changing", "at the end of the day", "in conclusion", "best-in-class" | the draft skill's hard rule 4; VOICE.md, "What to avoid" |
+| `attribution` | a `Generated with` or `Co-authored-by` line naming an agent | the commit-msg hook in `system-maintenance/git-hooks`, whose vendor list it copies; a pull request body can become the squash commit's message |
+| `home-path` | `/Users/<name>` or `/home/<name>`, except `runner`, `Shared` and the placeholders `user`, `username`, `name`, `you`, `me` and `example` | the exposure gate, which refuses this machine's own home path on a push but reads no pull request text |
+| `security-marker` | a count of alerts, advisories, vulnerabilities, findings or CVEs with a security source (the shape `exposure-scan.py` refuses), a Dependabot, code-scanning or secret-scanning alert by number, a GHSA id, a CVE id | `exposure-scan.py`, `content.vulnerability-count`; the pull request line stays neutral about what a finding was |
+
+The factory plan counts 14 slop classes ("Docs and writing, no AI slop") and none of the records read for this change lists them, so the slop rule is the phrases the two written voice rules name, and not a list invented here.
+The plan's own bar for a deterministic rule excludes soft phrases, so "leverage" as a verb, "robust" as filler and empty intensifiers are left to review: `.ci/test-pr-text.py` pins a body that uses the first two as clean.
+Hidden characters are left out because `watermark-scan.py` already owns them for files, and a pull request body is the one place it does not read; adding that is a separate row.
+
+The text is not in the tree, so the runner's cache key would reuse a pass after the body changed.
+The row names the text as a tool probe, whose output enters the key, and `.ci/test-pr-text.py` shows a pass followed by a fresh fail on one tree when only the text changed:
+
+```toml
+[[gate]]
+id = "pr-text"
+inputs = ["**"]
+tools = { pull-request = 'gh pr view "$PR_NUMBER" --json title,body' }
+run = 'gh pr view "$PR_NUMBER" --json title,body | python3 "$GATES_DIR/run/pr-text.py"'
+shadow_since = 2026-10-19
+```
+
+Five registry rows (`pr-text-slop`, `pr-text-em-dash`, `pr-text-attribution`, `pr-text-home-path`, `pr-text-security-marker`) prove the script by execution, one per rule class, under the surface "Pull request text" and not "Security", so that adding them does not widen what `run/permissions-diff.py` protects.
+No workflow runs the script: fetching the text needs a step with `pull-requests: read`, which is the maintainer's weekly batch.
+
+## The scratch rows
+
+`run/scratch-guard.py [--tree-only] [--root DIR] -- COMMAND` runs a gate or a suite with `TMPDIR` set to a directory of its own, removes that directory afterwards, and refuses (exit 1) when a path is new under the tree or directly under the system temporary directory.
+A run that cleans up writes only to `TMPDIR`, so that is the one place it may leave files; `.ci/test-scratch-guard.py` pins that a file in `TMPDIR` passes and a stray one beside it does not.
+Build output and caches (`.git`, `node_modules`, `target`, `.venv`, `__pycache__`) are not walked, and only a new path counts, not a changed or removed one.
+A shared `/tmp` has other writers, so a machine that is not a job's own passes `--tree-only`; the guard's cost on this tree is 0.05 s.
+
+```toml
+[[gate]]
+id = "scratch-clean"
+inputs = ["**"]
+run = 'python3 "$GATES_DIR/run/scratch-guard.py" --tree-only -- bash .ci/check.sh shell'
+shadow_since = 2026-10-19
+```
+
+Two registry rows (`scratch-guard-tree`, `scratch-guard-temp`) prove it.
+It also found a defect while being built: five of the seven Python suites run under `.ci/check.sh shell` made a fixture directory with `tempfile.mkdtemp()` and never removed it, so each run left one entry in `TMPDIR` (measured 2026-10-19 with a private `TMPDIR`: `test-docs-truth`, `test-tool-gates`, `test-permissions-diff`, and the two suites of this change).
+They now remove it, and the same measurement reads 0 for all seven.
+The shell suites were not measured: `.ci/check.sh shell` takes about four minutes.
+Under the guard such a leftover lands in the guard's own directory and is removed with it, so the guard names a write outside `TMPDIR` and does not name a suite that forgot to clean up inside it.
 
 ## Using the hooks on a machine
 

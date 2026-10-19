@@ -662,6 +662,136 @@ printf '#!/bin/sh\n[ "$1" = --version ] && { echo "zizmor 1.29.0"; exit 0; }\nex
 run = 'py=$(command -v python3); PATH="$PWD/bin" "$py" "$GATE" zizmor .'
 finding = "tool-gates: refused (missing-tool)"
 
+# A row that takes a verdict only from its inputs and its own definition (`scoped`) stays
+# out of a change to a path no row names, so the slow advisory row runs on a lockfile
+# change and on nothing else; README.md, "The tool rows".
+[[gate]]
+id = "gate-runner-scoped"
+surface = "Gate runner"
+gates = ["run/gate.py"]
+test = ".ci/test-gate-runner.py"
+suite = "shell"
+command = "run/gate.py"
+red = '''
+git init -q -b main && mkdir -p .github docs
+printf '[[gate]]\nid = "docs"\ninputs = ["docs/**"]\nrun = "true"\n\n[[gate]]\nid = "advisories"\ninputs = ["**/package-lock.json"]\nscoped = true\nrun = "true"\n' > .github/gates.toml
+echo '# d' > docs/a.md && echo '{}' > package-lock.json && git add -A && git commit -qm base && git tag base
+echo '{"a": 1}' > package-lock.json && git commit -qam lock
+mkdir store && printf '{"gate": "docs", "head": "%s", "verdict": "pass"}\n' "$(git rev-parse HEAD)" > store/records.jsonl
+'''
+clean = '''
+git init -q -b main && mkdir -p .github docs
+printf '[[gate]]\nid = "docs"\ninputs = ["docs/**"]\nrun = "true"\n\n[[gate]]\nid = "advisories"\ninputs = ["**/package-lock.json"]\nscoped = true\nrun = "true"\n' > .github/gates.toml
+echo '# d' > docs/a.md && echo '{}' > package-lock.json && git add -A && git commit -qm base && git tag base
+echo 'a note named by no row' > notes.txt && git add -A && git commit -qm note
+mkdir store && printf '{"gate": "docs", "head": "%s", "verdict": "pass"}\n' "$(git rev-parse HEAD)" > store/records.jsonl
+'''
+run = 'python3 "$GATE" fold --base base --store store'
+finding = "FAIL advisories: no verdict for this head"
+
+# The pull request's title and body, one rule class per row over one script;
+# README.md, "The text rows". The text arrives as JSON on stdin, as `gh pr view --json title,body` prints it.
+[[gate]]
+id = "pr-text-slop"
+surface = "Pull request text"
+gates = ["run/pr-text.py"]
+test = ".ci/test-pr-text.py"
+suite = "shell"
+command = "run/pr-text.py"
+red = '''printf '{"title": "Add a cache", "body": "This lets us delve into the cache."}' > pr.json'''
+clean = '''printf '{"title": "Add a cache", "body": "We leverage the cache and keep it robust."}' > pr.json'''
+run = 'python3 "$GATE" < pr.json'
+finding = 'pr-text: body:1: slop-phrase: "delve"'
+
+[[gate]]
+id = "pr-text-em-dash"
+surface = "Pull request text"
+gates = ["run/pr-text.py"]
+test = ".ci/test-pr-text.py"
+suite = "shell"
+command = "run/pr-text.py"
+# The dash is written as bytes so this file carries none.
+red = '''printf '{"title": "Add a cache \xe2\x80\x94 quickly", "body": ""}' > pr.json'''
+clean = '''printf '{"title": "Add a cache - quickly", "body": ""}' > pr.json'''
+run = 'python3 "$GATE" < pr.json'
+finding = "pr-text: title:1: em-dash"
+
+[[gate]]
+id = "pr-text-attribution"
+surface = "Pull request text"
+gates = ["run/pr-text.py"]
+test = ".ci/test-pr-text.py"
+suite = "shell"
+command = "run/pr-text.py"
+red = '''printf '{"title": "Add a cache", "body": "Generated with [Claude Code](https://example.invalid)"}' > pr.json'''
+clean = '''printf '{"title": "Add a cache", "body": "Generated with make from the schema."}' > pr.json'''
+run = 'python3 "$GATE" < pr.json'
+finding = "pr-text: body:1: attribution"
+
+[[gate]]
+id = "pr-text-home-path"
+surface = "Pull request text"
+gates = ["run/pr-text.py"]
+test = ".ci/test-pr-text.py"
+suite = "shell"
+command = "run/pr-text.py"
+red = '''printf '{"title": "Add a cache", "body": "Ran it from /Users/jane/work."}' > pr.json'''
+clean = '''printf '{"title": "Add a cache", "body": "Ran it from /home/runner/work."}' > pr.json'''
+run = 'python3 "$GATE" < pr.json'
+finding = 'pr-text: body:1: home-path: "/Users/jane"'
+
+[[gate]]
+id = "pr-text-security-marker"
+surface = "Pull request text"
+gates = ["run/pr-text.py"]
+test = ".ci/test-pr-text.py"
+suite = "shell"
+command = "run/pr-text.py"
+# The count is a variable because the exposure gate refuses one written in tracked text.
+red = '''n=3 && printf '{"title": "Add a cache", "body": "Closes %s Dependabot alerts."}' "$n" > pr.json'''
+clean = '''printf '{"title": "Add a cache", "body": "Fail past 5 open alerts of any kind."}' > pr.json'''
+run = 'python3 "$GATE" < pr.json'
+finding = "pr-text: body:1: security-marker"
+
+# The fork exemption: the same line passes under the header the fork policy puts on a forked file.
+[[gate]]
+id = "docs-em-dash"
+surface = "Documentation"
+gates = ["run/docs-truth.py"]
+test = ".ci/test-docs-truth.py"
+suite = "shell"
+command = "run/docs-truth.py"
+red = '''printf 'a \xe2\x80\x94 b\n' > README.md'''
+clean = '''printf '<!-- LOCAL FORK of an upstream skill -->\na \xe2\x80\x94 b\n' > README.md'''
+run = 'python3 "$GATE" emdash .'
+finding = "README.md:1: carries an em dash"
+
+# A suite run's own temporary directory is the one place it may write; README.md, "The scratch rows".
+[[gate]]
+id = "scratch-guard-tree"
+surface = "Clean up"
+gates = ["run/scratch-guard.py"]
+test = ".ci/test-scratch-guard.py"
+suite = "shell"
+command = "run/scratch-guard.py"
+red = '''echo 'echo x > leak.txt' > cmd.sh'''
+clean = '''echo 'echo x > "$TMPDIR/ok"' > cmd.sh'''
+run = 'python3 "$GATE" --tree-only -- sh cmd.sh'
+finding = "scratch-guard: left behind: leak.txt (tree)"
+
+# TMPDIR is a private directory, so a stray entry in it is the command's and nobody else's.
+[[gate]]
+id = "scratch-guard-temp"
+surface = "Clean up"
+gates = ["run/scratch-guard.py"]
+test = ".ci/test-scratch-guard.py"
+suite = "shell"
+command = "run/scratch-guard.py"
+red = '''mkdir tree tmpd && echo 'echo x > "$1/stray"' > cmd.sh'''
+clean = '''mkdir tree tmpd && echo 'echo x > "$TMPDIR/stray"' > cmd.sh'''
+run = 'TMPDIR="$PWD/tmpd" python3 "$GATE" --root tree -- sh "$PWD/cmd.sh" "$PWD/tmpd"'
+finding = "scratch-guard: left behind: stray (temp)"
+
 [[gate]]
 id = "gates-proof"
 surface = "Gate of the gates"
