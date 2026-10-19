@@ -1105,6 +1105,41 @@ clean = '''mkdir .github && printf '[[fake]]\nid = "gh"\npaths = ["tests/**"]\nn
 run = 'python3 "$GATE" stale --today 2026-10-19 .'
 finding = "fakes: stale: gh: recorded 2026-10-01, 18 days ago, past its 7-day freshness"
 
+# A recorded GitHub reply against a fresh one, from the loopback server in place of
+# api.github.com: values may move, shape may not.
+[[gate]]
+id = "fakes-compare"
+surface = "Test quality"
+gates = ["run/fakes.py"]
+test = ".ci/test-fakes.py"
+suite = "shell"
+command = "run/fakes.py"
+red = '''
+mkdir -p .github tests/fixtures && printf '[[fake]]\nid = "gh"\npaths = ["tests/**"]\nnames = ["gh"]\nstands_for = "the GitHub REST API, through gh"\nreal = "sync.sh"\ncompare = "fakes.py compare --id gh"\nrecorded = 2026-10-15\n\n[[fake.github]]\nrequest = "/repos/o/r"\nrecording = "tests/fixtures/repo.json"\n' > .github/fakes.toml
+echo '{"id": 1, "full_name": "o/r", "description": null}' > tests/fixtures/repo.json
+echo '{"/repos/o/r": {"body": {"id": 2, "description": "GitHub stopped sending full_name"}}}' > replies.json
+'''
+clean = '''
+mkdir -p .github tests/fixtures && printf '[[fake]]\nid = "gh"\npaths = ["tests/**"]\nnames = ["gh"]\nstands_for = "the GitHub REST API, through gh"\nreal = "sync.sh"\ncompare = "fakes.py compare --id gh"\nrecorded = 2026-10-15\n\n[[fake.github]]\nrequest = "/repos/o/r"\nrecording = "tests/fixtures/repo.json"\n' > .github/fakes.toml
+echo '{"id": 1, "full_name": "o/r", "description": null}' > tests/fixtures/repo.json
+echo '{"/repos/o/r": {"body": {"id": 2, "full_name": "o/renamed", "description": "new values, one shape"}}}' > replies.json
+'''
+run = '''python3 "$ROOT/.ci/fixtures/gh-recorded-server.py" replies.json -- sh -c 'exec python3 "$GATE" compare --api "$GH_RECORDED_API" .''''
+finding = "fakes: compare: gh: tests/fixtures/repo.json (GET /repos/o/r): removed .full_name (string)"
+
+# A drift the last compare wrote refuses a fake still inside its freshness.
+[[gate]]
+id = "fakes-stale-drift"
+surface = "Test quality"
+gates = ["run/fakes.py"]
+test = ".ci/test-fakes.py"
+suite = "shell"
+command = "run/fakes.py"
+red = '''mkdir .github && printf '[[fake]]\nid = "gh"\npaths = ["tests/**"]\nnames = ["gh"]\nstands_for = "the GitHub REST API, through gh"\nreal = "sync.sh"\nreal_name = "gh"\ncompare = "tests/compare-gh.sh"\nrecorded = %s\n' 2026-10-15 > .github/fakes.toml && echo 'drift = "2026-10-18: tests/fixtures/repo.json (GET /repos/o/r): removed .full_name (string)"' >> .github/fakes.toml'''
+clean = '''mkdir .github && printf '[[fake]]\nid = "gh"\npaths = ["tests/**"]\nnames = ["gh"]\nstands_for = "the GitHub REST API, through gh"\nreal = "sync.sh"\nreal_name = "gh"\ncompare = "tests/compare-gh.sh"\nrecorded = %s\n' 2026-10-15 > .github/fakes.toml'''
+run = 'python3 "$GATE" stale --today 2026-10-19 .'
+finding = "fakes: stale: gh: its last compare found drift (2026-10-18: tests/fixtures/repo.json (GET /repos/o/r): removed .full_name (string))"
+
 # Mutation proof on a change; README.md, "The mutation rows". The fixtures are a
 # real crate and package, but the tool is .ci/fixtures/mutation/stub-tool.py,
 # because the gates-proof job installs neither cargo-mutants nor Stryker;
