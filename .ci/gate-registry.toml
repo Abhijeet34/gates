@@ -1287,6 +1287,91 @@ cp "$ROOT/.ci/fixtures/review/replies/adjudicator-clears.json" repo/.stub/replie
 run = 'cd repo && PATH="$PWD/.stub:$PATH" python3 "$GATE" --gate code-review --base base --author claude-sonnet-5-5 --store ../store'
 finding = "review: veto: F1 by the finder on claude-opus-5-5, upheld by the adjudicator F1 on claude-opus-5-5"
 
+# The seeded corpus, replayed from the live run's real replies: red, the approval
+# bypass the finder reported and the verifier cleared, a miss; clean, the GPL
+# dependency the verifier upheld.
+[[gate]]
+id = "review-corpus-miss"
+surface = "Code review"
+gates = ["run/corpus.py"]
+test = ".ci/test-corpus.py"
+suite = "shell"
+command = "run/corpus.py"
+red = '''bash "$ROOT/.ci/fixtures/review/corpus-case.sh" release sign-unapproved'''
+clean = '''bash "$ROOT/.ci/fixtures/review/corpus-case.sh" licence gpl-dependency'''
+run = 'PATH="$PWD/.stub:$PATH" CLAUDE_RECORDED_REPLIES="$PWD/replies" python3 "$GATE" --corpus "$ROOT/corpus/$(cat lens)" --case "$(cat case)" --store store'
+finding = "corpus: release/sign-unapproved: missed: no verified blocking finding at release/sign.sh:10-13"
+
+# A clean design case flagged: red, a warning written into the real finder's envelope;
+# clean, its real reply, which found nothing.
+[[gate]]
+id = "review-corpus-false-alarm"
+surface = "Code review"
+gates = ["run/corpus.py"]
+test = ".ci/test-corpus.py"
+suite = "shell"
+command = "run/corpus.py"
+red = '''bash "$ROOT/.ci/fixtures/review/corpus-case.sh" design colour-token '{"findings": [{"severity": "warning", "path": "styles/button.css", "line": 19, "quote": "", "claim": "a planted false alarm"}]}''''
+clean = '''bash "$ROOT/.ci/fixtures/review/corpus-case.sh" design colour-token'''
+run = 'PATH="$PWD/.stub:$PATH" CLAUDE_RECORDED_REPLIES="$PWD/replies" python3 "$GATE" --corpus "$ROOT/corpus/$(cat lens)" --case "$(cat case)" --store store'
+finding = "corpus: design/colour-token: flagged: F1 warning styles/button.css:19: a planted false alarm"
+
+# The licence policy row on a tracked tree: a refused licence, one needing review
+# that no [reviewed] entry records, and a vendored file naming no licence.
+[[gate]]
+id = "licence-refused"
+surface = "Dependencies"
+gates = ["run/licence.py"]
+test = ".ci/test-licence.py"
+suite = "shell"
+command = "run/licence.py"
+red = '''
+git init -q && mkdir .github && printf 'allowed = ["MIT"]\nrefused = ["GPL-3.0-only"]\n' > .github/licence-policy.toml
+echo '{"lockfileVersion": 3, "packages": {"node_modules/gpl": {"version": "1.0.0", "license": "GPL-3.0-only"}}}' > package-lock.json && git add -A
+'''
+clean = '''
+git init -q && mkdir .github && printf 'allowed = ["MIT"]\nrefused = ["GPL-3.0-only"]\n' > .github/licence-policy.toml
+echo '{"lockfileVersion": 3, "packages": {"node_modules/gpl": {"version": "1.0.0", "license": "MIT"}}}' > package-lock.json && git add -A
+'''
+run = 'python3 "$GATE" .'
+finding = "licence: refused: package-lock.json: npm:gpl 1.0.0: GPL-3.0-only is refused"
+
+[[gate]]
+id = "licence-review"
+surface = "Dependencies"
+gates = ["run/licence.py"]
+test = ".ci/test-licence.py"
+suite = "shell"
+command = "run/licence.py"
+red = '''
+git init -q && mkdir .github && printf 'allowed = ["MIT"]\nreview = ["MPL-2.0"]\n' > .github/licence-policy.toml
+echo '{"lockfileVersion": 3, "packages": {"node_modules/mpl": {"version": "1.0.0", "license": "MPL-2.0"}}}' > package-lock.json && git add -A
+'''
+clean = '''
+git init -q && mkdir .github && printf 'allowed = ["MIT"]\nreview = ["MPL-2.0"]\n[reviewed]\n"npm:mpl" = "decided in review"\n' > .github/licence-policy.toml
+echo '{"lockfileVersion": 3, "packages": {"node_modules/mpl": {"version": "1.0.0", "license": "MPL-2.0"}}}' > package-lock.json && git add -A
+'''
+run = 'python3 "$GATE" .'
+finding = "licence: review: package-lock.json: npm:mpl 1.0.0: MPL-2.0 needs review; record why it is accepted under [reviewed]"
+
+[[gate]]
+id = "licence-vendored"
+surface = "Dependencies"
+gates = ["run/licence.py"]
+test = ".ci/test-licence.py"
+suite = "shell"
+command = "run/licence.py"
+red = '''
+git init -q && mkdir .github vendor && printf 'allowed = ["MIT"]\nvendored = ["vendor/**"]\n' > .github/licence-policy.toml
+echo 'module.exports = 1;' > vendor/pad.js && git add -A
+'''
+clean = '''
+git init -q && mkdir .github vendor && printf 'allowed = ["MIT"]\nvendored = ["vendor/**"]\n' > .github/licence-policy.toml
+printf '// SPDX-License-Identifier: MIT\nmodule.exports = 1;\n' > vendor/pad.js && git add -A
+'''
+run = 'python3 "$GATE" .'
+finding = "licence: review: vendor/pad.js: vendored: no SPDX-License-Identifier in its first 30 lines and no [declared] path"
+
 [[gate]]
 id = "gates-proof"
 surface = "Gate of the gates"

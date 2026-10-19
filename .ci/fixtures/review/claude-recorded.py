@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Stand-in for the `claude` CLI that answers run/review.py from recorded replies.
 
-Installed as `claude` beside a `replies/` directory (build.sh --replies):
+Installed as `claude` beside a `replies/` directory (build.sh --replies), or
+answering from $CLAUDE_RECORDED_REPLIES/$GATES_CORPUS_CASE when both are set, as
+run/corpus.py names each case of a seeded corpus:
 
   claude --version              replies/version.txt
   claude auth status --json     replies/auth.json, else a subscription login
@@ -22,6 +24,10 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 REPLIES = HERE / "replies"
+if os.environ.get("CLAUDE_RECORDED_REPLIES") and os.environ.get("GATES_CORPUS_CASE"):
+    REPLIES = Path(
+        os.environ["CLAUDE_RECORDED_REPLIES"], os.environ["GATES_CORPUS_CASE"]
+    )
 WATCHED = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "GH_TOKEN", "GITHUB_TOKEN")
 SUBSCRIPTION = {
     "loggedIn": True,

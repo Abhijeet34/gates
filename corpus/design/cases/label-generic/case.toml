@@ -1,0 +1,4 @@
+defect = "The form's action is relabelled a generic Submit, which names no outcome (report 3.2: a Submit label)."
+[[seed]]
+path = "components/settings-form.html"
+lines = [8, 8]

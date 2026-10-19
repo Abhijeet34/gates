@@ -1,0 +1,7 @@
+# The design lens's seeded corpus; README.md, "The seeded corpus", owns the shape.
+# Design findings are fixed, never parked (report 3.5), so a finding at the seed catches.
+lens = "design"
+catch = "flags"
+author = "claude-opus-5-5"
+reviewers = ["claude-sonnet-5-5", "claude-opus-5-5"]
+budget = { finder_seconds = 180 }

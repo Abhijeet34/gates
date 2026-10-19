@@ -1,0 +1,6 @@
+# The release lens's seeded corpus; README.md, "The seeded corpus", owns the shape.
+# A release finding holds the release until approved (report 3.5), so only a verified block catches.
+lens = "release"
+catch = "blocks"
+author = "claude-opus-5-5"
+reviewers = ["claude-sonnet-5-5", "claude-opus-5-5"]

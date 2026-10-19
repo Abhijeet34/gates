@@ -1,0 +1,4 @@
+defect = "SIGN_SKIP_APPROVAL=1 signs an artefact no approved release task built (report 3.2: an artefact not from an approved release task is refused)."
+[[seed]]
+path = "release/sign.sh"
+lines = [10, 13]

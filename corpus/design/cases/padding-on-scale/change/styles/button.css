@@ -1,0 +1,24 @@
+.hw-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  border: 0;
+  border-radius: var(--radius);
+  font: inherit;
+  cursor: pointer;
+}
+
+.hw-btn:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+.hw-btn--primary {
+  background: var(--color-accent);
+  color: var(--color-on-accent);
+}
+
+.hw-btn--icon {
+  padding: var(--space-1);
+}

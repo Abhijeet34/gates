@@ -1,0 +1,4 @@
+defect = "Code copied from an MIT package comes in without the copyright and licence notice that licence requires."
+[[seed]]
+path = "vendor/slugify.js"
+lines = [1, 1]

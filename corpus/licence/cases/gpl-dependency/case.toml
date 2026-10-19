@@ -1,0 +1,13 @@
+defect = "A GPL-3.0-only dependency comes into an Apache-2.0 project (report 3.2: a GPL-only dependency into an Apache-2.0 repository)."
+[[seed]]
+path = "package.json"
+lines = [9, 9]
+[[seed]]
+path = "package-lock.json"
+lines = [13, 13]
+[[seed]]
+path = "package-lock.json"
+lines = [28, 32]
+[[seed]]
+path = "src/index.js"
+lines = [5, 5]

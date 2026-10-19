@@ -1,0 +1,1 @@
+clean = "The publish refuses a tag that is not the package version; the dry run still stops it."
