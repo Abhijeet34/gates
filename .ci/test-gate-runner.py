@@ -480,6 +480,27 @@ def errored_doc_refuses(runner):
     return None
 
 
+def review_keys_only_on_review_rows(runner):
+    f = Fixture(runner)
+    keys = 'lens = "code"\nreviewers = ["claude-sonnet-5-5"]\nbudget = { finder_seconds = 60 }\n'
+    f.commit(
+        {
+            ".github/gates.toml": REVIEWED.replace(
+                'kind = "review"\n', 'kind = "review"\n' + keys
+            )
+        }
+    )
+    rc, out = f.gate("select", "--base", f.base)
+    if rc != 0:
+        return f"a review row with lens, reviewers and budget was refused (exit {rc}): {out.strip()}"
+    check = REVIEWED.replace('"$RUNS/rust"\'\n', '"$RUNS/rust"\'\nlens = "code"\n')
+    f.commit({".github/gates.toml": check})
+    rc, out = f.gate("select", "--base", f.base)
+    if rc != 2 or "gate 'rust': unknown key 'lens'" not in out:
+        return f"a check row carrying lens was not refused (exit {rc}): {out.strip()}"
+    return None
+
+
 # (case, control it proves, text in run/gate.py, the text with the control removed)
 CASES = [
     (
@@ -577,6 +598,12 @@ CASES = [
         "only a pass record passing",
         'if verdict == "pass":',
         'if verdict in ("pass", "error"):',
+    ),
+    (
+        review_keys_only_on_review_rows,
+        "the review keys being a review row's alone",
+        '(REVIEW_KEYS if row.get("kind") == "review" else set())',
+        "REVIEW_KEYS",
     ),
     (
         scoped_row_ignores_unrelated_paths,

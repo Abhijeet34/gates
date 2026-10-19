@@ -22,6 +22,7 @@ Licensed under the Apache License 2.0; see `LICENSE` and `NOTICE`.
 | `run/slop-rules.py` | The shadow slop rows (source-text assertions, symbol truth and the deterministic UI rules of STANDARDS) over a change; see "The slop rows". |
 | `run/fakes.py` | The fake rows: test doubles a caller's `.github/fakes.toml` does not declare, declared fakes with no real counterpart, fakes past their freshness or drifted, and the GitHub record-and-compare and daily real smoke; see "The fake rows". |
 | `run/mutation.py` | The mutation rows: a mutant of a change's lines that no test kills, with a full run when the change deletes or weakens a test; see "The mutation rows". |
+| `run/review.py` | The review rows: a finder session on a model other than the author's, then a verifier pass that must reproduce each blocking finding before it blocks, each seat within its token and time budget; see "The review rows". |
 | `run/budget-monitor.py` | The gate budget monitor: prints each budgeted step's weekly p50/p95, the alarm and the fix task text; see "The budget monitor". |
 | `bin/gates.py`, `bin/rollout.toml` | `gates bump` and `gates rollback`, which move callers' locks; see "Bumping". |
 | `.ci/` | The contract test for each gate script, the gitleaks rule and allowlist suites, and `check.sh`, which runs all of them. |
@@ -882,6 +883,73 @@ python3 .ci/test-mutation.py --real
 **Not in CI.**
 Running `--real` in CI needs a workflow edit, which waits for the maintainer's weekly batch: in `ci.yml`'s `shell` job, a pinned `actions/setup-node` step for Node 22 and a step that downloads the cargo-mutants 27.1.0 Linux tarball and checks the sha256 above, then `python3 .ci/test-mutation.py --real` in `check_shell` in the same change.
 No workflow calls `run/mutation.py`.
+
+## The review rows
+
+`run/review.py --gate ID --base B --author MODEL --store DIR` runs one `kind = "review"` row of a caller's `.github/gates.toml` and appends its verdict to the store `run/gate.py fold` reads, so an absent or `error` review never folds to a pass.
+It is the first slice of the factory plan's review pipeline row (r5, "P3a-RP"): review rows with the reviewer-independence rule and budgets, and the verifier pass.
+The Haiku router, the veto rule and dissent fields, the seeded corpus and the licence row are later slices.
+Its docstring owns the exit statuses (0 pass, 1 a verified blocking finding, 2 could not decide); each finding prints as one line, `review: F1 error FILE:LINE: CLAIM: verified, blocks`, `does not block` or `downgraded: WHY`.
+
+```toml
+[[gate]]
+id = "code-review"
+kind = "review"
+inputs = ["**"]
+lens = "code"
+reviewers = ["claude-sonnet-5-5", "claude-opus-5-5"]
+shadow_since = 2026-10-19
+```
+
+`lens`, `reviewers` and `budget` are accepted on a review row only; `run/gate.py` refuses them on any other row as unknown keys.
+
+**Independence.**
+The finder is the first of `reviewers` that differs from `--author`, and the verifier the first that differs from the finder, preferring one that differs from the author too.
+The list above gives the plan's pairing: Sonnet reviews Opus and Fable work, Opus reviews Sonnet work, and the verifier sits on "the other model" (r5, "The council").
+
+- Context is enforced, not graded. Each seat is a fresh `claude -p` with `--no-session-persistence`, `--tools ""`, `--strict-mcp-config`, `--setting-sources ""` and the review's own `--system-prompt`, run in an empty directory, so no instruction file, hook or saved session reaches it.
+  Measured 2026-10-19 with CLI 2.1.302: a five-word prompt run that way costs 613 input tokens, so nothing else was loaded.
+- The finder reads the change and the check records of the head; the change is the paths the row's inputs match plus the paths no row claims, as selection reads them.
+  The verifier reads the change, the check records, one finding and the output of its reproducing command (r4 7.3: "given only the diff, the finding and the check results").
+  Neither sees a transcript, and the verifier never sees the finder's reply or its other findings.
+- Model is a label recorded per seat: `cross-model` when the model ids differ, `context-only` when they match or the author is `unknown`, never silently as if independent (r5, "Who reviews whom").
+  With one vendor, `cross-model` is still one family, whose judges share errors (r4 7.1: judge scores correlate with error similarity at about r 0.84), so no label claims family independence; a second vendor's seat would add one.
+- A seat answered by a model other than the one it asked, per the reply's `modelUsage`, is an `error`, because a fallback model would make its label false.
+
+**Budgets.**
+Per seat: 60,000 input and 4,000 output tokens, read from the CLI's reported usage with cache reads and writes counted as input (r4 7.1 and 7.3 price a review at "60k-in, 4k-out").
+Wall time: 300 s for the finder (r5: "5 minutes on the Mac runner") and 240 s for the whole verifier pass, reproductions included (r5: "2 to 4 minutes more only on convened changes", at its top).
+A row's `budget` table may override any of `input_tokens`, `output_tokens`, `finder_seconds` and `verifier_seconds`, as the design lens's 3 minutes will; a breach or a timeout is an `error`, never a pass.
+Measured 2026-10-19 through the real CLI on the fixture's floor-division change: the finder used 1,086 input and 423 output tokens, the verifier 1,136 and 267, and the whole review took 13.7 s.
+Output tokens include thinking, so the 4,000 is the figure to watch once a large change reaches a seat.
+
+**The verifier pass.**
+Only an `error` finding can block (report 3.1: a review blocks only on an error-class finding), and it blocks only when all three steps hold:
+
+1. its `quote` equals line `line` of `path` at the head, both trimmed;
+2. its `reproduce` command, run as `bash -e` at the root of a fresh `git archive` of the head, with every credential-named variable removed and an empty `HOME`, exits non-zero and not 126 or 127;
+3. a verifier session answers `"reproduced": true` to the finding and that output.
+
+A finding that fails a step stays in the record with `blocks: false` and a `downgraded` reason naming the step, and is printed; it is never dropped.
+A step that cannot decide within the pass's budget makes the review an `error`.
+Running the command at the base too was rejected: a defect in a new file fails there as well, so the rule would downgrade every real finding in new code.
+The command runs the change's code with the runner's privileges, as the change's own tests do; the scrubbed environment and the empty `HOME` keep it off the machine's GitHub and model logins.
+
+**The harness.**
+Models are called only through `claude -p`, and only after `claude auth status` reports `claude.ai` or `oauth_token` on `firstParty`, so an API key login is refused before any seat sits.
+Every seat's environment drops credential-named variables except `CLAUDE_CODE_OAUTH_TOKEN`.
+Claude Managed Code Review and Ultrareview are never called (r4 5 rejects both as gates: the first "never approves or blocks", the second bills usage credits and posts a note crediting the tool).
+
+**The record.**
+The verdict record carries `review`: the lens, the author, the CLI version, each seat's model, independence, token use, duration and reply log, and each finding with its quote, reproducing command, exit status and verdict.
+
+**Proof.**
+`.ci/test-review.py` runs each case through `.ci/fixtures/review/claude-recorded.py`, installed as `claude` first on `PATH`, then again against a copy of the script with that case's control removed.
+No case calls a model.
+`replies/reproduced` holds the real finder and verifier replies captured 2026-10-19 on the floor fixture.
+`replies/unreproduced` is the real envelope from the guard fixture, where the real finder found nothing, with a false alarm written into `result`, because a model's false alarm cannot be captured on demand.
+The gates-proof rows are `review-verifier` (reproduced and refused, against unreproduced and downgraded), `review-budget` and `review-harness`.
+No workflow calls `run/review.py`; wiring it beside the runner waits for the maintainer's weekly batch.
 
 ## Using the hooks on a machine
 

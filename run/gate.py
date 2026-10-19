@@ -22,6 +22,8 @@ The registry is `.github/gates.toml` in the tree under test, read at H, one
 A `review` or `docs` row has no `run`: the review pipeline appends its verdict
 to DIR/records.jsonl in the same record shape, `run` skips it, and the fold
 reads it like any other, so an absent or `error` review never folds to pass.
+A review row may also carry `lens`, `reviewers` and `budget`, which run/review.py
+reads and judges; on any other row they are unknown keys.
 
 Selection maps `git diff --name-only B...H` through each gate's inputs, and
 selects every gate when a changed path is named by no gate, is the registry or
@@ -68,6 +70,7 @@ from pathlib import Path
 
 REGISTRY = ".github/gates.toml"
 ROW_KEYS = {"id", "inputs", "run", "tools", "blocks", "kind", "shadow_since", "scoped"}
+REVIEW_KEYS = {"lens", "reviewers", "budget"}
 KINDS = {"check", "review", "docs"}
 VERDICTS = {"pass", "fail", "error"}
 EVENTS = {"false-alarm", "proof-failed"}
@@ -126,7 +129,8 @@ def load(head):
         gid = row.get("id")
         # An unknown key is refused because a misspelt `tools` would drop the
         # probes from the key and reuse a verdict across a tool bump.
-        problems = [f"unknown key {k!r}" for k in sorted(set(row) - ROW_KEYS)]
+        known = ROW_KEYS | (REVIEW_KEYS if row.get("kind") == "review" else set())
+        problems = [f"unknown key {k!r}" for k in sorted(set(row) - known)]
         if not isinstance(gid, str) or not gid:
             problems.append("no id")
         elif gid in seen:
