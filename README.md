@@ -22,7 +22,7 @@ Licensed under the Apache License 2.0; see `LICENSE` and `NOTICE`.
 | `run/slop-rules.py` | The shadow slop rows (source-text assertions, symbol truth and the deterministic UI rules of STANDARDS) over a change; see "The slop rows". |
 | `run/fakes.py` | The fake rows: test doubles a caller's `.github/fakes.toml` does not declare, declared fakes with no real counterpart, fakes past their freshness or drifted, and the GitHub record-and-compare and daily real smoke; see "The fake rows". |
 | `run/mutation.py` | The mutation rows: a mutant of a change's lines that no test kills, with a full run when the change deletes or weakens a test; see "The mutation rows". |
-| `run/review.py` | The review rows: a finder session on a model other than the author's, then a verifier pass that must reproduce each blocking finding before it blocks, each seat within its token and time budget; see "The review rows". |
+| `run/review.py` | The review rows: a finder session on a model other than the author's, then a verifier pass that must reproduce each blocking finding before it blocks, each seat within its token and time budget, with a Haiku router checked by a rule floor and a veto rule that settles disagreement; see "The review rows". |
 | `run/budget-monitor.py` | The gate budget monitor: prints each budgeted step's weekly p50/p95, the alarm and the fix task text; see "The budget monitor". |
 | `bin/gates.py`, `bin/rollout.toml` | `gates bump` and `gates rollback`, which move callers' locks; see "Bumping". |
 | `.ci/` | The contract test for each gate script, the gitleaks rule and allowlist suites, and `check.sh`, which runs all of them. |
