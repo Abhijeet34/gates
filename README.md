@@ -21,6 +21,7 @@ Licensed under the Apache License 2.0; see `LICENSE` and `NOTICE`.
 | `run/change-gates.py` | The contract, migration and fact rows over a change, read from a caller's `.github/changes.toml`; see "The change rows". |
 | `run/slop-rules.py` | The shadow slop rows (source-text assertions, symbol truth and the deterministic UI rules of STANDARDS) over a change; see "The slop rows". |
 | `run/fakes.py` | The fake rows: test doubles a caller's `.github/fakes.toml` does not declare, declared fakes with no real counterpart, and fakes past their freshness; see "The fake rows". |
+| `run/mutation.py` | The mutation rows: a mutant of a change's lines that no test kills, with a full run when the change deletes or weakens a test; see "The mutation rows". |
 | `run/budget-monitor.py` | The gate budget monitor: prints each budgeted step's weekly p50/p95, the alarm and the fix task text; see "The budget monitor". |
 | `bin/gates.py`, `bin/rollout.toml` | `gates bump` and `gates rollback`, which move callers' locks; see "Bumping". |
 | `.ci/` | The contract test for each gate script, the gitleaks rule and allowlist suites, and `check.sh`, which runs all of them. |
@@ -590,7 +591,7 @@ No workflow calls it: `BASE_SHA` comes from a caller, and a step is the maintain
 `run/fakes.py undeclared|counterpart|stale [--base B] [--today D] [root]` holds a repository's test doubles to what it declares in `.github/fakes.toml`.
 Its docstring owns the exit statuses (0 nothing to name, 1 a finding, 2 could not decide, with a typed `refused (TYPE)` line), and each finding is one line, `fakes: ROW: ...`.
 It is the first slice of the factory plan's real-tests row (r5, "P3a-RT"): the declaration, the fake lint and the stale-fake refusal.
-Mutation proof on changed code, and GitHub record-and-compare with a daily real smoke, are later slices.
+Mutation proof on changed code is the second slice (see "The mutation rows"), and GitHub record-and-compare with a daily real smoke a later one.
 
 **What this replaces.**
 The sandbox report's task W8 (s1, section 9) was one real-tests policy task: a `fakes.toml` registry, a weekly contract or record-and-compare check per fake, a census gate that flags a new unregistered mock, and a seeded-defect proof per test, accepted when the census gate fails on a new `jest.mock` and a drifted fake fails its weekly check.
@@ -698,6 +699,121 @@ l1 asks for a stale fake's verdict to be `error`; `run/gate.py` records any non-
 `.ci/test-fakes.py` runs the three rows through `run/gate.py`, folds each red one to `shadow`, and shows a change to an unrelated file leaves them unselected.
 Five registry rows prove the script by execution (`fakes-undeclared-program`, `fakes-undeclared-mock`, `fakes-undeclared-hand`, `fakes-counterpart`, `fakes-stale`).
 No workflow calls it: `BASE_SHA` and a `.github/fakes.toml` come from a caller, and a step is the maintainer's weekly batch.
+
+## The mutation rows
+
+`run/mutation.py rust|typescript --base B [--dir D] [--in-place] [root]` is the second slice of the factory plan's real-tests row (r5, "P3a-RT"): mutation proof on changed code through cargo-mutants `--in-diff` and Stryker `--incremental`, with a full run whenever a change deletes tests.
+Its docstring owns the exit statuses (0 pass, 1 a mutant survived, 2 could not decide, with a typed `refused (TYPE)` line), and each finding is one line, `mutation: survived: FILE:LINE:COL: ...`.
+GitHub record-and-compare and the daily real smoke are a later slice.
+
+**What it judges.**
+A mutant counts when it touches a line `git diff B...HEAD` adds or rewrites under D: cargo-mutants filters by `--in-diff`, and Stryker by `--mutate FILE:A-B` per changed range.
+Stryker 10.0.0's `--incremental` report also carries reused mutants outside `--mutate` (measured 2026-10-19 on the fixture: a range holding one blank line tested 0 mutants and reported 7), so the row keeps only the mutants whose span touches a changed line.
+A survivor is cargo-mutants' `MissedMutant`, or Stryker's `Survived` or `NoCoverage`; a timeout counts as killed, as Stryker scores it, and a mutant that does not compile is not counted.
+Rust test code is never mutated by cargo-mutants, and the TypeScript row mutates `.ts`, `.tsx`, `.mts` and `.cts` files that are not tests, fixtures, declarations or `*.config.*`.
+
+**Deleting or weakening a test.**
+`--in-diff` matches only code under test, so a change that removes an assertion and touches no source mutates nothing and passes (r4, section 5).
+The row counts three markers in each changed test file at the merge base and at HEAD, following renames, and runs every mutant under D when a count moves the wrong way:
+
+| Language | Files counted | Tests | Assertions | Skips (a rise weakens) |
+| --- | --- | --- | --- | --- |
+| Rust | every `.rs` file, since tests sit beside the code | `#[test]`, `#[tokio::test]` and any `#[path::test]`, `#[rstest]`, `#[test_case]` | `assert!`, `assert_eq!`, `assert_ne!`, `assert_matches!`, their `debug_` forms, `#[should_panic]` | `#[ignore]` |
+| TypeScript | test files by the rule `run/slop-rules.py` uses, in `.ts`, `.tsx`, `.mts`, `.cts`, `.js`, `.jsx`, `.mjs`, `.cjs` | `it(`, `test(` and their `.each`, `.concurrent`, `.sequential`, `.fails`, `.only` forms | `expect(`, `expect.soft(`, `assert(`, `assert.equal(`, `expectTypeOf(` | `.skip`, `.todo`, `.only`, `.skipIf`, `.runIf`, `xit(`, `xtest(`, `xdescribe(` |
+
+Counts rather than removed lines, because a moved or reformatted test removes and re-adds the same line; per file, so a deleted test cannot hide behind a test added elsewhere; a deleted test file counts as zero.
+What it misses: an assertion replaced by a weaker one (`assert_eq!(x, 5)` to `assert!(true)`) keeps every count, and a marker in a comment is counted like code.
+A test moved between files reads as a deletion and costs a full run, never a wrong verdict.
+
+In the full run a survivor is named unless the same mutant also survived at the merge base, which the row checks by running again on an export of the base, matched by file, function or mutator, replacement and the original source text.
+A mutant of new code has no base counterpart and is named, as in the diff run.
+Without that, a test-only change would be charged every survivor the repository already had: on gh-axi, removing one `expect` gave 4,217 survivors at HEAD, all of them alive at the base too, so the row named none.
+
+**Pins.**
+
+| Tool | Pin | Where the pin lives | Checked by |
+| --- | --- | --- | --- |
+| cargo-mutants | 27.1.0 (the latest release, 2026-06-02) | `PINS` in `run/mutation.py` | `cargo mutants --version` before every run |
+| Stryker (`@stryker-mutator/core`) | 10.0.0 (the latest, 2026-08-14; 9.6.1 is the one before) | the same, and the caller's `package.json` as an exact devDependency | the version in `node_modules/@stryker-mutator/core/package.json` |
+| `@stryker-mutator/vitest-runner` | 10.0.0 | the same | its `package.json` the same way |
+
+A missing tool is `missing-tool` and any other version is `wrong-version`, never a pass.
+Stryker runs from the caller's own `node_modules`, because its vitest runner loads vitest from where it is installed: a copy installed beside the gate would pull in a vitest of its own.
+The vitest runner is the only one supported because every TypeScript caller that has tests runs vitest (gh-axi, tasks-axi, quota-axi and chrome-devtools-axi, read 2026-10-19); Stryker 10 needs Node 22 or later.
+
+```bash
+cargo install --locked cargo-mutants@27.1.0
+npm install -D -E @stryker-mutator/core@10.0.0 @stryker-mutator/vitest-runner@10.0.0   # pnpm add -D -E for a pnpm caller
+```
+
+`cargo-mutants-x86_64-unknown-linux-gnu.tar.gz` from the v27.1.0 release has sha256 `dfe6dc37d0342c891d2829b5a695aa57c2d0edecef7e7d0399a30cc6e206411e` (read 2026-10-19), which a runner can verify instead of compiling.
+Stryker's incremental file is kept at `node_modules/.cache/gates-mutation/stryker-incremental.json`, because its default `reports/` is untracked litter in a caller that does not ignore it (gh-axi does not).
+
+**A crate that builds from outside its directory.**
+cargo-mutants copies D and builds the copy, so a build script that reads a file outside D or an untracked one fails its unmutated baseline.
+quoth's does both: tauri-build reads `../out`, `../../../docs/SECURITY.md` and the gitignored whisper sidecar, and the row refused `baseline-failed` after 175 s.
+`--in-place` passes cargo-mutants' own flag, which mutates the checkout and restores each file; a run killed mid-mutant leaves that mutant in the tree, so it belongs on a disposable checkout such as a CI job's.
+A full run in place still builds the base from an export holding only tracked files, so on quoth it would refuse `baseline-failed` too.
+
+**Measured** on this machine (arm64 macOS, 2026-10-19), against the two budgets the row could run under: the 10-second pre-push budget (r5, the advisory row) and the 5-minute CI budget l1 sets for this check (10.3).
+
+| Run | Mutants | Survived | Wall time |
+| --- | --- | --- | --- |
+| quoth 4916d48, diff, default copy | (baseline failed) | | 175 s, `baseline-failed` |
+| quoth 4916d48, diff, `--in-place`, cold target | 2 tested of 5 found | 1 | 429 s |
+| the same, warm target | 2 | 1 | 267 s |
+| gh-axi 6e1dcf4 (32 source lines added, 30 removed), diff | 174 | 29 | 22 s, then 11 to 12 s reusing the incremental file |
+| gh-axi dc52d29 (159 source lines added, 40 removed), diff | 161 | 22 | 14 s |
+| gh-axi, one `expect` removed, full run at HEAD and base | 7,835 | 4,217, all also at the base | 627 s |
+| quoth, full run | 3,917 found by `--list` | not run | |
+| the fixtures, `.ci/test-mutation.py --real` | 2 to 10 per case | | 2.0 to 13.4 s per case |
+
+Neither row fits pre-push: the smallest real change took 11 s on gh-axi and 267 s on quoth, whose every mutant runs the crate's whole test suite.
+Both are PR-time rows.
+The diff path fits the 5-minute budget on both callers measured, quoth's with 33 s to spare warm and not at all cold; the full path does not fit it on either, 627 s on gh-axi, and on quoth 3,917 mutants at about 90 s each (267 s held a baseline and 2 mutants), some 98 hours.
+l1 runs the full set weekly in the scheduled tier (10.3); whether a test-deleting change waits for that or pays a full run at PR time is the maintainer's to decide, and the figures are the input.
+The quoth survivor is real: 4916d48 keeps the sidecar's token out of `WhisperStatus`'s `Debug` output, and replacing that `fmt` with an empty `Ok` passes every test, since an empty string leaks nothing either.
+
+**Go and Python.**
+The plan of record names cargo-mutants and Stryker only (r5, P3a-RT and its tool table), so neither language has a row here.
+The learning-loop report lists `mutmut` for Python and a seeded-defect fixture per test for shell (l1, 10.3); the plan did not carry either. No source names a tool for Go.
+
+**The rows**, in a caller's `.github/gates.toml`, in shadow until the promotion rule in `run/gate.py` lets them block, and `scoped = true` so a change to a path they do not name does not select them:
+
+```toml
+[[gate]]
+id = "mutation-rust"
+inputs = ["**/*.rs", "**/Cargo.toml", "**/Cargo.lock", ".cargo/mutants.toml"]
+scoped = true
+tools = { cargo-mutants = "cargo mutants --version", base = 'git merge-base "$BASE_SHA" HEAD' }
+run = 'python3 "$GATES_DIR/run/mutation.py" rust --base "$BASE_SHA"'
+shadow_since = 2026-10-19
+
+[[gate]]
+id = "mutation-typescript"
+inputs = ["**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts", "**/*.test.js", "**/*.test.mjs", "package.json", "vitest.config.*"]
+scoped = true
+tools = { stryker = "node_modules/.bin/stryker --version", base = 'git merge-base "$BASE_SHA" HEAD' }
+run = 'python3 "$GATES_DIR/run/mutation.py" typescript --base "$BASE_SHA"'
+shadow_since = 2026-10-19
+```
+
+quoth's row adds `--dir apps/desktop/src-tauri --in-place`, and needs the frontend built and the sidecar stubbed first, as its own CI does before `cargo test`.
+The `base` probe keys the verdict on the merge base, since the same head judged against another base mutates other lines.
+A tracked file under D that differs from HEAD is refused `dirty-tree`, because the tools mutate the working tree and the verdict is recorded for HEAD.
+
+`.ci/test-mutation.py` drives the script against `.ci/fixtures/mutation/stub-tool.py`, which answers as the real tools did on the fixtures beside it, and runs the Rust row through `run/gate.py` in shadow, established and unselected.
+Five registry rows prove the script by execution on a real crate and package with that stub (`mutation-rust`, `mutation-rust-weakened`, `mutation-typescript`, `mutation-typescript-weakened`, `mutation-tool-missing`).
+The stub is a fake of a local binary, which l1's rule 2 allows for nothing; it stands in only because the CI jobs install neither tool.
+`.ci/test-mutation.py --real` puts the same fixtures to cargo-mutants 27.1.0 and Stryker 10.0.0, installing the fixture package's devDependencies with npm:
+
+```bash
+python3 .ci/test-mutation.py --real
+```
+
+**Not in CI.**
+Running `--real` in CI needs a workflow edit, which waits for the maintainer's weekly batch: in `ci.yml`'s `shell` job, a pinned `actions/setup-node` step for Node 22 and a step that downloads the cargo-mutants 27.1.0 Linux tarball and checks the sha256 above, then `python3 .ci/test-mutation.py --real` in `check_shell` in the same change.
+No workflow calls `run/mutation.py`.
 
 ## Using the hooks on a machine
 

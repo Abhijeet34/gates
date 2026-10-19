@@ -1105,6 +1105,73 @@ clean = '''mkdir .github && printf '[[fake]]\nid = "gh"\npaths = ["tests/**"]\nn
 run = 'python3 "$GATE" stale --today 2026-10-19 .'
 finding = "fakes: stale: gh: recorded 2026-10-01, 18 days ago, past its 7-day freshness"
 
+# Mutation proof on a change; README.md, "The mutation rows". The fixtures are a
+# real crate and package, but the tool is .ci/fixtures/mutation/stub-tool.py,
+# because the gates-proof job installs neither cargo-mutants nor Stryker;
+# `.ci/test-mutation.py --real` puts the same fixtures to the pinned tools.
+[[gate]]
+id = "mutation-rust"
+surface = "Test quality"
+gates = ["run/mutation.py"]
+test = ".ci/test-mutation.py"
+suite = "shell"
+command = "run/mutation.py"
+red = '''mkdir repo && (cd repo && bash "$ROOT/.ci/fixtures/mutation/build.sh" --stub rust weak)'''
+clean = '''mkdir repo && (cd repo && bash "$ROOT/.ci/fixtures/mutation/build.sh" --stub rust strong)'''
+run = 'cd repo && PATH="$PWD/.stub:$PATH" python3 "$GATE" rust --base base .'
+finding = "mutation: survived: src/lib.rs:6:5: replace is_even -> bool with true"
+
+# A change that removes an assertion mutates nothing under --in-diff, so the row runs
+# every mutant and names the one the removed assertion used to kill.
+[[gate]]
+id = "mutation-rust-weakened"
+surface = "Test quality"
+gates = ["run/mutation.py"]
+test = ".ci/test-mutation.py"
+suite = "shell"
+command = "run/mutation.py"
+red = '''mkdir repo && (cd repo && bash "$ROOT/.ci/fixtures/mutation/build.sh" --stub rust strong weak)'''
+clean = '''mkdir repo && (cd repo && bash "$ROOT/.ci/fixtures/mutation/build.sh" --stub rust weak strong)'''
+run = 'cd repo && PATH="$PWD/.stub:$PATH" python3 "$GATE" rust --base base .'
+finding = "mutation: src/lib.rs: asserts 3 -> 2: a test was deleted or weakened"
+
+[[gate]]
+id = "mutation-typescript"
+surface = "Test quality"
+gates = ["run/mutation.py"]
+test = ".ci/test-mutation.py"
+suite = "shell"
+command = "run/mutation.py"
+red = '''mkdir repo && (cd repo && bash "$ROOT/.ci/fixtures/mutation/build.sh" --stub typescript weak)'''
+clean = '''mkdir repo && (cd repo && bash "$ROOT/.ci/fixtures/mutation/build.sh" --stub typescript strong)'''
+run = 'cd repo && python3 "$GATE" typescript --base base .'
+finding = "mutation: survived: src/math.ts:6:10: replace 'x % 2 === 0' with 'true'"
+
+[[gate]]
+id = "mutation-typescript-weakened"
+surface = "Test quality"
+gates = ["run/mutation.py"]
+test = ".ci/test-mutation.py"
+suite = "shell"
+command = "run/mutation.py"
+red = '''mkdir repo && (cd repo && bash "$ROOT/.ci/fixtures/mutation/build.sh" --stub typescript strong weak)'''
+clean = '''mkdir repo && (cd repo && bash "$ROOT/.ci/fixtures/mutation/build.sh" --stub typescript weak strong)'''
+run = 'cd repo && python3 "$GATE" typescript --base base .'
+finding = "mutation: test/math.test.ts: asserts 3 -> 2: a test was deleted or weakened"
+
+# A package without the pinned Stryker is a refusal, never a pass over nothing.
+[[gate]]
+id = "mutation-tool-missing"
+surface = "Test quality"
+gates = ["run/mutation.py"]
+test = ".ci/test-mutation.py"
+suite = "shell"
+command = "run/mutation.py"
+red = '''mkdir repo && (cd repo && bash "$ROOT/.ci/fixtures/mutation/build.sh" typescript strong)'''
+clean = '''mkdir repo && (cd repo && bash "$ROOT/.ci/fixtures/mutation/build.sh" --stub typescript strong)'''
+run = 'cd repo && python3 "$GATE" typescript --base base .'
+finding = "mutation: refused (missing-tool)"
+
 [[gate]]
 id = "gates-proof"
 surface = "Gate of the gates"
