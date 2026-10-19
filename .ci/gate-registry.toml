@@ -1022,6 +1022,89 @@ clean = '''echo '.a { transition: opacity 200ms; }' > a.css && echo '@media (pre
 run = 'python3 "$GATE" reduced-motion .'
 finding = "a.css:1: adds motion and no file of the tree names prefers-reduced-motion"
 
+# A repository's test doubles against what it declares in .github/fakes.toml, one row per
+# rule class over one script, in shadow and scoped; README.md, "The fake rows".
+[[gate]]
+id = "fakes-undeclared-program"
+surface = "Test quality"
+gates = ["run/fakes.py"]
+test = ".ci/test-fakes.py"
+suite = "shell"
+command = "run/fakes.py"
+# The plan's acceptance: a PATH shim of git in a test is refused, a declared gh shim passes.
+red = '''
+mkdir -p .github tests && printf '[[fake]]\nid = "gh"\npaths = ["tests/**"]\nnames = ["gh"]\nstands_for = "the GitHub REST API, through gh"\nreal = "sync.sh"\nreal_name = "gh"\ncompare = "tests/compare-gh.sh"\nrecorded = %s\n' 2026-10-15 > .github/fakes.toml
+printf '%s\n' 'bin=$(mktemp -d)' 'printf "#!/bin/sh\nexit 0\n" > "$bin/git"' 'chmod +x "$bin/git"' 'PATH="$bin:$PATH" ./sync.sh' > tests/test-sync.sh
+'''
+clean = '''
+mkdir -p .github tests && printf '[[fake]]\nid = "gh"\npaths = ["tests/**"]\nnames = ["gh"]\nstands_for = "the GitHub REST API, through gh"\nreal = "sync.sh"\nreal_name = "gh"\ncompare = "tests/compare-gh.sh"\nrecorded = %s\n' 2026-10-15 > .github/fakes.toml
+printf '%s\n' 'bin=$(mktemp -d)' 'printf "#!/bin/sh\nexit 0\n" > "$bin/gh"' 'chmod +x "$bin/gh"' 'PATH="$bin:$PATH" ./sync.sh' > tests/test-sync.sh
+'''
+run = 'python3 "$GATE" undeclared .'
+finding = "tests/test-sync.sh:2: the stand-in program git is not declared in .github/fakes.toml"
+
+[[gate]]
+id = "fakes-undeclared-mock"
+surface = "Test quality"
+gates = ["run/fakes.py"]
+test = ".ci/test-fakes.py"
+suite = "shell"
+command = "run/fakes.py"
+red = '''mkdir test && echo 'vi.mock("node:child_process");' > test/run.test.ts'''
+clean = '''
+mkdir -p .github test && echo 'vi.mock("@anthropic-ai/sdk");' > test/run.test.ts
+printf '[[fake]]\nid = "gh"\npaths = ["tests/**"]\nnames = ["gh"]\nstands_for = "the GitHub REST API, through gh"\nreal = "sync.sh"\nreal_name = "gh"\ncompare = "tests/compare-gh.sh"\nrecorded = %s\n' 2026-10-15 | sed 's|"gh"\]|"@anthropic-ai/sdk"]|; s|tests/\*\*|test/**|' > .github/fakes.toml
+'''
+run = 'python3 "$GATE" undeclared .'
+finding = "test/run.test.ts:1: the mock node:child_process is not declared in .github/fakes.toml"
+
+[[gate]]
+id = "fakes-undeclared-hand"
+surface = "Test quality"
+gates = ["run/fakes.py"]
+test = ".ci/test-fakes.py"
+suite = "shell"
+command = "run/fakes.py"
+red = '''mkdir tests && echo 'struct FakeVendor;' > tests/vendor.rs'''
+clean = '''
+mkdir -p .github tests && echo 'struct FakeVendor;' > tests/vendor.rs
+printf '[[fake]]\nid = "gh"\npaths = ["tests/**"]\nnames = ["gh"]\nstands_for = "the GitHub REST API, through gh"\nreal = "sync.sh"\nreal_name = "gh"\ncompare = "tests/compare-gh.sh"\nrecorded = %s\n' 2026-10-15 | sed 's|"gh"\]|"FakeVendor"]|' > .github/fakes.toml
+'''
+run = 'python3 "$GATE" undeclared .'
+finding = "tests/vendor.rs:1: the hand fake FakeVendor is not declared in .github/fakes.toml"
+
+# The fake stands for a call the code no longer makes.
+[[gate]]
+id = "fakes-counterpart"
+surface = "Test quality"
+gates = ["run/fakes.py"]
+test = ".ci/test-fakes.py"
+suite = "shell"
+command = "run/fakes.py"
+red = '''
+mkdir -p .github tests && : > tests/test-sync.sh && printf '[[fake]]\nid = "gh"\npaths = ["tests/**"]\nnames = ["gh"]\nstands_for = "the GitHub REST API, through gh"\nreal = "sync.sh"\nreal_name = "gh"\ncompare = "tests/compare-gh.sh"\nrecorded = %s\n' 2026-10-15 > .github/fakes.toml
+echo 'curl -s https://api.github.com/repos' > sync.sh
+'''
+clean = '''
+mkdir -p .github tests && : > tests/test-sync.sh && printf '[[fake]]\nid = "gh"\npaths = ["tests/**"]\nnames = ["gh"]\nstands_for = "the GitHub REST API, through gh"\nreal = "sync.sh"\nreal_name = "gh"\ncompare = "tests/compare-gh.sh"\nrecorded = %s\n' 2026-10-15 > .github/fakes.toml
+echo 'gh api repos' > sync.sh
+'''
+run = 'python3 "$GATE" counterpart .'
+finding = "fakes: counterpart: gh: sync.sh no longer names gh"
+
+# Today is fixed so the verdict does not move with the calendar.
+[[gate]]
+id = "fakes-stale"
+surface = "Test quality"
+gates = ["run/fakes.py"]
+test = ".ci/test-fakes.py"
+suite = "shell"
+command = "run/fakes.py"
+red = '''mkdir .github && printf '[[fake]]\nid = "gh"\npaths = ["tests/**"]\nnames = ["gh"]\nstands_for = "the GitHub REST API, through gh"\nreal = "sync.sh"\nreal_name = "gh"\ncompare = "tests/compare-gh.sh"\nrecorded = %s\n' 2026-10-01 > .github/fakes.toml'''
+clean = '''mkdir .github && printf '[[fake]]\nid = "gh"\npaths = ["tests/**"]\nnames = ["gh"]\nstands_for = "the GitHub REST API, through gh"\nreal = "sync.sh"\nreal_name = "gh"\ncompare = "tests/compare-gh.sh"\nrecorded = %s\n' 2026-10-15 > .github/fakes.toml'''
+run = 'python3 "$GATE" stale --today 2026-10-19 .'
+finding = "fakes: stale: gh: recorded 2026-10-01, 18 days ago, past its 7-day freshness"
+
 [[gate]]
 id = "gates-proof"
 surface = "Gate of the gates"
