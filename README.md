@@ -887,8 +887,9 @@ No workflow calls `run/mutation.py`.
 ## The review rows
 
 `run/review.py --gate ID --base B --author MODEL --store DIR` runs one `kind = "review"` row of a caller's `.github/gates.toml` and appends its verdict to the store `run/gate.py fold` reads, so an absent or `error` review never folds to a pass.
-It is the first slice of the factory plan's review pipeline row (r5, "P3a-RP"): review rows with the reviewer-independence rule and budgets, and the verifier pass.
-The Haiku router, the veto rule and dissent fields, the seeded corpus and the licence row are later slices.
+It carries the first two slices of the factory plan's review pipeline row (r5, "P3a-RP"): review rows with the reviewer-independence rule and budgets, the verifier pass, the Haiku router, the veto rule, and dissent and independence fields on every verdict.
+The seeded corpus and the licence row are the third slice.
+`run/review.py --class C --base B --author MODEL --store DIR` routes a change instead of naming one row, as "The router" below sets out.
 Its docstring owns the exit statuses (0 pass, 1 a verified blocking finding, 2 could not decide); each finding prints as one line, `review: F1 error FILE:LINE: CLAIM: verified, blocks`, `does not block` or `downgraded: WHY`.
 
 ```toml
@@ -940,15 +941,60 @@ Models are called only through `claude -p`, and only after `claude auth status` 
 Every seat's environment drops credential-named variables except `CLAUDE_CODE_OAUTH_TOKEN`.
 Claude Managed Code Review and Ultrareview are never called (r4 5 rejects both as gates: the first "never approves or blocks", the second bills usage credits and posts a note crediting the tool).
 
+**The router.**
+With `--class` (`trivial`, `medium` or `large`, as intake sized the change) a router seat chooses the rows, and each row it convenes runs as `--gate` would.
+The router is a fresh `claude-haiku-5-5` seat (r4 7.3: "a Haiku 5.5 router"), sitting like every other seat, given only the paths the change touches with their lines added and removed, the class and the registry's review rows; it never sees the diff.
+It answers `{"class": C, "reviews": [{"gate": ID, "why": ...}]}`.
+It "only routes, never passes" (r4 7.3): it may raise the class and add rows, and nothing it says can lower the class, drop a row, pass or block.
+
+A rule sets the floor the router cannot go under, so a router that skips a required review is caught, not trusted:
+
+- a `trivial` change gets no review (r3 3.2: "trivial work runs no agent at the gate");
+- otherwise every review row sits whose inputs, or a path no row claims, the change touches, as the row's own diff is chosen;
+- a `large` change also seats every `lens = "security"` row (report 3.1: "a security-tagged or large change gets a separate fresh-context security session");
+- a path naming auth, crypto, sandbox, credential, settings, permit or permission, or a workflow file, sizes the change `large` whatever the class says (sec1 6; report 3.2 sizes workflow files L).
+  The match is a substring, so `author.py` over-reads, which costs a review and never misses one.
+
+A floor row the router left out sits anyway and prints as `route: ID sits: the router skipped it; convened by the rule: WHY`, and its record's route says `router_skipped`.
+When the router is unavailable (the login is refused, it times out at 60 s, breaks the token budget, is answered by another model, or answers with no class, no list or a row the registry does not have), the floor alone routes and the record names why.
+A row the router adds whose inputs the change misses reads the whole change.
+A review row `run/gate.py` selects that does not sit is recorded as a `pass` naming why, `not convened: a trivial change runs no review` say, unless it already holds a record for the head, so a route never covers an earlier fail.
+`gate.py fold` folds every review row with a record for the head, selected or not, so a block on a row only the router convened is never dropped.
+Measured 2026-10-19 with CLI 2.1.302 on the floor fixture: the real router named `code-review` with 869 input and 69 output tokens in 3.5 s.
+
+**The veto.**
+The decision rule is r4 7.3's: "any verified blocking finding blocks; a pass needs every seated member clean; an unverifiable finding is recorded as dissent, never dropped; disagreement escalates to the stronger model with the dissent attached".
+
+- The router has no vote.
+- Only a finder's `error` finding can veto, and only once the verifier pass reproduces it; one verified finding on any convened row refuses the whole change.
+  This is a minority veto, never a majority: 14 validators on 366 buggy programs had a true-negative rate below 25%, 19.2% by majority, and a minority veto cut the worst precision-estimate error from 14.8% to 2.8% (r4 7.1, Jain et al.).
+- The verifier raises no finding of its own.
+  When it answers not reproduced to a finding whose quote held and whose check failed at the head, the seats disagree on evidence that stands, so the finding goes to the strongest of `reviewers` that outranks the verifier (Haiku, then Sonnet, then Opus, then Fable, which report 3.2 places "at Opus level or above"), preferring one that differs from the author.
+  That adjudicator is a fresh seat given the verifier's evidence plus `## The dissent` with the verifier's reason, and its answer decides, inside the verifier pass's budget.
+  With no stronger reviewer listed, the verifier's answer stands: with the default list, Sonnet's finding on Opus work is verified by Opus, and Opus's on Sonnet work escalates from Sonnet back to Opus.
+- No round of debate: in r4 7.1's sources debate lowered accuracy in all 10 group compositions tested.
+- A disagreement on a four-eyes item reaches the captain in the plan; gates has no four-eyes classifier, so this slice escalates only to the stronger model.
+
+A veto prints as `review: veto: F1 by the finder on M, upheld by the verifier F1 on M2`.
+
+**Dissent and independence.**
+Every `error` finding carries `votes`, one `{seat, model, vote, reason}` per seat that judged it, `blocks` or `clears`.
+Every record carries `veto`, each blocking finding with the finder's seat and model and the seats that upheld it, and `dissent`, each vote the outcome overruled with what overruled it: a seat, or the step that refuted the finding, such as `its reproducing check passed at the head (exit 0)`.
+Each dissent prints as `review: dissent: F1: the verifier F1 on M voted clears: REASON; overruled: the adjudicator F1 on M2`, so a later reader sees who disagreed and why without opening the logs.
+Every record also carries `independence`, the weakest label any judging seat holds against the author or another seat, `none` when no seat sat; the adjudicator's labels are kept against the author, the finder and the verifier.
+Both lists are empty, never absent, on a pass no seat reached and on an `error`.
+
 **The record.**
-The verdict record carries `review`: the lens, the author, the CLI version, each seat's model, independence, token use, duration and reply log, and each finding with its quote, reproducing command, exit status and verdict.
+The verdict record carries `review`: the lens, the author, the CLI version, each seat's model, independence, token use, duration and reply log, each finding with its quote, reproducing command, exit status, votes and verdict, the `veto`, `dissent` and `independence` fields, and, when routed, the `route`: the given and final class, the router's seat or why it was unavailable, and for each review row whether it sits, by the rule, by the router, or both.
 
 **Proof.**
 `.ci/test-review.py` runs each case through `.ci/fixtures/review/claude-recorded.py`, installed as `claude` first on `PATH`, then again against a copy of the script with that case's control removed.
 No case calls a model.
-`replies/reproduced` holds the real finder and verifier replies captured 2026-10-19 on the floor fixture.
-`replies/unreproduced` is the real envelope from the guard fixture, where the real finder found nothing, with a false alarm written into `result`, because a model's false alarm cannot be captured on demand.
-The gates-proof rows are `review-verifier` (reproduced and refused, against unreproduced and downgraded), `review-budget` and `review-harness`.
+`replies/reproduced` holds the real finder and verifier replies captured 2026-10-19 on the floor fixture, and the real router reply on it.
+`replies/unreproduced` is the real envelope from the guard fixture, where the real finder found nothing, with a false alarm written into `result`, because a model's false alarm cannot be captured on demand; its router reply is real.
+`replies/escalated` holds a real Opus finder and a real Opus adjudicator on the floor fixture, around a Sonnet verifier's dissent written into a real envelope; the adjudicator, shown that dissent, answered that the zero guard "fires only when whole == 0 and whole is 2 here".
+`replies/router-skips.json` and `replies/adjudicator-clears.json` write a skip and a clearing answer into those real envelopes.
+The gates-proof rows are `review-verifier` (reproduced and refused, against unreproduced and downgraded), `review-budget`, `review-harness`, `review-router` (a router skipping the required row on the floor change, caught and refused, against the real route of the guard change) and `review-veto` (an adjudicator upholding over the verifier's dissent, against one clearing it).
 No workflow calls `run/review.py`; wiring it beside the runner waits for the maintainer's weekly batch.
 
 ## Using the hooks on a machine

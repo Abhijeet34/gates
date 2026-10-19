@@ -1253,6 +1253,40 @@ clean = '''mkdir repo && (cd repo && bash "$ROOT/.ci/fixtures/review/build.sh" -
 run = 'cd repo && PATH="$PWD/.stub:$PATH" python3 "$GATE" --gate code-review --base base --author claude-opus-5-5 --store ../store'
 finding = "review: error: refused: claude is logged in with 'api_key' on 'firstParty'"
 
+# A router that skips a required review is caught by the rule, not trusted. The
+# clean router reply is a real Haiku capture; the skip is written into its envelope.
+[[gate]]
+id = "review-router"
+surface = "Code review"
+gates = ["run/review.py"]
+test = ".ci/test-review.py"
+suite = "shell"
+command = "run/review.py"
+red = '''
+mkdir repo && (cd repo && bash "$ROOT/.ci/fixtures/review/build.sh" --replies reproduced floor)
+cp "$ROOT/.ci/fixtures/review/replies/router-skips.json" repo/.stub/replies/router.json
+'''
+clean = '''mkdir repo && (cd repo && bash "$ROOT/.ci/fixtures/review/build.sh" --replies unreproduced guard)'''
+run = 'cd repo && PATH="$PWD/.stub:$PATH" python3 "$GATE" --class medium --base base --author claude-opus-5-5 --store ../store'
+finding = "review: route: code-review sits: the router skipped it; convened by the rule: calc.py is under its inputs"
+
+# The veto: a Sonnet verifier's dissent escalates to Opus, whose real reply upholds
+# the finding; clean, the same seat clears it, written into that envelope.
+[[gate]]
+id = "review-veto"
+surface = "Code review"
+gates = ["run/review.py"]
+test = ".ci/test-review.py"
+suite = "shell"
+command = "run/review.py"
+red = '''mkdir repo && (cd repo && bash "$ROOT/.ci/fixtures/review/build.sh" --replies escalated floor)'''
+clean = '''
+mkdir repo && (cd repo && bash "$ROOT/.ci/fixtures/review/build.sh" --replies escalated floor)
+cp "$ROOT/.ci/fixtures/review/replies/adjudicator-clears.json" repo/.stub/replies/adjudicator-F1.json
+'''
+run = 'cd repo && PATH="$PWD/.stub:$PATH" python3 "$GATE" --gate code-review --base base --author claude-sonnet-5-5 --store ../store'
+finding = "review: veto: F1 by the finder on claude-opus-5-5, upheld by the adjudicator F1 on claude-opus-5-5"
+
 [[gate]]
 id = "gates-proof"
 surface = "Gate of the gates"

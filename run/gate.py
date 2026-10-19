@@ -22,6 +22,7 @@ The registry is `.github/gates.toml` in the tree under test, read at H, one
 A `review` or `docs` row has no `run`: the review pipeline appends its verdict
 to DIR/records.jsonl in the same record shape, `run` skips it, and the fold
 reads it like any other, so an absent or `error` review never folds to pass.
+A review row with a record for H is folded even when selection left it out.
 A review row may also carry `lens`, `reviewers` and `budget`, which run/review.py
 reads and judges; on any other row they are unknown keys.
 
@@ -418,7 +419,9 @@ def fold(rows, chosen, head, store):
     ok, lines = True, []
     for row in rows:
         gid = row["id"]
-        if gid not in chosen:
+        # A review that sat on H folds even where selection left its row out, so a
+        # block found by a row the review router convened is never dropped.
+        if gid not in chosen and not (row["kind"] == "review" and gid in latest):
             continue
         rec = latest.get(gid)
         verdict = rec["verdict"] if rec else None

@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""Regression tests for run/review.py: the review row's seats, budgets and verifier pass.
+"""Regression tests for run/review.py: the review row's seats, budgets, verifier pass,
+router, veto and dissent.
 
     .ci/test-review.py
 
 Each case builds a repository from .ci/fixtures/review, puts its recorded-reply
-`claude` first on PATH, runs one review and returns why it failed, or None. No
-case calls a model: the reproduced case's replies are real captures, and a case
-that needs another answer writes it into the same captured envelope. Every case
+`claude` first on PATH, runs one review or one route and returns why it failed,
+or None. No case calls a model: the recorded sets hold real captures, and a case
+that needs another answer writes it into a captured envelope. Every case
 must pass against run/review.py, then fail against a copy with the one control
 it exists for removed, so a case that would pass without its control is refused.
 """
@@ -75,14 +76,40 @@ class Fixture:
             raise RuntimeError(f"{argv}: {proc.stdout}{proc.stderr}")
         return proc.stdout
 
-    def review(self, author="claude-opus-5-5", gate="code-review"):
+    def review(self, author="claude-opus-5-5", gate="code-review", size=None):
         env = {**ENV, "PATH": f"{self.stub}:{ENV['PATH']}"}
+        which = ["--class", size] if size else ["--gate", gate]
         proc = subprocess.run(
-            [sys.executable, str(self.script), "--gate", gate, "--base", "base",
+            [sys.executable, str(self.script), *which, "--base", "base",
              "--author", author, "--store", str(self.store)],
             cwd=self.repo, env=env, capture_output=True, text=True,
         )  # fmt: skip
         return proc.returncode, proc.stdout + proc.stderr
+
+    def route(self, size="medium", author="claude-opus-5-5"):
+        return self.review(author=author, size=size)
+
+    def fold(self):
+        proc = subprocess.run(
+            [sys.executable, str(RUNNER), "fold", "--base", "base", "--store", str(self.store)],
+            cwd=self.repo, env=ENV, capture_output=True, text=True,
+        )  # fmt: skip
+        return proc.returncode, proc.stdout + proc.stderr
+
+    def router(self, answer):
+        self.reply("router", answer, model="claude-haiku-5-5")
+
+    def change(self, files):
+        """Commit `files` over the change, so base...head carries them too."""
+        for rel, text in files.items():
+            path = self.repo / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text)
+        self.run("git", "add", "-A")
+        self.run("git", "commit", "-qm", "more")
+
+    def latest(self, gate="code-review"):
+        return next(r for r in reversed(self.records()) if r["gate"] == gate)
 
     def reply(self, seat, answer, model="claude-sonnet-5-5", **usage):
         """A seat's reply: the captured finder envelope around `answer`."""
@@ -473,6 +500,297 @@ def review_row_folds_in_shadow(script):
     )  # fmt: skip
 
 
+# --- the router ------------------------------------------------------------------------------
+
+SKIP = {"class": "trivial", "reviews": []}
+
+
+def router_skip_caught(script):
+    f = Fixture(script)
+    shutil.copy(FIXTURES / "replies/router-skips.json", f.stub / "replies/router.json")
+    why = expect(
+        "a router that skips the required review", f.route(), 1,
+        "review: route: code-review sits: the router skipped it; convened by the rule:"
+        " calc.py is under its inputs",
+        "review: code-review: F1 error calc.py:5:", "review: fail: code-review fail",
+    )  # fmt: skip
+    if why:
+        return why
+    route = f.latest()["review"]["route"]
+    if route["rows"]["code-review"] != {
+        "sits": True, "rule": "calc.py is under its inputs", "router_skipped": True
+    }:  # fmt: skip
+        return f"the record does not say the router skipped it: {route}"
+    call = f.calls()[0]
+    argv = call["argv"]
+    if (
+        call["seat"] != "router"
+        or argv[argv.index("--model") + 1] != "claude-haiku-5-5"
+    ):
+        return f"the first seat was not the Haiku router: {call['seat']} {argv}"
+    if FLOOR.strip() in call["prompt"] or "+4 -2 calc.py" not in call["prompt"]:
+        return f"the router was not given the paths alone:\n{call['prompt']}"
+    return None
+
+
+def router_cannot_lower_class(script):
+    f = Fixture(script)
+    f.router(SKIP)
+    why = expect(
+        "a router that sizes the change below its class", f.route(), 1,
+        "review: route: class medium (given medium; the router cannot lower it to trivial)",
+    )  # fmt: skip
+    if not why and f.latest()["review"]["route"]["class"] != "medium":
+        why = f"the recorded class is not medium: {f.latest()['review']['route']}"
+    return why
+
+
+TWO_ROWS = """
+[[gate]]
+id = "code-review"
+kind = "review"
+inputs = ["**/*.py"]
+lens = "code"
+reviewers = ["claude-sonnet-5-5", "claude-opus-5-5"]
+
+[[gate]]
+id = "docs-review"
+kind = "review"
+inputs = ["**/*.md"]
+lens = "docs"
+reviewers = ["claude-sonnet-5-5", "claude-opus-5-5"]
+"""
+
+
+def router_addition_reads_and_folds(script):
+    f = Fixture(script)
+    f.registry(TWO_ROWS)
+    f.change({"calc.py": (FIXTURES / "base/calc.py").read_text()})
+    f.run("git", "tag", "-f", "base")
+    f.change({"calc.py": (FIXTURES / "floor/calc.py").read_text()})
+    f.router({"class": "medium", "reviews": [
+        {"gate": "code-review", "why": "calc.py is code"},
+        {"gate": "docs-review", "why": "the docstring of percent changed"},
+    ]})  # fmt: skip
+    why = expect(
+        "a row the router adds", f.route(), 1,
+        "review: route: docs-review sits: named by the router: the docstring of percent changed",
+        "review: docs-review: F1 error calc.py:5:",
+    )  # fmt: skip
+    if why:
+        return why
+    docs = [c for c in f.calls() if c["seat"] == "finder"][-1]["prompt"]
+    if FLOOR.strip() not in docs:
+        return f"the added row's finder did not read the change:\n{docs}"
+    return expect(
+        "the fold of a row selection left out", f.fold(), 1,
+        "FAIL docs-review: fail: 1 verified blocking finding",
+    )  # fmt: skip
+
+
+def router_unavailable_falls_back(script):
+    f = Fixture(script)
+    (f.stub / "replies/router.json").unlink()
+    why = expect(
+        "a router with no reply", f.route(), 1,
+        "review: route: the router gave no usable route: the router on claude-haiku-5-5"
+        " exited 1 with no readable reply",
+        "the rule routes alone", "review: route: code-review sits: calc.py is under its inputs",
+    )  # fmt: skip
+    if (
+        not why
+        and "router_skipped" in f.latest()["review"]["route"]["rows"]["code-review"]
+    ):
+        why = "an unavailable router was recorded as having skipped the row"
+    return why
+
+
+def router_unknown_gate_falls_back(script):
+    f = Fixture(script)
+    f.router({"class": "large", "reviews": [{"gate": "no-such-review", "why": "x"}]})
+    return expect(
+        "a router naming no registered row", f.route(), 1,
+        "review: route: the router gave no usable route:",
+        "names no review row; the rule routes alone",
+        "review: route: class medium (given medium)\n",
+    )  # fmt: skip
+
+
+SECURITY_ROW = """
+[[gate]]
+id = "security-review"
+kind = "review"
+inputs = ["crypto/**"]
+lens = "security"
+reviewers = ["claude-sonnet-5-5", "claude-opus-5-5"]
+"""
+
+
+def sensitive_path_sizes_large(script):
+    f = Fixture(script)
+    f.row(SECURITY_ROW)
+    f.change({"auth/token.py": "TTL = 60\n"})
+    f.router(SKIP)
+    why = expect(
+        "a trivial claim on a sensitive path", f.route(size="trivial"), 1,
+        "review: route: class large (given trivial; auth/token.py is a sensitive path)",
+        "review: route: security-review sits: the router skipped it; convened by the rule:"
+        " a large change gets the security lens",
+    )  # fmt: skip
+    if not why and "security-review" not in {r["gate"] for r in f.records()}:
+        why = "the security row recorded no verdict"
+    return why
+
+
+def large_change_seats_security_lens(script):
+    f = Fixture(script)
+    f.row(SECURITY_ROW)
+    f.router({"class": "large", "reviews": [{"gate": "code-review", "why": "code"}]})
+    return expect(
+        "a large change", f.route(size="large"), 1,
+        "review: route: security-review sits: the router skipped it; convened by the rule:"
+        " a large change gets the security lens",
+        "review: security-review: F1 error calc.py:5:",
+    )  # fmt: skip
+
+
+def trivial_runs_no_review(script):
+    f = Fixture(script, "guard", "unreproduced")
+    f.router(SKIP)
+    why = expect(
+        "a trivial change", f.route(size="trivial"), 0,
+        "review: route: code-review does not sit: a trivial change runs no review",
+        "review: code-review: pass: not convened: a trivial change runs no review",
+    )  # fmt: skip
+    if why:
+        return why
+    if [c["seat"] for c in f.calls()] != ["router"]:
+        return f"a seat other than the router sat on a trivial change: {f.calls()}"
+    rec = f.latest()
+    if rec["verdict"] != "pass" or rec["review"]["independence"] != "none":
+        return f"the not-convened record is not a pass by no seat: {rec}"
+    return None
+
+
+def held_verdict_not_covered(script):
+    f = Fixture(script)
+    if f.review()[0] != 1:
+        return "the floor change did not fail its direct review"
+    f.router(SKIP)
+    why = expect(
+        "a trivial route after a failed review", f.route(size="trivial"), 0,
+        "review: route: code-review does not sit",
+    )  # fmt: skip
+    if not why and f.latest()["verdict"] != "fail":
+        why = f"a not-convened pass covered the failed review: {f.latest()}"
+    return why
+
+
+# --- the veto and dissent ------------------------------------------------------------------
+
+
+def escalated_veto_blocks(script):
+    f = Fixture(script, replies="escalated")
+    why = expect(
+        "a verifier's dissent the adjudicator overrules", f.review(author="claude-sonnet-5-5"), 1,
+        "review: veto: F1 by the finder on claude-opus-5-5, upheld by the adjudicator F1"
+        " on claude-opus-5-5",
+        "review: dissent: F1: the verifier F1 on claude-sonnet-5-5 voted clears:",
+        "overruled: the adjudicator F1 on claude-opus-5-5",
+    )  # fmt: skip
+    if why:
+        return why
+    rec = f.latest()["review"]
+    dissent = rec["dissent"]
+    if [(d["seat"], d["vote"], d["overruled_by"]) for d in dissent] != [
+        ("verifier F1", "clears", "the adjudicator F1 on claude-opus-5-5")
+    ]:
+        return f"the dissent is not the verifier's, overruled by the adjudicator: {dissent}"
+    judge = rec["seats"][-1]
+    if judge["seat"] != "adjudicator F1" or judge["independence"] != {
+        "author": "cross-model", "finder": "context-only", "verifier": "cross-model"
+    }:  # fmt: skip
+        return f"the adjudicator's seat is not recorded with its labels: {judge}"
+    prompt = f.calls()[-1]["prompt"]
+    if "## The dissent\nThe verifier found it not reproduced:" not in prompt:
+        return f"the adjudicator was not shown the dissent:\n{prompt[-400:]}"
+    return None
+
+
+def adjudicator_clears_downgrades(script):
+    f = Fixture(script, replies="escalated")
+    shutil.copy(
+        FIXTURES / "replies/adjudicator-clears.json",
+        f.stub / "replies/adjudicator-F1.json",
+    )
+    why = expect(
+        "an adjudicator agreeing with the verifier", f.review(author="claude-sonnet-5-5"), 0,
+        "downgraded: the verifier did not reproduce it, nor did the adjudicator on claude-opus-5-5:",
+        "review: dissent: F1: the finder on claude-opus-5-5 voted blocks:",
+    )  # fmt: skip
+    if not why and f.latest()["review"]["veto"]:
+        why = (
+            f"a cleared finding was recorded as a veto: {f.latest()['review']['veto']}"
+        )
+    return why
+
+
+def no_stronger_seat_no_escalation(script):
+    f = Fixture(script)
+    no = {"reproduced": False, "reason": "not shown"}
+    f.reply("verifier-F1", no, model="claude-opus-5-5")
+    why = expect(
+        "a dissent from the strongest seat", f.review(), 0,
+        "downgraded: the verifier did not reproduce it: not shown",
+    )  # fmt: skip
+    if not why and [c["seat"] for c in f.calls()] != ["finder", "verifier-F1"]:
+        why = f"a seat outranking no one was convened: {[c['seat'] for c in f.calls()]}"
+    return why
+
+
+def veto_names_its_seats(script):
+    f = Fixture(script)
+    why = expect("a verified finding", f.review(), 1, "review: veto: F1 by the finder")
+    veto = f.latest()["review"]["veto"]
+    want = [{"finding": "F1", "seat": "finder", "model": "claude-sonnet-5-5",
+             "upheld_by": ["the verifier F1 on claude-opus-5-5"]}]  # fmt: skip
+    if not why and veto != want:
+        why = f"the veto was recorded as {veto}"
+    return why
+
+
+def downgrade_records_finder_dissent(script):
+    f = Fixture(script, "guard", "unreproduced")
+    why = expect("a refuted finding", f.review(), 0, "review: dissent: F1: the finder")
+    dissent = f.latest()["review"]["dissent"]
+    want = [("finder", "blocks", "its reproducing check passed at the head (exit 0)")]
+    if not why and [(d["seat"], d["vote"], d["overruled_by"]) for d in dissent] != want:
+        why = f"the finder's dissent was recorded as {dissent}"
+    return why
+
+
+def every_verdict_carries_the_fields(script):
+    blocked = Fixture(script)
+    blocked.review()
+    lone = Fixture(script)
+    lone.reply("finder", {"findings": []})
+    lone.review()
+    broken = Fixture(script)
+    broken.row('budget = { finder_seconds = "5" }')
+    broken.review()
+    got = [
+        (r["verdict"], r["review"].get("independence"), r["review"].get("veto") is not None,
+         r["review"].get("dissent") is not None)
+        for r in (blocked.latest(), lone.latest(), broken.latest())
+    ]  # fmt: skip
+    want = [
+        ("fail", "context-only", True, True),
+        ("pass", "cross-model", True, True),
+        ("error", "none", True, True),
+    ]
+    return None if got == want else f"the verdicts carried {got}, not {want}"
+
+
 # (case, control it proves, text in run/review.py, the text with the control removed)
 CASES = [
     (reproduced_finding_blocks, "a verified finding blocks", "f.update(verified=why is None, blocks=why is None)", "f.update(verified=why is None, blocks=False)"),
@@ -495,6 +813,22 @@ CASES = [
     (check_row_never_reviewed, "only a review row is reviewed", ' or row["kind"] != "review"', ""),
     (change_another_row_claims, "a row reads only its own and unclaimed paths", 'if p and (gate.matches(row, p) or not any(gate.matches(r, p) for r in rows))', "if p"),
     (review_row_folds_in_shadow, "the record carries the verdict", '            "verdict": verdict,\n', '            "verdict": "pass",\n'),
+    (router_skip_caught, "the rule's floor under the router", 'entry = {"sits": rule is not None or pick is not None}', 'entry = {"sits": pick is not None}'),
+    (router_cannot_lower_class, "the router only raising the class", 'if CLASSES.index(size) > CLASSES.index(plan["class"]):', "if True:"),
+    (router_addition_reads_and_folds, "an added row reading the whole change", "    if whole and not diff.strip():\n", "    if False:\n"),
+    (router_unavailable_falls_back, "the fallback when the router is unavailable", "except (Undecided, ValueError) as e:", "except ValueError as e:"),
+    (router_unknown_gate_falls_back, "the router's rows checked against the registry", 'and item.get("gate") in ids', ""),
+    (sensitive_path_sizes_large, "a sensitive path sizing the change large", 'if sensitive and given != "large":', "if False:"),
+    (large_change_seats_security_lens, "the security lens on a large change", 'elif size == "large" and r.get("lens") == "security":', "elif False:"),
+    (trivial_runs_no_review, "no review for a trivial change", '    if size == "trivial":\n        return {}\n', "    if False:\n        return {}\n"),
+    (held_verdict_not_covered, "a held verdict kept over a not-convened pass", "elif gid in chosen and gid not in held:", "elif gid in chosen:"),
+    (escalated_veto_blocks, "the escalation of a dissent", "        if judge is None:\n", "        if True:\n"),
+    (adjudicator_clears_downgrades, "the adjudicator's answer deciding", '        if answer["reproduced"]:\n            return None\n', "        if True:\n            return None\n"),
+    (no_stronger_seat_no_escalation, "escalating only to a stronger seat", "above = [m for m in reviewers if rank(m) > rank(verifier)]", "above = list(reviewers)"),
+    (veto_names_its_seats, "the veto recorded", '    if finding["blocks"]:\n', "    if False:\n"),
+    (downgrade_records_finder_dissent, "the dissent recorded", 'if v["vote"] != won:', "if False:"),
+    (every_verdict_carries_the_fields, "the weakest label deciding independence", 'return "context-only" if "context-only" in labels else "cross-model"', 'return "cross-model"'),
+    (every_verdict_carries_the_fields, "dissent on a verdict no seat reached", 'state.setdefault("dissent", [])', "pass"),
 ]  # fmt: skip
 
 
