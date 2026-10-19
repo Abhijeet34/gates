@@ -151,6 +151,21 @@ def base_survivor():
     )
 
 
+def new_code_survivor():
+    """A mutant of code the change adds has no base counterpart, and is named as in the diff run."""
+    repo = build("rust", "weak")
+    edit(repo, "src/lib.rs", "        assert_eq!(double(3), 6);\n", "")
+    edit(repo, "src/lib.rs", "        assert!(is_even(2));\n", "")
+    commit(repo, "add is_even untested and drop the tests")
+    return expect(
+        "rust: untested new code plus a deleted test is named",
+        gate("rust", repo),
+        1,
+        f"mutation: src/lib.rs: asserts 1 -> 0: {FULL}",
+        SURVIVOR_RS,
+    )
+
+
 def weakenings():
     rs_ignore = build("rust", "strong")
     retag(rs_ignore)
@@ -460,7 +475,7 @@ def main():
         results = real_cases(seen)
     else:
         results = shapes("rust", SURVIVOR_RS) + shapes("typescript", SURVIVOR_TS)
-        results += [base_survivor(), *weakenings(), *scoping(), *refusals()]
+        results += [base_survivor(), new_code_survivor(), *weakenings(), *scoping(), *refusals()]
         results += runner_cases()
     failures = [r for r in results if r]
     for f in failures:

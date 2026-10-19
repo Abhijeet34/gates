@@ -18,8 +18,9 @@ typescript  Stryker with its vitest runner over the package at D, limited with
 When the change deletes or weakens a test under D, the row drops the diff limit:
 --in-diff matches only code under test, so a change to tests alone would mutate
 nothing. It mutates every source under D at HEAD, and a survivor is a finding
-only when the same mutant was killed at the merge base, because then the change
-is what let it live. README.md, "The mutation rows", owns what counts as deleting
+unless the same mutant also survived at the merge base, because then the change
+did not let it live. A mutant of new code has no counterpart at the base, so it
+is named, as in the diff run. README.md, "The mutation rows", owns what counts as deleting
 or weakening a test per language and why.
 
 Exit status: 0 pass, 1 a mutant survived, 2 could not decide. Every exit 2 prints

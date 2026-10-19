@@ -725,7 +725,8 @@ Counts rather than removed lines, because a moved or reformatted test removes an
 What it misses: an assertion replaced by a weaker one (`assert_eq!(x, 5)` to `assert!(true)`) keeps every count, and a marker in a comment is counted like code.
 A test moved between files reads as a deletion and costs a full run, never a wrong verdict.
 
-In the full run a survivor is named only when the same mutant was killed at the merge base, which the row checks by running again on an export of the base, matched by file, function or mutator, replacement and the original source text.
+In the full run a survivor is named unless the same mutant also survived at the merge base, which the row checks by running again on an export of the base, matched by file, function or mutator, replacement and the original source text.
+A mutant of new code has no base counterpart and is named, as in the diff run.
 Without that, a test-only change would be charged every survivor the repository already had: on gh-axi, removing one `expect` gave 4,217 survivors at HEAD, all of them alive at the base too, so the row named none.
 
 **Pins.**
