@@ -20,7 +20,7 @@ Licensed under the Apache License 2.0; see `LICENSE` and `NOTICE`.
 | `run/scratch-guard.py` | The scratch guard, which runs a gate or suite and refuses a file it left behind outside its own `TMPDIR`; see "The scratch rows". |
 | `run/change-gates.py` | The contract, migration and fact rows over a change, read from a caller's `.github/changes.toml`; see "The change rows". |
 | `run/slop-rules.py` | The shadow slop rows (source-text assertions, symbol truth and the deterministic UI rules of STANDARDS) over a change; see "The slop rows". |
-| `run/fakes.py` | The fake rows: test doubles a caller's `.github/fakes.toml` does not declare, declared fakes with no real counterpart, and fakes past their freshness; see "The fake rows". |
+| `run/fakes.py` | The fake rows: test doubles a caller's `.github/fakes.toml` does not declare, declared fakes with no real counterpart, fakes past their freshness or drifted, and the GitHub record-and-compare and daily real smoke; see "The fake rows". |
 | `run/mutation.py` | The mutation rows: a mutant of a change's lines that no test kills, with a full run when the change deletes or weakens a test; see "The mutation rows". |
 | `run/budget-monitor.py` | The gate budget monitor: prints each budgeted step's weekly p50/p95, the alarm and the fix task text; see "The budget monitor". |
 | `bin/gates.py`, `bin/rollout.toml` | `gates bump` and `gates rollback`, which move callers' locks; see "Bumping". |
@@ -588,15 +588,15 @@ No workflow calls it: `BASE_SHA` comes from a caller, and a step is the maintain
 
 ## The fake rows
 
-`run/fakes.py undeclared|counterpart|stale [--base B] [--today D] [root]` holds a repository's test doubles to what it declares in `.github/fakes.toml`.
+`run/fakes.py undeclared|counterpart|stale|compare [--base B] [--today D] [root]` holds a repository's test doubles to what it declares in `.github/fakes.toml`.
 Its docstring owns the exit statuses (0 nothing to name, 1 a finding, 2 could not decide, with a typed `refused (TYPE)` line), and each finding is one line, `fakes: ROW: ...`.
 It is the first slice of the factory plan's real-tests row (r5, "P3a-RT"): the declaration, the fake lint and the stale-fake refusal.
-Mutation proof on changed code is the second slice (see "The mutation rows"), and GitHub record-and-compare with a daily real smoke a later one.
+Mutation proof on changed code is the second slice (see "The mutation rows"), and GitHub record-and-compare with a daily real smoke the third ("Record and compare", below).
 
 **What this replaces.**
 The sandbox report's task W8 (s1, section 9) was one real-tests policy task: a `fakes.toml` registry, a weekly contract or record-and-compare check per fake, a census gate that flags a new unregistered mock, and a seeded-defect proof per test, accepted when the census gate fails on a new `jest.mock` and a drifted fake fails its weekly check.
 The plan folded W8 into P3a-RT, and these rows are W8's registry and census gate.
-The census is widened from mock libraries to hand fakes and test-written programs, as the learning-loop report's fake lint asks (l1, 10.3), and the drift check is a declared freshness date here, which the record-and-compare slice will move.
+The census is widened from mock libraries to hand fakes and test-written programs, as the learning-loop report's fake lint asks (l1, 10.3), and the drift check is a declared freshness date, which `compare --write` moves.
 The plan review found "fake freshness not a merge refusal" in the earlier plan (r4, 4, R19); `stale` is that refusal.
 
 **The declaration.**
@@ -612,6 +612,12 @@ real_name = "gh"                                  # optional: the word it names 
 compare = "tests/compare-gh.sh"                   # the check against the real system
 recorded = 2026-10-19                             # the last passing record-and-compare
 max_age_days = 7                                  # optional, default 7
+drift = "2026-10-19: ..."                         # optional: written by compare --write
+
+[[fake.github]]                                   # optional: one per recorded reply
+request = "/repos/o/r/pulls?state=closed"         # a GET path on api.github.com
+recording = "tests/fixtures/gh/pulls.json"        # the reply the tests replay
+status = 200                                      # optional, default 200
 ```
 
 | Key | Why it is there |
@@ -621,11 +627,13 @@ max_age_days = 7                                  # optional, default 7
 | `names` | The "symbol" of 10.3: the names the lint gives the doubles this fake covers. |
 | `stands_for` | What real thing the fake stands in for, l1's "boundary" and "reason"; prose for the reviewer, checked only to be present. |
 | `real`, `real_name` | The file of this tree that calls the real thing, and the word it calls it by. An external API cannot be probed offline, so the tree's own call is what `counterpart` checks, and a declaration cannot outlive the seam it fakes. |
-| `compare` | "the record-and-compare command" (10.2 rule 3, 10.4), the source of truth to compare against. Nothing here runs it; the record-and-compare slice will. |
+| `compare` | "the record-and-compare command" (10.2 rule 3, 10.4), named in `stale`'s finding. For a GitHub fake it is `run/fakes.py compare --id ID`; for any other boundary, the caller's own command. |
 | `recorded` | "a recording date": the day the last compare passed, which `stale` reads. |
 | `max_age_days` | "its schedule"; the default is 7 because every boundary in l1's 10.4 table is compared weekly. |
+| `drift` | The "or red" of l1's fake freshness (10.3): the last compare's first difference, which `stale` refuses until a matching compare clears it. |
+| `[[fake.github]]` | Each recorded GitHub reply the fake's tests replay, and the request that produced it, so `compare` can ask again. |
 
-Left out: a closed list of boundary classes, because rule 2's "paid or rate-limited API or the phone channel" is a judgement a reviewer makes from `stands_for`, and a field for a red compare, which the compare slice will write.
+Left out: a closed list of boundary classes, because rule 2's "paid or rate-limited API or the phone channel" is a judgement a reviewer makes from `stands_for`.
 A key the table does not name is refused (`bad-declaration`), since a misspelt `max_age` would otherwise fall back to 7 days without a word, and `recorded` must be a bare TOML date.
 
 **What a test double is, per language.**
@@ -697,14 +705,74 @@ shadow_since = 2026-10-19
 With `--base`, `undeclared` judges only the lines a change added, so a repository's existing doubles do not turn its next change red; the change that adds or edits `.github/fakes.toml` sweeps every test file, so deleting a declaration cannot pass, and that first sweep is where existing doubles become declarations or conversion tasks (l1, 10.3: "its first run is a baseline").
 l1 asks for a stale fake's verdict to be `error`; `run/gate.py` records any non-zero exit as `fail`, which refuses in the fold the same way, so the runner is unchanged here.
 `.ci/test-fakes.py` runs the three rows through `run/gate.py`, folds each red one to `shadow`, and shows a change to an unrelated file leaves them unselected.
-Five registry rows prove the script by execution (`fakes-undeclared-program`, `fakes-undeclared-mock`, `fakes-undeclared-hand`, `fakes-counterpart`, `fakes-stale`).
+Five registry rows prove these rows by execution (`fakes-undeclared-program`, `fakes-undeclared-mock`, `fakes-undeclared-hand`, `fakes-counterpart`, `fakes-stale`).
 No workflow calls it: `BASE_SHA` and a `.github/fakes.toml` come from a caller, and a step is the maintainer's weekly batch.
+
+**Record and compare.**
+`run/fakes.py compare [--id ID] [--api URL] [--out DIR] [--write] [--today D] [root]` asks GitHub each `[[fake.github]]` request again and compares the fresh reply with the recording the caller's tests replay.
+It is l1's "record-and-compare jobs and real smokes for ... GitHub" (10.6, R-3), accepted when "a hand-edited fixture field fails the weekly compare", and the plan review's "GitHub record-and-compare and daily real smoke dropped" (r4, 4, R19).
+A finding is `fakes: compare: ID: RECORDING (GET REQUEST): ...`, one per difference, in key order.
+
+The shape compared is the JSON type tree, so a value that legitimately moves (an id, a count, a timestamp, a list's length) is not drift and a field added, removed or retyped is:
+
+| Rule | Why |
+| --- | --- |
+| Types are object, array, string, number, boolean and null; an integer and a float are both number. | JSON has one number type, and GitHub's `2` and `2.0` are one field. |
+| null matches any type. | GitHub answers null for an optional value it lacks (`description`, `merged_at`, `license`), so null to string is a value filled in. |
+| An array's element shape is the merge of every item's; an empty array matches any array. | A list's length is a value, and an empty list shows no item to compare. |
+| A key some recorded items lack may be missing from every real item; a key every recorded item carries that some real items lack is `removed ... from some items`. | The issues list mixes issues and pull requests, and only the second carry `pull_request`. |
+| Another status is drift (`status 200 recorded, 404 now`) and its body is not compared. | l1, 10.4 diffs "JSON shape and status codes". |
+| A redirect is a status, never followed. | Following it would carry the token to wherever it points. |
+| 429, or 403 with `x-ratelimit-remaining: 0`, refuses `rate-limited`; a 5xx, a timeout, a cut connection or a reply that is not JSON refuses `network`. | Neither says anything about the fake, so neither is drift and neither is a pass. |
+
+Left out: a per-field ignore list, because nothing measured needs one, and an object whose keys are values (`/repos/o/r/languages`), which is not a fit for a shape fake.
+
+The request is a GET by construction: `fetch` builds only `method="GET"`, and a declared `request` carrying a method, a `//` host or a `..` segment is refused (`bad-declaration`).
+It sends no credential unless it runs in GitHub Actions (`GITHUB_ACTIONS=true`) with `GITHUB_TOKEN` set and `--api` left at `https://api.github.com`, so a caller's CI uses the job token it already has, a local run is unauthenticated (60 requests an hour) and never reads a login, and a token never reaches a fixture server.
+No API version header is sent, so the reply is the one the caller's own `gh` or client gets from GitHub's default version, and a change of that default is drift the caller would meet.
+
+`--out DIR` keeps each fresh reply at DIR plus its recording's path, a new replay's first recording included, so recording a fake is `compare --out DIR` then copying the reply in.
+The recording itself is never rewritten: its values are what the caller's tests assert on.
+`--write` moves a matching fake's `recorded` to today and drops its `drift`, and gives a drifted fake `drift = "DATE: FIRST DIFFERENCE (and N more)"`, which `stale` refuses whatever `recorded` says.
+It edits `.github/fakes.toml` by line, keeping comments and layout, and re-reads the result: a declaration it cannot edit that way (an inline table, say) refuses `tool-error` and is left as it was.
+
+**The daily real smoke** is the same command over every declared GitHub fake, which a scheduled job runs and which runs locally:
+
+```bash
+python3 "$GATES_DIR/run/fakes.py" compare --out "$RUNNER_TEMP/fakes-smoke"
+```
+
+Exit 0 means every reply matched in shape; 1 names each drift, even when another fake could not be fetched; 2 is a refusal, including no GitHub fake declared, since a smoke that compared nothing is no pass.
+A scheduled job cannot commit, so its drift goes red on the run and a maintainer runs `compare --write` locally to record it in the declaration; a fake nobody re-compares goes stale at its `max_age_days` anyway.
+Measured 2026-10-19 against `api.github.com`, unauthenticated, on a throwaway caller declaring three replays of this repository (the repository, five closed pull requests, five issues of any state): `--out` recorded all three, a second compare matched them, and hand-editing the repository recording (`owner.id` retyped, `default_branch` dropped, `made_up` added) gave exactly three findings and a `drift` that `stale` then refused.
+Behind an HTTP proxy that cut the larger replies short, the same run refused `network` and wrote nothing, which is the case the refusal exists for.
+
+**The rows.**
+`fakes-stale` above already refuses a drifted fake; a caller adds one row that compares on a change to a recording or the declaration, scoped so no other change selects it, in shadow like the rest:
+
+```toml
+[[gate]]
+id = "fakes-compare"
+inputs = [".github/fakes.toml", "tests/fixtures/gh/**"]
+scoped = true
+run = 'python3 "$GATES_DIR/run/fakes.py" compare'
+shadow_since = 2026-10-19
+```
+
+Its cache key is its inputs, so a pass is reused until a recording changes, and the daily smoke is what catches GitHub moving underneath an unchanged one.
+`.ci/test-fakes.py` proves the comparison against `.ci/fixtures/gh-recorded-server.py`, a loopback server of recorded replies that lives exactly as long as the command it wraps and logs each request's method and `Authorization`, and runs this row through `run/gate.py` with a hand-edited recording folding to `shadow`.
+Two registry rows prove it by execution through the same server: `fakes-compare` (a field GitHub stopped sending) and `fakes-stale-drift`.
+
+**The workflow edit**, which waits for the maintainer's weekly batch because no workflow is edited here:
+
+- In this repository, `.github/workflows/shared-fakes-smoke.yml`: `on: workflow_call`, `permissions: contents: read`, one `ubuntu-latest` job with `timeout-minutes: 10` and the three bootstrap steps of `shared-guard-generated-files.yml` (the caller checkout, the `.gates` checkout at `job.workflow_sha`, and "Resolve the locked gates commit"), then one step with `env: GITHUB_TOKEN: ${{ github.token }}` running the smoke command above; a `gate-registry.toml` row naming the file in the same commit.
+- In each caller that declares a GitHub fake, `.github/workflows/fakes-smoke.yml`: `on: schedule: - cron: "41 5 * * *"` and `workflow_dispatch:`, `permissions: contents: read`, and one job, `uses: Abhijeet34/gates/.github/workflows/shared-fakes-smoke.yml@main`.
 
 ## The mutation rows
 
 `run/mutation.py rust|typescript --base B [--dir D] [--in-place] [root]` is the second slice of the factory plan's real-tests row (r5, "P3a-RT"): mutation proof on changed code through cargo-mutants `--in-diff` and Stryker `--incremental`, with a full run whenever a change deletes tests.
 Its docstring owns the exit statuses (0 pass, 1 a mutant survived, 2 could not decide, with a typed `refused (TYPE)` line), and each finding is one line, `mutation: survived: FILE:LINE:COL: ...`.
-GitHub record-and-compare and the daily real smoke are a later slice.
+GitHub record-and-compare and the daily real smoke are the third (see "The fake rows").
 
 **What it judges.**
 A mutant counts when it touches a line `git diff B...HEAD` adds or rewrites under D: cargo-mutants filters by `--in-diff`, and Stryker by `--mutate FILE:A-B` per changed range.
