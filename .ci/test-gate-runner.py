@@ -233,7 +233,7 @@ def scoped_row_ignores_unrelated_paths(runner):
     f.commit({".github/gates.toml": REGISTRY + SCOPED_ROW.replace("true", '"yes"')})
     rc, ids, out = f.selected(lock)
     if rc != 2 or "scoped must be true or false" not in out:
-        return f"scoped = \"yes\" was not refused as a bad registry (exit {rc}): {out.strip()}"
+        return f'scoped = "yes" was not refused as a bad registry (exit {rc}): {out.strip()}'
     return None
 
 
