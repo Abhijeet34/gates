@@ -814,14 +814,15 @@ def compare(root, api, out, only, write, fakes, today):
     for index, f in chosen:
         try:
             lines = compare_fake(root, api, out, f)
+            replies += len(f["github"])
+            found += [f"{f['id']}: {line}" for line in lines]
+            if write:
+                more = f" (and {len(lines) - 1} more)" if len(lines) > 1 else ""
+                rewrite(
+                    root, index, today, f"{today}: {lines[0]}{more}" if lines else None
+                )
         except Refused as e:
             refused.append(e)
-            continue
-        replies += len(f["github"])
-        found += [f"{f['id']}: {line}" for line in lines]
-        if write:
-            more = f" (and {len(lines) - 1} more)" if len(lines) > 1 else ""
-            rewrite(root, index, today, f"{today}: {lines[0]}{more}" if lines else None)
     return found, refused, replies, len(chosen)
 
 

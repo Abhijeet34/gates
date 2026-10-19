@@ -1163,6 +1163,24 @@ def unwritable_layout():
     return None
 
 
+def drift_beside_an_unwritable_fake():
+    """A drift is still reported when --write cannot edit a later fake: exit 1, with the tool-error beside it."""
+    config = github("a", (("/a", "tests/fixtures/repo.json"),)) + github(
+        "b", (("/b", "tests/fixtures/repo.json"),), recorded=None, **{'"recorded"': "2026-10-15"}
+    )
+    here = tree(recorded(config=config))
+    replies = {"/a": reply({"id": 1}), "/b": reply(REPO)}
+    rc, out, _ = serve(here, replies, "--write", "--today", TODAY)
+    if (
+        rc != 1
+        or "fakes: compare: a: tests/fixtures/repo.json (GET /a): removed .full_name"
+        not in out
+        or "refused (tool-error): cannot rewrite [[fake]] 'b'" not in out
+    ):
+        return f"a drift beside an unwritable fake: exit {rc}:\n{out}"
+    return None
+
+
 def compare_under_the_runner():
     """The caller's compare row: scoped to the declaration and the recordings, red is shadow."""
     date = datetime.datetime.now(datetime.UTC).date().isoformat()
@@ -1217,6 +1235,7 @@ def main():
         drift_beside_a_refusal,
         drift_marks_stale,
         unwritable_layout,
+        drift_beside_an_unwritable_fake,
         compare_under_the_runner,
     ]
     failures += [case() for case in singles]
