@@ -805,6 +805,12 @@ COMPARES = [
         "(GET /repos/o/r): retyped .[].labels[].name from string to number",
     ),
     (
+        "a reply larger than one read is read whole",
+        recorded([{"number": 1, "title": "t"}]),
+        {"/repos/o/r": reply([{"number": n, "title": "t" * 64} for n in range(4000)])},
+        0,
+    ),
+    (
         "a key only some items carry is a value, not shape",
         recorded([{"number": 1, "draft": True}, {"number": 2}]),
         {"/repos/o/r": reply([{"number": 3}])},

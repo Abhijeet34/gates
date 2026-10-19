@@ -685,13 +685,19 @@ def fetch(api, request):
         headers["Authorization"] = f"Bearer {token}"
     req = urllib.request.Request(api + request, headers=headers, method="GET")
     try:
-        with urllib.request.build_opener(NoRedirect).open(req, timeout=TIMEOUT) as r:
-            status, replied, body = r.status, r.headers, r.read(MAX_REPLY + 1)
-    except urllib.error.HTTPError as e:
-        status, replied, body = e.code, e.headers, e.read(MAX_REPLY + 1)
+        try:
+            reply = urllib.request.build_opener(NoRedirect).open(req, timeout=TIMEOUT)
+        except urllib.error.HTTPError as e:
+            reply = e
+        with reply:
+            status, replied = reply.status, reply.headers
+            # One read(n) may return less than is there, so read to the end.
+            body = b""
+            while len(body) <= MAX_REPLY and (chunk := reply.read(2**16)):
+                body += chunk
     except (OSError, http.client.HTTPException) as e:
         reason = getattr(e, "reason", e)
-        raise Refused("network", f"GET {request}: {reason}") from e
+        raise Refused("network", f"GET {request}: {reason!r}") from e
     if status == 429 or (status == 403 and replied.get("x-ratelimit-remaining") == "0"):
         raise Refused(
             "rate-limited",
@@ -706,7 +712,7 @@ def fetch(api, request):
 
 def compare_fake(root, api, out, f):
     """Drift lines for one fake's replays; Refused when it cannot be compared."""
-    found = []
+    found, missing = [], []
     for r in f["github"]:
         where = f"{r['recording']} (GET {r['request']})"
         status, body = fetch(api, r["request"])
@@ -714,11 +720,12 @@ def compare_fake(root, api, out, f):
             kept = out / r["recording"]
             kept.parent.mkdir(parents=True, exist_ok=True)
             kept.write_bytes(body)
-        # Read after the fetch, so `--out` gives a new replay its first recording.
+        # Read after the fetch, so `--out` gives every new replay its first recording.
         try:
             recorded = json.loads((root / r["recording"]).read_bytes())
-        except FileNotFoundError as e:
-            raise bad(f["id"], f"recording {r['recording']} does not exist") from e
+        except FileNotFoundError:
+            missing.append(r["recording"])
+            continue
         except (ValueError, OSError) as e:
             raise bad(f["id"], f"recording {r['recording']} is not JSON: {e}") from e
         if status != r["status"]:
@@ -731,6 +738,8 @@ def compare_fake(root, api, out, f):
                 "network", f"GET {r['request']}: the reply is not JSON: {e}"
             ) from e
         found += [f"{where}: {d}" for d in drift(shape(recorded), shape(real))]
+    if missing:
+        raise bad(f["id"], f"recording {', '.join(missing)} does not exist")
     return found
 
 
