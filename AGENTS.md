@@ -5,7 +5,7 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 - **This repository was cut from `Abhijeet34/automation` at `10ff49e1759885c60b8fe56be46ce16db4ac22af` as a history-free snapshot.**
   The private `automation` repository holds the history and the dated records these files cite; a reference here to a measurement's date is the pointer into that history.
 - **This repository is public, so tracked text names no private repository, alert count, run id or local path.**
-  Those measurements stay in `automation`; a comment here states the finding and its date, never where it was measured.
+  A comment here states the finding and its date, never where it was measured.
 - **`gitleaks dir .` in `.ci/check.sh` scans ignored directories too**, so an untracked log quoting a fixture value (a pooled worktree's `.fm-evidence/`, say) fails `secrets` locally while CI passes.
   Validate in a clean clone before reading that failure as the branch's.
 - **Each `shared-*.yml` is a bootstrap; the gate is a `run/` script it runs from a checkout of `job.workflow_repository` at the commit the caller's `.github/gates.lock` (absent here) names, or at `job.workflow_sha` when there is none.**
@@ -22,10 +22,9 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 - **`gitleaks git` exits 0 and reports "no leaks found" when it scanned nothing, and counts only commits it read a patch from.**
   `.githooks/pre-push` compares the scan's count with its own `rev-list` count and refuses a short scan; `.ci/gitleaks/test-pre-push.sh` pins that, including a binary-only push that must still land.
 - **Merging a change to anything `install.sh` deploys does not put it in service on this machine; `system-maintenance/git-hooks/install.sh check` after the merge is what shows it.**
-  On 2026-09-17 the merged exposure gate was absent and two earlier merges were still stale in `~/.git-hooks`.
-  A sandboxed agent shell cannot run `deploy` (`~/.git-hooks` and `~/.gitconfig` answer `Operation not permitted`, every `cp` fails before any rename, so nothing half-lands); that write is deliberately not granted, so the deploy is a one-off unsandboxed act with the fleet confirmed idle.
+  A sandboxed agent shell cannot run `deploy` (`~/.git-hooks` and `~/.gitconfig` answer `Operation not permitted`, and nothing half-lands); that write is deliberately not granted, so the deploy is a one-off unsandboxed act with the fleet confirmed idle.
 - **Every workflow file is held to three properties by `.ci/test-workflow-policy.sh`**: no `pull_request_target`, `workflow_run` or `issue_comment` and no `self-hosted` anywhere in the file, comments included, and no secret but `GITHUB_TOKEN`.
-  Reword a comment rather than weakening the match; the list form `on: [push, workflow_run]` is why it matches words, not keys.
+  Reword a comment rather than weakening the match: the list form `on: [push, workflow_run]` is why it matches words, not keys.
 - **A skipped job satisfies a required status check**, so `checks` must never skip on a pull request; `.ci/checks-verdict.sh` allows no skip and `.ci/test-checks-verdict.sh` fails when a job in `ci.yml` is missing from `checks.needs`.
 - **A fixture repository must not inherit this machine's git config**: set `GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null`, or `core.hooksPath` runs the global hooks inside the fixture.
   `test-global-hooks.sh` is the exception and must run bare, because it deploys into a throwaway `HOME` whose global config it writes.
@@ -36,13 +35,13 @@ This file is the project's committed home for project-intrinsic agent knowledge:
   Adding a workflow, hook, `run/` file or `.ci` script means adding its row in the same commit; a git-lfs shim or an installer goes under `[[exempt]]` with a reason.
 - **`bin/gates.py bump` and `rollback` move a caller's `.github/gates.lock` (absent here); README.md, "Bumping", owns the design and `bin/rollout.toml` the stages.**
   `createCommitOnBranch` keeps a modified file's mode but adds every new file `100644` (measured 2026-10-16), so a caller missing a synced hook is refused and needs one `sync.sh` push first.
-  `.ci/test-bump.py` runs the tool against fixture callers through `.ci/fixtures/gh-stub.py`, which models that behaviour; change both together.
+  `.ci/test-bump.py` runs it against fixture callers through `.ci/fixtures/gh-stub.py`, which models that; change both together.
 
 - **The machine-wide pre-push starts its four gates together and prints each one's output whole; a new gate is a `start` line in `system-maintenance/git-hooks/pre-push` plus a `PAYLOAD` row in `install.sh`, with a shared module before its importers and the dispatcher last.**
   `signature-check` refuses an unsigned commit pushed to `refs/heads/main` only, so a fixture that pushes `main` through the deployed hooks must sign its commits (`test-global-hooks.sh` sets `commit.gpgsign`) and a gates-proof input pushes a branch.
   `system-maintenance/git-hooks/README.md`, "The gates run together" and "The signature check", owns the design.
 - **`run/gate.py` reads a caller's `.github/gates.toml` (absent here), a registry separate from `.ci/gate-registry.toml`, which proves the gate files this repository ships.**
-  Its fold never passes a selected blocking gate, review and docs rows included, without a `pass` record for the head, and a shadow row blocks only once it meets the promotion rule in its docstring; `.ci/test-gate-runner.py` re-runs each case against a copy with its control removed, so a change that moves a mutation's anchor text fails the suite until the anchor follows.
+  Its fold never passes a selected blocking gate without a `pass` record for the head, and a shadow row blocks only once it meets the promotion rule in its docstring; `.ci/test-gate-runner.py` re-runs each case with its control removed, so moving a mutation's anchor text fails the suite until the anchor follows.
 - **`run/permissions-diff.py` refuses any change to security design 7.2's protected surface, including its own `SURFACE`, a workflow's `permissions:` blocks and an existing `surface = "Security"` row of `.ci/gate-registry.toml`; README.md, "The permissions-diff gate", owns the mapping and the paths 7.2 names that no longer exist.**
   Changing a Security row or a workflow token therefore needs a class-2 decision once a caller promotes the gate out of shadow.
 

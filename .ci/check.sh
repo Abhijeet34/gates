@@ -92,7 +92,7 @@ check_shell() {
     # The protected surface of security design 7.2, and its row in shadow under the runner.
     python3 .ci/test-permissions-diff.py || rc=1
     # The document rules, their shadow rows under the runner, and all but the budget on this tree.
-    # The budget is not run here: it is a shadow row until this tree's AGENTS.md fits it.
+    # The budget is not run here yet, though this tree's AGENTS.md now fits it.
     python3 .ci/test-docs-truth.py || rc=1
     python3 run/docs-truth.py owner . || rc=1
     python3 run/docs-truth.py commands . || rc=1
