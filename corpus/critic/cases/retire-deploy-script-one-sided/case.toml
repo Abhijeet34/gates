@@ -1,0 +1,3 @@
+plant = "one-sided"
+defect = "two services still deploy only with the script, which the recommendation never mentions"
+seed = [14, 14]

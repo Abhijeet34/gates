@@ -1,0 +1,3 @@
+plant = "number"
+defect = "the hit rate after is stated as 87%, but 156 hits in 200 runs is 78%"
+seed = [6, 6]

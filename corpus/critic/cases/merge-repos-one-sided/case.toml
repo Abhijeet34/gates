@@ -1,0 +1,3 @@
+plant = "one-sided"
+defect = "the trial merge nearly tripled CI time, which the recommendation never mentions"
+seed = [13, 13]

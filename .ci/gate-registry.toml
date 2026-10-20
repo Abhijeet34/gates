@@ -1367,6 +1367,62 @@ clean = '''bash "$ROOT/.ci/fixtures/review/corpus-case.sh" lens rate-limit-clean
 run = 'PATH="$PWD/.stub:$PATH" CLAUDE_RECORDED_REPLIES="$PWD/replies" python3 "$GATE" --corpus "$ROOT/corpus/lens" --case "$(cat case)" --store store'
 finding = "lens-eval: architect: bar missed: flags 1 of 1, over 10%"
 
+# The critic lens, replayed from the eval's second live run: red, the real Sonnet
+# critic's hold on the planted 184.00 USD; clean, its real pass on the clean twin.
+[[gate]]
+id = "critic-hold"
+surface = "Code review"
+gates = ["run/critic.py"]
+test = ".ci/test-critic.py"
+suite = "shell"
+command = "run/critic.py"
+red = '''bash "$ROOT/.ci/fixtures/review/corpus-case.sh" critic mac-runner-wrong'''
+clean = '''bash "$ROOT/.ci/fixtures/review/corpus-case.sh" critic mac-runner-clean'''
+run = 'PATH="$PWD/.stub:$PATH" CLAUDE_RECORDED_REPLIES="$PWD/replies" GATES_CORPUS_CASE="critic/$(cat case)/claude-sonnet-5-5" python3 "$GATE" --request "$ROOT/corpus/critic/cases/$(cat case)/request.md" --registry "$ROOT/corpus/critic/gates.toml" --author claude-opus-5-5 --store store'
+finding = "critic: fail: held: 1 re-derived number disagrees beyond tolerance (line 7)"
+
+# A counter-case must quote the request: red, a paraphrase written into the real
+# envelope on the clean twin, its numbers right; clean, the real answer.
+[[gate]]
+id = "critic-unquoted"
+surface = "Code review"
+gates = ["run/critic.py"]
+test = ".ci/test-critic.py"
+suite = "shell"
+command = "run/critic.py"
+red = '''bash "$ROOT/.ci/fixtures/review/corpus-case.sh" critic mac-runner-clean '{"counter_case": "Stay hosted.", "quotes": [{"line": 12, "quote": "CI used about two thousand minutes on macOS"}], "omitted": [], "numbers": [{"line": 7, "quote": "Those minutes cost 147.20 USD", "stated": 147.2, "expression": "1840 * 0.08", "operands": [{"value": 1840, "line": 12, "quote": "1,840 of them"}, {"value": 0.08, "line": 13, "quote": "0.08 USD a minute"}]}, {"line": 6, "quote": "used 80% of our CI minutes", "stated": 80, "expression": "1840 / 2300 * 100", "operands": [{"value": 1840, "line": 12, "quote": "1,840 of them"}, {"value": 2300, "line": 12, "quote": "2,300 in total"}]}]}' claude-sonnet-5-5/critic'''
+clean = '''bash "$ROOT/.ci/fixtures/review/corpus-case.sh" critic mac-runner-clean'''
+run = 'PATH="$PWD/.stub:$PATH" CLAUDE_RECORDED_REPLIES="$PWD/replies" GATES_CORPUS_CASE="critic/$(cat case)/claude-sonnet-5-5" python3 "$GATE" --request "$ROOT/corpus/critic/cases/$(cat case)/request.md" --registry "$ROOT/corpus/critic/gates.toml" --author claude-opus-5-5 --store store'
+finding = "critic: error: no quote of the counter-case stands on its line, so it rests on nothing"
+
+# The critic eval: red, the Sonnet seat holding the planted request on line 6, a
+# number that is right, rather than on line 7's planted cost; clean, the real holds.
+[[gate]]
+id = "critic-eval-miss"
+surface = "Code review"
+gates = ["run/critic-eval.py"]
+test = ".ci/test-critic-eval.py"
+suite = "shell"
+command = "run/critic-eval.py"
+red = '''bash "$ROOT/.ci/fixtures/review/corpus-case.sh" critic mac-runner-wrong '{"counter_case": "Stay hosted.", "quotes": [{"line": 6, "quote": "macOS jobs used 80% of our CI minutes in the last 30 days."}], "omitted": [], "numbers": [{"line": 6, "quote": "used 80%", "stated": 80, "expression": "1840 / 2300 * 100 - 30", "operands": [{"value": 1840, "line": 12, "quote": "1,840 of them"}, {"value": 2300, "line": 12, "quote": "2,300 in total"}, {"value": 30, "line": 6, "quote": "last 30 days"}]}]}' claude-sonnet-5-5/critic'''
+clean = '''bash "$ROOT/.ci/fixtures/review/corpus-case.sh" critic mac-runner-wrong'''
+run = 'PATH="$PWD/.stub:$PATH" CLAUDE_RECORDED_REPLIES="$PWD/replies" python3 "$GATE" --corpus "$ROOT/corpus/critic" --case "$(cat case)" --store store'
+finding = "critic-eval: claude-sonnet-5-5: bar missed: holds 0 of 1, under 80%"
+
+# A hold on a clean twin: red, the Sonnet seat adding the power cost into the
+# hosted cost and holding on it; clean, the twin's real passes.
+[[gate]]
+id = "critic-eval-false-alarm"
+surface = "Code review"
+gates = ["run/critic-eval.py"]
+test = ".ci/test-critic-eval.py"
+suite = "shell"
+command = "run/critic-eval.py"
+red = '''bash "$ROOT/.ci/fixtures/review/corpus-case.sh" critic mac-runner-clean '{"counter_case": "Stay hosted.", "quotes": [{"line": 6, "quote": "macOS jobs used 80% of our CI minutes in the last 30 days."}], "omitted": [], "numbers": [{"line": 7, "quote": "147.20 USD", "stated": 147.2, "expression": "1840 * 0.08 + 6", "operands": [{"value": 1840, "line": 12, "quote": "1,840 of them"}, {"value": 0.08, "line": 13, "quote": "0.08 USD a minute"}, {"value": 6, "line": 14, "quote": "about 6 USD a month"}]}]}' claude-sonnet-5-5/critic'''
+clean = '''bash "$ROOT/.ci/fixtures/review/corpus-case.sh" critic mac-runner-clean'''
+run = 'PATH="$PWD/.stub:$PATH" CLAUDE_RECORDED_REPLIES="$PWD/replies" python3 "$GATE" --corpus "$ROOT/corpus/critic" --case "$(cat case)" --store store'
+finding = "critic-eval: claude-sonnet-5-5: bar missed: false holds 1 of 1, over 10%"
+
 # The licence policy row on a tracked tree: a refused licence, one needing review
 # that no [reviewed] entry records, and a vendored file naming no licence.
 [[gate]]

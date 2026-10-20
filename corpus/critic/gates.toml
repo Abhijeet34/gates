@@ -1,0 +1,20 @@
+# The critic lens, as a `kind = "lens"` row of a caller's .github/gates.toml.
+# run/critic.py reads it for the critic seat on a decision request or a study;
+# run/review.py --class also assigns it, by these inputs, to the finder of a change
+# that commits one. README.md, "The critic lens", owns the design and the eval
+# (run/critic-eval.py) that measures it on corpus/critic/cases.
+
+[[gate]]
+id = "critic"
+kind = "lens"
+inputs = ["decisions/**", "studies/**"]
+role = "critic"
+checklist = [
+  "Is the strongest case for the opposite choice made from the request's own evidence?",
+  "Does the recommendation answer each line of its evidence that cuts against it?",
+  "Does each number the recommendation rests on follow from the figures it cites?",
+  "Is each share stated with the count it is a share of?",
+]
+question = "If the decider chose the opposite, which lines of this request would they quote, and do its two load-bearing numbers survive being worked out again?"
+evidence = "The quoted lines of the request, verbatim, and for each number the lines its operands come from."
+stop = "Report only what changes the decision; a preference of wording is not a finding."

@@ -119,6 +119,9 @@ check_shell() {
     python3 .ci/test-licence.py || rc=1
     # The role lenses' ablation eval against recorded replies of its second live run.
     python3 .ci/test-lens-eval.py || rc=1
+    # The critic lens's seat and its eval against recorded replies of the eval's live run.
+    python3 .ci/test-critic.py || rc=1
+    python3 .ci/test-critic-eval.py || rc=1
     # The exposure and signature gates, through real pushes into throwaway repositories.
     bash system-maintenance/git-hooks/test-exposure-scan.sh || rc=1
     bash system-maintenance/git-hooks/test-signature-check.sh || rc=1

@@ -1,0 +1,3 @@
+plant = "one-sided"
+defect = "failed and cancelled runs rose from 4 to 19 and were left out, which the recommendation never mentions"
+seed = [13, 13]
