@@ -498,6 +498,7 @@ GLOBAL_HOOKS_E2E=1 system-maintenance/git-hooks/test-global-hooks.sh   # adds on
 ```bash
 system-maintenance/git-hooks/test-watermark-scan.py            # ~11s, offline; needs exiftool, ffmpeg, qpdf, magick
 system-maintenance/git-hooks/test-exposure-scan.sh             # ~8s, offline; real pushes through the exposure gate
+system-maintenance/git-hooks/test-artifact-scan.sh             # offline; planted values in random bytes through the release-artifact scan
 system-maintenance/git-hooks/test-signature-check.sh           # ~1s, offline; main refuses an unsigned commit, a branch does not
 system-maintenance/git-hooks/exposure-scan.py needles           # which identifier classes this machine yields, never the values
 .ci/test-watermark-scan-workflow.sh                            # ~6s, offline; the CI backstop's scan body under bash -e
@@ -514,6 +515,7 @@ The opt-in networked case clones `Abhijeet34/papertrace` and is deliberately not
 - `.githooks/pre-push` - the canonical secret scanner, deployed here as `gitleaks-pre-push`. It fails closed and does not trust gitleaks' exit code alone; its header carries the measurement. It runs a repository's `.githooks/pre-push.local` last, and only as that repository's own hook.
 - `watermark-scan.py`, `watermark-allow.conf`, `watermark-optout.conf` - the no-watermarking gate and its two rule files, all three deployed by `install.sh`.
 - `exposure-scan.py`, `test-exposure-scan.sh` - the exposure gate and its suite.
+- `artifact-scan.py`, `test-artifact-scan.sh` - the release-artifact scan and its suite; release tooling, not deployed by `install.sh`.
 - `signature-check.py`, `test-signature-check.sh` - the signature check and its suite.
 - `pushrange.py` - the pushed range the three Python gates share.
 - `test-watermark-scan.py` - the gate's own suite: a fixture per rule, each re-graded once neutralised, the three legitimate contexts, both rule files' contracts, the `clean`/`verify` verbs, and the refusal when exiftool is gone. `test-global-hooks.sh` pins the dispatch around it.
