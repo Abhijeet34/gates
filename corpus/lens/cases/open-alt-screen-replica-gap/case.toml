@@ -1,0 +1,4 @@
+lens = "open-alternative"
+defect = "the request asks for a replica of the incumbent's screens"
+seed = [12, 12]
+terms = ["replica", "layout", "screen", "copy", "copied", "trade dress", "match"]

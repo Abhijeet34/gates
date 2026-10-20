@@ -1,0 +1,4 @@
+lens = "open-alternative"
+defect = "the interop claims carry no standard, vendor-spec or observed mark"
+seed = [15, 17]
+terms = ["standard", "vendor-spec", "observed", "mark", "label", "source", "basis"]

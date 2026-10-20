@@ -4,7 +4,8 @@
 # (run/lens-eval.py) that measures them on corpus/lens/cases.
 #
 # The seven product lenses are the product-lifecycle playbook's (its roles.md), for
-# product-level documents; the five engineering lenses are review r4 9.4's.
+# product-level documents; the five engineering lenses are review r4 9.4's; the
+# open-alternative lens is factory plan row P5-OA4's, for open-alternative requests.
 
 [[gate]]
 id = "product-analyst"
@@ -189,4 +190,21 @@ checklist = [
 ]
 question = "What does the user see when this is empty, slow or broken?"
 evidence = "The quoted line that adds the screen or control, and the state or name it lacks."
+stop = "Report only gaps that affect correctness or the stated requirements; a preference is not a finding."
+
+# The open-alternative request's lens (plan row P5-OA4); the request itself is
+# shaped by the factory's open-alternative template.
+[[gate]]
+id = "open-alternative"
+kind = "lens"
+inputs = ["product/**", "docs/product/**"]
+role = "trademark and interoperability reviewer"
+checklist = [
+  "Does it list the incumbent's marks (product names, brand names, logos) that the product name was checked against?",
+  "Does the product name contain none of those marks, compared ignoring case, spacing, punctuation and diacritics?",
+  "Does it use none of the incumbent's icons or artwork, and ask for no screen to match the incumbent's layout, arrangement or look, however it is worded?",
+  "Is every interop claim marked standard, vendor-spec or observed, with the standard, document or sample it rests on?",
+]
+question = "Could the incumbent's owner point at this name, picture or screen as theirs?"
+evidence = "The quoted product name, request or claim, and the mark, asset or label it breaks or lacks."
 stop = "Report only gaps that affect correctness or the stated requirements; a preference is not a finding."

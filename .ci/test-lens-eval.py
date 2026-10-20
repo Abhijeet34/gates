@@ -14,6 +14,7 @@ exists for removed. The first case pins the measured counts the README quotes.
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -29,34 +30,39 @@ ENV = {
     **{k: v for k, v in os.environ.items() if not k.startswith("GIT_")},
     "PYTHONDONTWRITEBYTECODE": "1",
 }
-# The second live run, 2026-10-20, through the subscription login, finder Sonnet;
-# README.md, "The role lenses".
+# The second live run, 2026-10-20, through the subscription login, finder Sonnet,
+# and the open-alternative lens's run of 2026-10-21 (CLI 2.1.304); README.md,
+# "The role lenses".
 MEASURED = [
-    "lens-eval: product-stakeholder: seeded caught: checklist 3 of 3, bare 3, persona 1, none 0; clean flagged: checklist 2 of 20, none 8",
-    "lens-eval: product-stakeholder: bar met",
+    "lens-eval: product-stakeholder: seeded caught: checklist 3 of 3, bare 3, persona 1, none 0; clean flagged: checklist 4 of 22, none 10",
+    "lens-eval: product-stakeholder: bar missed: flags 4 of 22, over 10%",
     "lens-eval: product-stakeholder: ablation keep: checklist beats none by 1.00, half-width 0.80",
     "lens-eval: product-stakeholder: role line remove: checklist 3 of 3 against bare 3",
-    "lens-eval: architect: seeded caught: checklist 2 of 3, bare 0, persona 1, none 1; clean flagged: checklist 10 of 20, none 8",
-    "lens-eval: architect: bar missed: catches 2 of 3, under 80%; flags 10 of 20, over 10%",
+    "lens-eval: architect: seeded caught: checklist 2 of 3, bare 0, persona 1, none 1; clean flagged: checklist 12 of 22, none 10",
+    "lens-eval: architect: bar missed: catches 2 of 3, under 80%; flags 12 of 22, over 10%",
     "lens-eval: architect: ablation cut: checklist beats none by 0.33, half-width 0.80",
     "lens-eval: architect: role line keep: checklist 2 of 3 against bare 0",
-    "lens-eval: security: seeded caught: checklist 3 of 3, bare 2, persona 1, none 0; clean flagged: checklist 5 of 20, none 8",
-    "lens-eval: security: bar missed: flags 5 of 20, over 10%",
+    "lens-eval: security: seeded caught: checklist 3 of 3, bare 2, persona 1, none 0; clean flagged: checklist 5 of 22, none 10",
+    "lens-eval: security: bar missed: flags 5 of 22, over 10%",
     "lens-eval: security: ablation keep: checklist beats none by 1.00, half-width 0.80",
     "lens-eval: security: role line keep: checklist 3 of 3 against bare 2",
-    "lens-eval: tester: seeded caught: checklist 3 of 3, bare 3, persona 0, none 0; clean flagged: checklist 19 of 20, none 8",
-    "lens-eval: tester: bar missed: flags 19 of 20, over 10%",
+    "lens-eval: tester: seeded caught: checklist 3 of 3, bare 3, persona 0, none 0; clean flagged: checklist 21 of 22, none 10",
+    "lens-eval: tester: bar missed: flags 21 of 22, over 10%",
     "lens-eval: tester: ablation keep: checklist beats none by 1.00, half-width 0.80",
     "lens-eval: tester: role line remove: checklist 3 of 3 against bare 3",
-    "lens-eval: operations: seeded caught: checklist 5 of 6, bare 5, persona 5, none 1; clean flagged: checklist 7 of 20, none 8",
-    "lens-eval: operations: bar missed: flags 7 of 20, over 10%",
+    "lens-eval: operations: seeded caught: checklist 5 of 6, bare 5, persona 5, none 1; clean flagged: checklist 7 of 22, none 10",
+    "lens-eval: operations: bar missed: flags 7 of 22, over 10%",
     "lens-eval: operations: ablation keep: checklist beats none by 0.67, half-width 0.57",
     "lens-eval: operations: role line remove: checklist 5 of 6 against bare 5",
-    "lens-eval: designer: seeded caught: checklist 2 of 2, bare 2, persona 1, none 0; clean flagged: checklist 5 of 20, none 8",
-    "lens-eval: designer: bar missed: flags 5 of 20, over 10%",
+    "lens-eval: designer: seeded caught: checklist 2 of 2, bare 2, persona 1, none 0; clean flagged: checklist 5 of 22, none 10",
+    "lens-eval: designer: bar missed: flags 5 of 22, over 10%",
     "lens-eval: designer: ablation keep: checklist beats none by 1.00, half-width 0.98",
     "lens-eval: designer: role line remove: checklist 2 of 2 against bare 2",
-    "lens-eval: 40 cases, 0 undecided seats",
+    "lens-eval: open-alternative: seeded caught: checklist 6 of 6, bare 4, persona 5, none 5; clean flagged: checklist 3 of 22, none 10",
+    "lens-eval: open-alternative: bar missed: flags 3 of 22, over 10%",
+    "lens-eval: open-alternative: ablation cut: checklist beats none by 0.17, half-width 0.31",
+    "lens-eval: open-alternative: role line keep: checklist 6 of 6 against bare 4",
+    "lens-eval: 48 cases, 0 undecided seats",
 ]
 
 workdir = Path(tempfile.mkdtemp())
@@ -79,7 +85,7 @@ def answer(severity, line, claim="a planted finding: no backup before the drop")
 class Replay:
     """Recorded cases in a fresh directory, with any seat's answer rewritten."""
 
-    def __init__(self, *cases):
+    def __init__(self, *cases, root=RECORDED):
         self.dir = Path(tempfile.mkdtemp(dir=workdir))
         self.stub = self.dir / ".stub"
         self.stub.mkdir()
@@ -87,7 +93,7 @@ class Replay:
         (self.stub / "claude").chmod(0o755)
         self.replies = self.dir / "replies"
         for case in cases:
-            shutil.copytree(RECORDED / case, self.replies / "lens" / case)
+            shutil.copytree(root / case, self.replies / "lens" / case)
         self.cases = list(cases)
 
     def answer(self, case, seat, reply):
@@ -201,7 +207,7 @@ def clean_sits_every_measured_lens(script):
         ["lens-none"]
         + [
             f"lens-{lid}-checklist"
-            for lid in ("architect", "designer", "operations", "product-stakeholder", "security", "tester")
+            for lid in ("architect", "designer", "open-alternative", "operations", "product-stakeholder", "security", "tester")
         ]
     )  # fmt: skip
     return None if seats == want else f"a clean spec sat {seats}, not {want}"
@@ -294,6 +300,76 @@ def undecided_never_counts(script):
     )  # fmt: skip
 
 
+GOLDEN = [
+    "open-alt-name-mark-gap",  # a name containing the incumbent's mark
+    "open-alt-name-variant-gap",  # the mark differing by case, spacing and a diacritic
+    "open-alt-screen-replica-gap",  # a request for a screen replica
+    "open-alt-same-layout-gap",  # "the same layout", without the word replica
+    "open-alt-copied-icons-gap",
+    "open-alt-interop-unmarked-gap",
+]
+
+
+def open_alternative_golden_cases(script):
+    replay = Replay(*GOLDEN, "open-alt-complete-clean")
+    # Exit 1: the clean case also sits the other lenses, whose own bars the live run missed.
+    return expect(
+        "the open-alternative golden cases", replay.run(script), 1,
+        *[f"lens-eval: {c}: open-alternative checklist: caught:" for c in GOLDEN],
+        "lens-eval: open-alt-complete-clean: open-alternative checklist: clean: no error or warning",
+        "lens-eval: open-alternative: seeded caught: checklist 6 of 6, bare 4, persona 5, none 5; clean flagged: checklist 0 of 1, none 1",
+        "lens-eval: open-alternative: bar met",
+    )  # fmt: skip
+
+
+def open_alternative_checks():
+    """The open-alternative row's checklist lines in the shipped gates.toml."""
+    text = (CORPUS / "gates.toml").read_text()
+    row = text[text.index('id = "open-alternative"') :]
+    return re.findall(r'^  ".*\?",\n', row, re.M)
+
+
+# Checklist item removed -> the cases it answers for. The live run of 2026-10-21
+# found only the interop item load-bearing: the finder alone still names a name,
+# an icon or a copied layout, so those stay caught without their item.
+REMOVED = {
+    0: ["open-alt-name-mark-gap", "open-alt-name-variant-gap"],
+    1: ["open-alt-name-mark-gap", "open-alt-name-variant-gap"],
+    2: [
+        "open-alt-screen-replica-gap",
+        "open-alt-same-layout-gap",
+        "open-alt-copied-icons-gap",
+    ],
+    3: ["open-alt-interop-unmarked-gap"],
+}
+
+
+def open_alternative_check_removed(script):
+    for item, cases in REMOVED.items():
+        corpus = Path(tempfile.mkdtemp(dir=workdir), "lens")
+        shutil.copytree(CORPUS, corpus)
+        rows = corpus / "gates.toml"
+        rows.write_text(
+            rows.read_text().replace(open_alternative_checks()[item], "", 1)
+        )
+        replay = Replay(*cases, root=FIXTURES / f"corpus/lens-without-{item}")
+        got = replay.run(script, corpus=corpus)
+        if item == 3:
+            why = expect(
+                "the interop check removed", got, 1,
+                "lens-eval: open-alt-interop-unmarked-gap: open-alternative checklist: missed: nothing at spec.md:15-17 naming its gap (no finding)",
+                "lens-eval: open-alternative: bar missed: catches 0 of 1, under 80%",
+            )  # fmt: skip
+        else:
+            why = expect(
+                f"check {item} removed", got, 0,
+                *[f"lens-eval: {c}: open-alternative checklist: caught:" for c in cases],
+            )  # fmt: skip
+        if why:
+            return why
+    return None
+
+
 def malformed_case_refused(script):
     corpus = Path(tempfile.mkdtemp(dir=workdir), "lens")
     shutil.copytree(CORPUS, corpus)
@@ -349,6 +425,8 @@ CASES = [
     (role_line_removed_without_gain, "a role line kept only when it beats bare", 'role = "keep" if arms["checklist"] > arms["bare"] else "remove"', 'role = "keep" if arms["checklist"] >= arms["bare"] else "remove"'),
     (unmeasured_lens_reported, "an unmeasured lens named", "        if not seeded and not clean:\n", "        if False:\n"),
     (undecided_never_counts, "an undecided seat", '                outcome, detail = "undecided", str(e)\n', '                outcome, detail = "caught", str(e)\n'),
+    (open_alternative_golden_cases, "a finding inside the seed catching", 'at = [f for f in hits if f["path"] == "spec.md" and first <= f["line"] <= last]', "at = []"),
+    (open_alternative_check_removed, "a finding inside the seed catching", 'at = [f for f in hits if f["path"] == "spec.md" and first <= f["line"] <= last]', "at = []"),
     (malformed_case_refused, "the case's shape checked", "        if not (seeded or clean):\n", "        if False:\n"),
     (malformed_lens_refused, "each lens row checked", 'lenses[row["id"]] = review.lens_of(row, "gates.toml")', 'lenses[row["id"]] = {**row, "classes": ["medium"]}'),
     (record_copies_replies, "the replies recorded", "(out / f\"{seat['seat'].replace(' ', '-')}.json\").write_bytes(data)", "pass"),
