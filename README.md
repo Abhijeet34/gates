@@ -1139,7 +1139,19 @@ The finder alone catches five of six seeds, so ablation reads `cut` (checklist b
 Each check was removed in turn and its cases re-run live (`.ci/fixtures/review/corpus/lens-without-N/`): without the interop item the seed is missed (0 of 1), without any of the other three the finder still catches its cases, so those three are not shown red when removed and stay in the row for the name and look gaps the finder names unprompted.
 
 
-**Measured** 2026-10-20 with CLI 2.1.302 through the subscription login, finder `claude-sonnet-5-5` on specs written as `claude-opus-5-5`, 220 seats, 0 undecided:
+**Measured** 2026-10-20 with CLI 2.1.302 through the subscription login, finder `claude-sonnet-5-5` on specs written as `claude-opus-5-5`, replayed over 48 cases (22 clean specs, 26 seeds, the `open-alternative` row included), 0 undecided; `.ci/test-lens-eval.py` pins these counts:
+
+| Lens | Seeds caught: checklist, bare, persona, none | Clean flagged: checklist, none | Bar | Ablation | Role line |
+| --- | --- | --- | --- | --- | --- |
+| `product-stakeholder` | 3, 3, 1, 0 of 3 | 4, 10 of 22 | missed (flags) | keep | remove |
+| `architect` | 2, 0, 1, 1 of 3 | 12, 10 of 22 | missed | cut | keep |
+| `security` | 3, 2, 1, 0 of 3 | 5, 10 of 22 | missed (flags) | keep | keep |
+| `tester` | 3, 3, 0, 0 of 3 | 21, 10 of 22 | missed (flags) | keep | remove |
+| `operations` | 5, 5, 5, 1 of 6 | 7, 10 of 22 | missed (flags) | keep | remove |
+| `designer` | 2, 2, 1, 0 of 2 | 5, 10 of 22 | missed (flags) | keep | remove |
+| `open-alternative` | 6, 4, 5, 5 of 6 | 3, 10 of 22 | missed (flags) | cut | keep |
+
+The original 2026-10-20 run, before the two clean twins added for `open-alternative` (220 seats, 20 clean specs, six lenses):
 
 | Lens | Seeds caught: checklist, bare, persona, none | Clean flagged: checklist, none | Bar | Ablation | Role line |
 | --- | --- | --- | --- | --- | --- |
@@ -1150,10 +1162,14 @@ Each check was removed in turn and its cases re-run live (`.ci/fixtures/review/c
 | `operations` | 5, 5, 5, 1 of 6 | 7, 8 of 20 | missed (flags) | keep | remove |
 | `designer` | 2, 2, 1, 0 of 2 | 5, 8 of 20 | missed (flags) | keep | remove |
 
-Over the 20 seeds the checklist arm caught 18, the bare checklist 15, the persona line alone 9 and no lens 2, which is the null persona result and the checklist result of r4 9.2 again on this set.
-Only `product-stakeholder` meets the clean bar; the finder with no lens flags 8 of 20 clean specs itself, so most flags are the finder's habit of reporting some gap, which r4 9.2 predicts.
+With the two new clean twins `product-stakeholder` now misses its bar: it flags 4 of 22 clean specs, over 10%, where it flagged 2 of 20 before.
+`architect` moves from 10 to 12 flags and `tester` from 19 to 21; the seed counts do not change.
+No lens row changed, so the flip comes from the two added clean specs alone.
+
+Over the 20 seeds of the original run the checklist arm caught 18, the bare checklist 15, the persona line alone 9 and no lens 2; over the 26 seeds now, 24, 19, 14 and 7, which is the null persona result and the checklist result of r4 9.2 again on this set.
+No lens meets the clean bar now; the finder with no lens flags 10 of 22 clean specs itself, so most flags are the finder's habit of reporting some gap, which r4 9.2 predicts.
 The seed spans only the section where the gap sits, so a right finding anchored elsewhere scores a miss: on `drop-column-gap` the bare arm named the missing backup at the design line that states the drop (line 12), outside the rollout lines 14 to 17, which accounts for part of `architect`'s bare 0 of 3; the spans were set before either run and are not widened after reading the answers.
-`tester` flags 19 of 20 because its second question, whether a check fails before the change and passes after, cannot be answered on a spec whose tests do not exist yet; it fits a code change, not a spec.
+`tester` flags 21 of 22 because its second question, whether a check fails before the change and passes after, cannot be answered on a spec whose tests do not exist yet; it fits a code change, not a spec.
 
 This is the second run.
 The first, on the specs as first written, found real defects in the clean twins (a Berlin time given as CET with no date, though summer is CEST, a flag that names one index and still splits traffic 10 to 90, a rollback that hides a menu entry and leaves its route open) and credited any finding inside a seed's lines, such as a CSV-injection warning on the missing auth check.
@@ -1161,7 +1177,7 @@ So the clean twins were corrected once, each security twin dropped its auth asse
 At these counts each figure is a smoke reading; the follow-up is the larger labelled set, enough seeds a lens for the half-width to separate the arms, before any row is cut or its role line removed.
 
 **Proof.**
-`.ci/test-lens-eval.py` replays the second run's recorded seats, `.ci/fixtures/review/corpus/lens/NAME/`, through `claude-recorded.py`, then again against a copy of the eval with each case's control removed; its first case pins the table above.
+`.ci/test-lens-eval.py` replays the second run's recorded seats, `.ci/fixtures/review/corpus/lens/NAME/`, through `claude-recorded.py`, then again against a copy of the eval with each case's control removed; its first case pins the first table above (the 48-case replay).
 `.ci/test-review.py` covers assignment (class, path, the final class, nothing on a trivial change, only the assigned lenses reaching the finder, a malformed lens refused before any seat) and `.ci/test-gate-runner.py` the lens row's keys and that it claims no path.
 The gates-proof rows are `review-lens` (a checklist item that is no question, refused), `lens-eval-miss` (the architect lens's real catch of the missing dry run emptied), `lens-eval-false-alarm` (its real warning on a clean spec) and `lens-eval-open-alternative-miss` (the open-alternative lens's real catch of a request for the incumbent's layout emptied).
 No workflow calls `run/review.py` or `run/lens-eval.py`; wiring waits for the maintainer's weekly batch.
