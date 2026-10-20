@@ -1,0 +1,4 @@
+lens = "security"
+defect = "the new webhook receiver does not verify the sender"
+seed = [10, 14]
+terms = ["auth", "caller", "role", "permission", "access", "signature", "verif", "owner", "owns", "forge", "anyone", "spoof"]

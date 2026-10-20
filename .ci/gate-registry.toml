@@ -1287,6 +1287,28 @@ cp "$ROOT/.ci/fixtures/review/replies/adjudicator-clears.json" repo/.stub/replie
 run = 'cd repo && PATH="$PWD/.stub:$PATH" python3 "$GATE" --gate code-review --base base --author claude-sonnet-5-5 --store ../store'
 finding = "review: veto: F1 by the finder on claude-opus-5-5, upheld by the adjudicator F1 on claude-opus-5-5"
 
+# A role lens is a yes or no checklist, checked before any seat sits: red, a lens
+# whose checklist holds a statement; clean, the same row asking it.
+[[gate]]
+id = "review-lens"
+surface = "Code review"
+gates = ["run/review.py"]
+test = ".ci/test-review.py"
+suite = "shell"
+command = "run/review.py"
+red = '''
+mkdir repo && (cd repo && bash "$ROOT/.ci/fixtures/review/build.sh" --replies unreproduced guard)
+printf '[[gate]]\nid = "tester"\nkind = "lens"\ninputs = ["**"]\nrole = "test engineer"\nchecklist = ["The check fails before the change."]\nquestion = "Would it pass if reverted?"\nevidence = "The quoted line."\nstop = "Report only gaps that affect correctness."\n' >> repo/.github/gates.toml
+git -C repo commit -qam lens
+'''
+clean = '''
+mkdir repo && (cd repo && bash "$ROOT/.ci/fixtures/review/build.sh" --replies unreproduced guard)
+printf '[[gate]]\nid = "tester"\nkind = "lens"\ninputs = ["**"]\nrole = "test engineer"\nchecklist = ["Does the check fail before the change?"]\nquestion = "Would it pass if reverted?"\nevidence = "The quoted line."\nstop = "Report only gaps that affect correctness."\n' >> repo/.github/gates.toml
+git -C repo commit -qam lens
+'''
+run = 'cd repo && PATH="$PWD/.stub:$PATH" python3 "$GATE" --class medium --base base --author claude-opus-5-5 --store ../store'
+finding = "review: error: .github/gates.toml: lens 'tester': checklist must be a non-empty list of yes or no questions"
+
 # The seeded corpus, replayed from the live run's real replies: red, the approval
 # bypass the finder reported and the verifier cleared, a miss; clean, the GPL
 # dependency the verifier upheld.
@@ -1315,6 +1337,35 @@ red = '''bash "$ROOT/.ci/fixtures/review/corpus-case.sh" design colour-token '{"
 clean = '''bash "$ROOT/.ci/fixtures/review/corpus-case.sh" design colour-token'''
 run = 'PATH="$PWD/.stub:$PATH" CLAUDE_RECORDED_REPLIES="$PWD/replies" python3 "$GATE" --corpus "$ROOT/corpus/$(cat lens)" --case "$(cat case)" --store store'
 finding = "corpus: design/colour-token: flagged: F1 warning styles/button.css:19: a planted false alarm"
+
+# The role lenses' ablation eval, replayed from its second live run's real replies:
+# red, the architect lens's catch of the missing dry run emptied, a missed bar;
+# clean, the real catch.
+[[gate]]
+id = "lens-eval-miss"
+surface = "Code review"
+gates = ["run/lens-eval.py"]
+test = ".ci/test-lens-eval.py"
+suite = "shell"
+command = "run/lens-eval.py"
+red = '''bash "$ROOT/.ci/fixtures/review/corpus-case.sh" lens drop-column-gap '{"findings": []}' lens-architect-checklist'''
+clean = '''bash "$ROOT/.ci/fixtures/review/corpus-case.sh" lens drop-column-gap'''
+run = 'PATH="$PWD/.stub:$PATH" CLAUDE_RECORDED_REPLIES="$PWD/replies" python3 "$GATE" --corpus "$ROOT/corpus/lens" --case "$(cat case)" --store store'
+finding = "lens-eval: architect: bar missed: catches 0 of 1, under 80%"
+
+# A lens flagging a clean spec: red, the architect lens's real warning on the clean
+# rate-limit spec; clean, that seat's answer emptied.
+[[gate]]
+id = "lens-eval-false-alarm"
+surface = "Code review"
+gates = ["run/lens-eval.py"]
+test = ".ci/test-lens-eval.py"
+suite = "shell"
+command = "run/lens-eval.py"
+red = '''bash "$ROOT/.ci/fixtures/review/corpus-case.sh" lens rate-limit-clean'''
+clean = '''bash "$ROOT/.ci/fixtures/review/corpus-case.sh" lens rate-limit-clean '{"findings": []}' lens-architect-checklist'''
+run = 'PATH="$PWD/.stub:$PATH" CLAUDE_RECORDED_REPLIES="$PWD/replies" python3 "$GATE" --corpus "$ROOT/corpus/lens" --case "$(cat case)" --store store'
+finding = "lens-eval: architect: bar missed: flags 1 of 1, over 10%"
 
 # The licence policy row on a tracked tree: a refused licence, one needing review
 # that no [reviewed] entry records, and a vendored file naming no licence.

@@ -1,0 +1,192 @@
+# The seed role lenses, as `kind = "lens"` rows of a caller's .github/gates.toml.
+# A caller copies the rows it wants; run/review.py --class assigns them by class
+# and touched path. README.md, "The role lenses", owns the design and the eval
+# (run/lens-eval.py) that measures them on corpus/lens/cases.
+#
+# The seven product lenses are the product-lifecycle playbook's (its roles.md), for
+# product-level documents; the five engineering lenses are review r4 9.4's.
+
+[[gate]]
+id = "product-analyst"
+kind = "lens"
+inputs = ["product/**", "docs/product/**"]
+role = "business analyst"
+checklist = [
+  "Does it say what the problem is and whose problem it is?",
+  "Does it say how that problem is solved today, and at what cost?",
+  "Does it say what changes for that person once the problem is solved?",
+]
+question = "What does the buyer do instead right now, and what does that cost them in money, time or risk?"
+evidence = "The quoted line where the problem or its owner is stated, and the checklist question it answers no to."
+stop = "Report only gaps that affect correctness or the stated requirements; a preference is not a finding."
+
+[[gate]]
+id = "product-developer"
+kind = "lens"
+inputs = ["product/**", "docs/product/**"]
+role = "developer"
+checklist = [
+  "Is each dependency the plan relies on named, with what happens if its terms change?",
+  "Is it stated what this choice forecloses later?",
+  "Is the plan feasible with what the codebase and platform already provide?",
+]
+question = "What does answering this now prevent us from answering differently later?"
+evidence = "The quoted line making the choice, and what it forecloses."
+stop = "Report only gaps that affect correctness or the stated requirements; a preference is not a finding."
+
+[[gate]]
+id = "product-designer"
+kind = "lens"
+inputs = ["product/**", "docs/product/**"]
+role = "designer"
+checklist = [
+  "Does it say whether an approved design exists, and where it ranks against anything synthesised?",
+  "Is the first run described, including what the user must understand to succeed?",
+  "Does it name what the approved design does not specify?",
+]
+question = "Does an approved artefact for this already exist, in any form however rough, and does it outrank anything an agent would synthesise?"
+evidence = "The quoted line describing the flow, and the design question it leaves open."
+stop = "Report only gaps that affect correctness or the stated requirements; a preference is not a finding."
+
+[[gate]]
+id = "product-customer"
+kind = "lens"
+inputs = ["product/**", "docs/product/**"]
+role = "customer"
+checklist = [
+  "Does it name an observation that would show the claim is wrong?",
+  "Does it say what would make a user stop using it?",
+  "Does it rest whether a user would pay on evidence rather than an agent's judgement?",
+]
+question = "What observation would tell us this is wrong?"
+evidence = "The quoted claim, and the observation that would falsify it or the absence of one."
+stop = "Report only gaps that affect correctness or the stated requirements; a preference is not a finding."
+
+[[gate]]
+id = "product-tester"
+kind = "lens"
+inputs = ["product/**", "docs/product/**"]
+role = "tester"
+checklist = [
+  "Does it say how it fails and where its edges are?",
+  "Does it say what would prove it works?",
+  "Does each check read the raw result rather than a summary of it?",
+]
+question = "What did this check actually read, and what would it look like if the check had been prevented from running?"
+evidence = "The quoted check, and what it reads."
+stop = "Report only gaps that affect correctness or the stated requirements; a preference is not a finding."
+
+[[gate]]
+id = "product-stakeholder"
+kind = "lens"
+inputs = ["product/**", "docs/product/**"]
+role = "stakeholder"
+checklist = [
+  "Does it list what is out of scope?",
+  "Does it say what it costs, in weeks or money?",
+  "Does it name the risk it carries?",
+  "Does it say what gets dropped or delayed to do it?",
+]
+question = "What are we not building because we are building this?"
+evidence = "The quoted scope or cost line, or the section where the missing list belongs."
+stop = "Report only gaps that affect correctness or the stated requirements; a preference is not a finding."
+
+[[gate]]
+id = "product-support"
+kind = "lens"
+inputs = ["product/**", "docs/product/**"]
+role = "support engineer"
+checklist = [
+  "Does it say how a user reports that it is broken?",
+  "Does it say what a user can send that the team can act on?",
+  "Does it say what users get when it is retired?",
+]
+question = "How does a user tell us it is broken, and what can they send us that we can act on?"
+evidence = "The quoted line where the post-release route belongs, and the checklist question it answers no to."
+stop = "Report only gaps that affect correctness or the stated requirements; a preference is not a finding."
+
+[[gate]]
+id = "architect"
+kind = "lens"
+inputs = ["**"]
+classes = ["large"]
+role = "software architect"
+checklist = [
+  "Is every interface it adds or changes named, with its callers?",
+  "Is every change to stored data stated, with what happens to the existing data?",
+  "Is each new failure mode named, with what the system does when it happens?",
+  "Can every step be undone, and is a step that cannot be undone preceded by a dry run or a restorable backup?",
+  "Was the codebase checked for something that already does this?",
+]
+question = "What does this choice prevent us from changing later, and can it be undone?"
+evidence = "The quoted line that adds the interface, the data change or the irreversible step, and the checklist question it answers no to."
+stop = "Report only gaps that affect correctness or the stated requirements; a preference is not a finding."
+
+[[gate]]
+id = "security"
+kind = "lens"
+inputs = ["**"]
+classes = ["large"]
+role = "security engineer"
+checklist = [
+  "Does every new or changed entry point (endpoint, webhook, command, job) check who the caller is and whether they may act?",
+  "Is untrusted input validated before it reaches a query, a shell, a path or a template?",
+  "Are secrets kept out of code, logs and error messages?",
+  "Does it avoid widening a permission, a token's scope or network reach beyond what the task needs?",
+  "Is each user's or tenant's data reachable only by its owner?",
+]
+question = "Who can reach this that should not, and what can they do once there?"
+evidence = "The quoted line that adds the entry point or the data path, and who can reach it."
+stop = "Report only gaps that affect correctness or the stated requirements; a preference is not a finding."
+
+[[gate]]
+id = "tester"
+kind = "lens"
+inputs = ["**"]
+role = "test engineer"
+checklist = [
+  "Does each acceptance criterion end in a command or check a reviewer can run?",
+  "Would that check fail before the change and pass after it?",
+  "Does the check exercise the path a user meets, not a double of it?",
+  "Are the edge and failure cases named, each with its expected result?",
+]
+question = "Would this check still pass if the change were reverted?"
+evidence = "The quoted acceptance line, and the command it lacks or what that command fails to read."
+stop = "Report only gaps that affect correctness or the stated requirements; a preference is not a finding."
+
+[[gate]]
+id = "operations"
+kind = "lens"
+inputs = [
+  "**/migrations/**", "**/*.sql", "deploy/**", "infra/**", "**/*.tf",
+  "**/Dockerfile", "**/k8s/**", "**/helm/**", ".github/workflows/**",
+]
+role = "operations engineer"
+checklist = [
+  "Does every deploy, flag or config step have a rollback, with how and when to use it?",
+  "Is there a log, metric or alert that shows it working or failing in production?",
+  "Is everything temporary it creates (a table, bucket, flag, environment, script or job) removed by a named cleanup step?",
+  "Is the running cost of anything new stated?",
+  "Is the rollout staged, or the reason it is not stated?",
+]
+question = "If this goes wrong in the night, how do we see it and how do we undo it?"
+evidence = "The quoted rollout or setup line, and the rollback, signal or cleanup step it lacks."
+stop = "Report only gaps that affect correctness or the stated requirements; a preference is not a finding."
+
+[[gate]]
+id = "designer"
+kind = "lens"
+inputs = [
+  "**/*.css", "**/*.scss", "**/*.html", "**/*.tsx", "**/*.jsx", "**/*.vue",
+  "**/*.svelte", "**/*.swift", "**/*.storyboard", "**/*.xib",
+]
+role = "product designer"
+checklist = [
+  "Does each new screen or component state its empty, loading and error states?",
+  "Does every interactive control have an accessible name?",
+  "Do its colours, spacing and type come from the existing design tokens?",
+  "Does it follow the approved design, where one exists?",
+]
+question = "What does the user see when this is empty, slow or broken?"
+evidence = "The quoted line that adds the screen or control, and the state or name it lacks."
+stop = "Report only gaps that affect correctness or the stated requirements; a preference is not a finding."

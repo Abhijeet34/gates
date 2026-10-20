@@ -24,6 +24,7 @@ Licensed under the Apache License 2.0; see `LICENSE` and `NOTICE`.
 | `run/mutation.py` | The mutation rows: a mutant of a change's lines that no test kills, with a full run when the change deletes or weakens a test; see "The mutation rows". |
 | `run/review.py` | The review rows: a finder session on a model other than the author's, then a verifier pass that must reproduce each blocking finding before it blocks, each seat within its token and time budget, with a Haiku router checked by a rule floor and a veto rule that settles disagreement; see "The review rows". |
 | `run/corpus.py`, `corpus/` | The seeded corpus for the design, licence and release reviews and the runner that counts what a review row catches and what it flags on it; see "The seeded corpus". |
+| `run/lens-eval.py`, `corpus/lens/` | The role lenses: `kind = "lens"` rows a routed review assigns to its finders, the twelve seed rows, and the ablation eval that measures each lens with and without itself; see "The role lenses". |
 | `run/licence.py` | The licence row: dependency and vendored-file licences against a caller's `.github/licence-policy.toml`; see "The licence row". |
 | `run/budget-monitor.py` | The gate budget monitor: prints each budgeted step's weekly p50/p95, the alarm and the fix task text; see "The budget monitor". |
 | `bin/gates.py`, `bin/rollout.toml` | `gates bump` and `gates rollback`, which move callers' locks; see "Bumping". |
@@ -987,7 +988,7 @@ Every record also carries `independence`, the weakest label any judging seat hol
 Both lists are empty, never absent, on a pass no seat reached and on an `error`.
 
 **The record.**
-The verdict record carries `review`: the lens, the author, the CLI version, each seat's model, independence, token use, duration and reply log, each finding with its quote, reproducing command, exit status, votes and verdict, the `veto`, `dissent` and `independence` fields, and, when routed, the `route`: the given and final class, the router's seat or why it was unavailable, and for each review row whether it sits, by the rule, by the router, or both.
+The verdict record carries `review`: the lens, the author, the CLI version, each seat's model, independence, token use, duration and reply log, each finding with its quote, reproducing command, exit status, votes and verdict, the `veto`, `dissent` and `independence` fields, and, when routed, the `route`: the given and final class, the router's seat or why it was unavailable, for each review row whether it sits, by the rule, by the router, or both, and the lenses the rule assigned with why; `lenses` names the ones its finder read ("The role lenses").
 
 **Proof.**
 `.ci/test-review.py` runs each case through `.ci/fixtures/review/claude-recorded.py`, installed as `claude` first on `PATH`, then again against a copy of the script with that case's control removed.
@@ -1060,6 +1061,97 @@ The rows stay in shadow, and the misses are what the measurement is for: a lens 
 No case calls a model; a miss, a nit and a false alarm the live run did not give are written into the real finder's envelope.
 The gates-proof rows are `review-corpus-miss` (the approval bypass the verifier cleared, against the GPL dependency it upheld) and `review-corpus-false-alarm` (a warning written onto a clean design case, against its real empty reply).
 `run/corpus.py --record DIR` copies each seat's envelope and the CLI version per case, which is how the recordings were made; a model or CLI change re-runs the corpus live (r4 7.3: "a model or CLI change reruns the labelled set before that seat can block or pass").
+
+## The role lenses
+
+A role lens is a yes or no checklist a review's finder reads the change through, never a persona.
+It is the factory plan's row "P3b-RL" (r5, section 9; review r4 9.4 and 9.5): persona lines gave no accuracy gain across 162 personas and 9 models, while yes or no checklists raised judge agreement with humans from 46.4% to 52.2% (r4 9.2), so the lens carries the checklist and the role name is one line for tone.
+
+**The row.**
+A lens is a `kind = "lens"` row of the same `.github/gates.toml` the review rows live in, so there is no second config file:
+
+```toml
+[[gate]]
+id = "operations"
+kind = "lens"
+inputs = ["**/migrations/**", "deploy/**", "infra/**"]   # touched paths that assign it
+classes = ["medium", "large"]                            # optional; this is the default
+role = "operations engineer"                             # one line, for tone only
+checklist = [
+  "Does every deploy, flag or config step have a rollback, with how and when to use it?",
+  "Is everything temporary it creates removed by a named cleanup step?",
+]
+question = "If this goes wrong in the night, how do we see it and how do we undo it?"
+evidence = "The quoted rollout or setup line, and the rollback, signal or cleanup step it lacks."
+stop = "Report only gaps that affect correctness or the stated requirements; a preference is not a finding."
+```
+
+`role`, `question`, `evidence` and `stop` are one line each, every `checklist` item is a question ending in `?`, and `classes` holds `trivial`, `medium` or `large`; `run/review.py` refuses a malformed lens before any seat sits.
+`run/gate.py` accepts the six keys on a lens row only, and a lens row is no gate: it claims no path, so a registry gains one without any gate's selection, key or fold changing.
+
+**Assignment.**
+`run/review.py --class C` assigns a lens when the change's final class is in its `classes` and a touched path matches its `inputs`, by rule, the same rule that sets the review rows' floor (r4 9.4: "never by an agent's taste").
+The router is never shown a lens; it may raise the class, which the floor follows, and never lower it.
+Each assigned lens reaches the finder of every row that sits, after the finder's own prompt, as its role line, checklist, signature question, evidence and stop rule; it prints as `review: route: lens ID: PATH is under its inputs (class C)`, and the record's `route.lenses` and `lenses` carry it.
+`--gate ID` alone names no class, so it reads no lens.
+
+**The seed rows**, `corpus/lens/gates.toml`, for a caller to copy:
+
+| Lens | Assigned on | Signature question |
+| --- | --- | --- |
+| `product-analyst`, `-developer`, `-designer`, `-customer`, `-tester`, `-stakeholder`, `-support` | `product/**`, `docs/product/**`, medium or large | the product-lifecycle playbook's seven lenses, each with its own question |
+| `architect` | any path, large | What does this choice prevent us from changing later, and can it be undone? |
+| `security` | any path, large, as a sensitive path sizes it | Who can reach this that should not, and what can they do once there? |
+| `tester` | any path, medium or large | Would this check still pass if the change were reverted? |
+| `operations` | migrations, SQL, deploy, infrastructure and workflow paths | If this goes wrong in the night, how do we see it and how do we undo it? |
+| `designer` | style, markup and UI component paths | What does the user see when this is empty, slow or broken? |
+
+**The eval.**
+`run/lens-eval.py --corpus corpus/lens --store DIR [--case NAME]... [--record DIR]` is r4 9.5's ablation: 20 specs with one seeded gap each and their 20 gap-free twins, under `corpus/lens/cases/`.
+Its docstring owns the case shape and the exit statuses (0 every lens that ran met its bar, 1 a bar missed, 2 undecided).
+Each spec reaches a fresh finder seat as a change adding `spec.md`, through `run/review.py`'s own seat, login check, budgets and finder prompt, in four arms: `checklist` (the lens as review gives it), `bare` (without the role line), `persona` ("You are a seasoned ROLE"), and `none`.
+
+| Gap class (seeds) | Lens |
+| --- | --- |
+| no rollback (3), no cleanup step (3) | `operations` |
+| no auth check on a new endpoint (3) | `security` |
+| no acceptance command (3) | `tester` |
+| an irreversible migration with no dry run (3) | `architect` |
+| no out-of-scope list (3) | `product-stakeholder` |
+| a new screen with no empty, loading or error state (2) | `designer` |
+
+A seed is caught by an `error` or `warning` finding inside the seed's lines whose claim names one of the case's `terms`, so a finding there about something else does not count; any `error` or `warning` flags a clean spec.
+The bar per lens is r4 9.5's: at least 80% of its own seeds caught as `checklist`, at most 10% of clean specs flagged.
+The ablation is `keep` when checklist recall beats `none` by more than the 95% half-width of the difference, `1.96 * sqrt(2p(1-p)/n)` with `p` pooled, else `cut`; the role line is `keep` when `checklist` beats `bare`, else `remove`.
+The verdicts are printed and not applied: at 2 to 6 seeds a lens they are noise, so all twelve rows stay in shadow and nothing is cut until a larger set decides (decided in review).
+The five other product lenses own no gap class here and print as unmeasured.
+
+**Measured** 2026-10-20 with CLI 2.1.302 through the subscription login, finder `claude-sonnet-5-5` on specs written as `claude-opus-5-5`, 220 seats, 0 undecided:
+
+| Lens | Seeds caught: checklist, bare, persona, none | Clean flagged: checklist, none | Bar | Ablation | Role line |
+| --- | --- | --- | --- | --- | --- |
+| `product-stakeholder` | 3, 3, 1, 0 of 3 | 2, 8 of 20 | met | keep | remove |
+| `architect` | 2, 0, 1, 1 of 3 | 10, 8 of 20 | missed | cut | keep |
+| `security` | 3, 2, 1, 0 of 3 | 5, 8 of 20 | missed (flags) | keep | keep |
+| `tester` | 3, 3, 0, 0 of 3 | 19, 8 of 20 | missed (flags) | keep | remove |
+| `operations` | 5, 5, 5, 1 of 6 | 7, 8 of 20 | missed (flags) | keep | remove |
+| `designer` | 2, 2, 1, 0 of 2 | 5, 8 of 20 | missed (flags) | keep | remove |
+
+Over the 20 seeds the checklist arm caught 18, the bare checklist 15, the persona line alone 9 and no lens 2, which is the null persona result and the checklist result of r4 9.2 again on this set.
+Only `product-stakeholder` meets the clean bar; the finder with no lens flags 8 of 20 clean specs itself, so most flags are the finder's habit of reporting some gap, which r4 9.2 predicts.
+The seed spans only the section where the gap sits, so a right finding anchored elsewhere scores a miss: on `drop-column-gap` the bare arm named the missing backup at the design line that states the drop (line 12), outside the rollout lines 14 to 17, which accounts for part of `architect`'s bare 0 of 3; the spans were set before either run and are not widened after reading the answers.
+`tester` flags 19 of 20 because its second question, whether a check fails before the change and passes after, cannot be answered on a spec whose tests do not exist yet; it fits a code change, not a spec.
+
+This is the second run.
+The first, on the specs as first written, found real defects in the clean twins (a Berlin time given as CET with no date, though summer is CEST, a flag that names one index and still splits traffic 10 to 90, a rollback that hides a menu entry and leaves its route open) and credited any finding inside a seed's lines, such as a CSV-injection warning on the missing auth check.
+So the clean twins were corrected once, each security twin dropped its auth assertions from its acceptance lines too, and `terms` was added, fixed before the second run; the first run's counts were 17 of 20 seeds by checklist and 8 of 20 by no lens, with no lens flagging 11 of 20 clean specs.
+At these counts each figure is a smoke reading; the follow-up is the larger labelled set, enough seeds a lens for the half-width to separate the arms, before any row is cut or its role line removed.
+
+**Proof.**
+`.ci/test-lens-eval.py` replays the second run's recorded seats, `.ci/fixtures/review/corpus/lens/NAME/`, through `claude-recorded.py`, then again against a copy of the eval with each case's control removed; its first case pins the table above.
+`.ci/test-review.py` covers assignment (class, path, the final class, nothing on a trivial change, only the assigned lenses reaching the finder, a malformed lens refused before any seat) and `.ci/test-gate-runner.py` the lens row's keys and that it claims no path.
+The gates-proof rows are `review-lens` (a checklist item that is no question, refused), `lens-eval-miss` (the architect lens's real catch of the missing dry run emptied) and `lens-eval-false-alarm` (its real warning on a clean spec).
+No workflow calls `run/review.py` or `run/lens-eval.py`; wiring waits for the maintainer's weekly batch.
 
 ## The licence row
 

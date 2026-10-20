@@ -1,0 +1,4 @@
+lens = "security"
+defect = "the new admin export endpoint checks no caller"
+seed = [10, 14]
+terms = ["auth", "caller", "role", "permission", "access", "signature", "verif", "owner", "owns", "forge", "anyone", "spoof"]

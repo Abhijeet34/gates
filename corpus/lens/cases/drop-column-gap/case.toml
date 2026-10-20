@@ -1,0 +1,4 @@
+lens = "architect"
+defect = "the irreversible column drop has no dry run or restorable backup"
+seed = [14, 17]
+terms = ["dry run", "dry-run", "backup", "snapshot", "rehears", "irreversib", "cannot be undone", "restore", "undo"]

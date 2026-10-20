@@ -1,0 +1,4 @@
+lens = "architect"
+defect = "the irreversible rewrite of order ids has no dry run or restorable backup"
+seed = [15, 20]
+terms = ["dry run", "dry-run", "backup", "snapshot", "rehears", "irreversib", "cannot be undone", "restore", "undo"]

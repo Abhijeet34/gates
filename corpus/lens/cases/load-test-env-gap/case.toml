@@ -1,0 +1,4 @@
+lens = "operations"
+defect = "the temporary load-test environment is never torn down"
+seed = [16, 20]
+terms = ["clean", "drop", "delete", "remov", "tear", "destroy", "temporar", "leftover", "linger"]
