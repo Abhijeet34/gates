@@ -103,11 +103,15 @@ binary "$TMP/app/Contents/MacOS/main" "$HOME_PATH/a"
 binary "$TMP/app/Contents/Resources/side" "$HOME_PATH/b" "$HOME_PATH/c"
 binary "$TMP/app/Contents/Resources/ok"
 ln -s "$HOME_PATH/elsewhere" "$TMP/app/Contents/link"
+mkdir -p "$TMP/app/Contents/Versions/A"
+ln -s "$HOME_PATH" "$TMP/app/Contents/dirlink"
+ln -s A "$TMP/app/Contents/Versions/Current"
 scan "$TMP/app"
 expect_rc "a bundle with planted files is refused" 1 $?
 said "the nested main binary is reported" "machine\.home-path +1 .*Contents/MacOS/main"
 said "the nested sidecar is reported" "machine\.home-path +2 .*Contents/Resources/side"
 said "the symlink target is reported" "machine\.home-path +1 .*Contents/link"
+said "the directory symlink target is reported" "machine\.home-path +1 .*Contents/dirlink"
 never_said "the bundle refusal" "$HOME_PATH"
 
 # 7. A path that itself holds a needle is redacted in the report.

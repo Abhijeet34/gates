@@ -72,7 +72,8 @@ def files_under(path):
     if os.path.isdir(path) and not os.path.islink(path):
         for root, dirs, names in os.walk(path):
             dirs.sort()
-            for name in sorted(names):
+            linked = [d for d in dirs if os.path.islink(os.path.join(root, d))]
+            for name in sorted(names + linked):
                 yield os.path.join(root, name)
     else:
         yield path
