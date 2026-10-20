@@ -124,6 +124,8 @@ check_shell() {
     python3 .ci/test-critic-eval.py || rc=1
     # The exposure and signature gates, through real pushes into throwaway repositories.
     bash system-maintenance/git-hooks/test-exposure-scan.sh || rc=1
+    # The release-artifact scan, over fixture binaries planted at run time.
+    bash system-maintenance/git-hooks/test-artifact-scan.sh || rc=1
     bash system-maintenance/git-hooks/test-signature-check.sh || rc=1
     bash system-maintenance/git-hooks/test-commit-msg.sh || rc=1
     return $rc
