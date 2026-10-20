@@ -25,6 +25,7 @@ Licensed under the Apache License 2.0; see `LICENSE` and `NOTICE`.
 | `run/review.py` | The review rows: a finder session on a model other than the author's, then a verifier pass that must reproduce each blocking finding before it blocks, each seat within its token and time budget, with a Haiku router checked by a rule floor and a veto rule that settles disagreement; see "The review rows". |
 | `run/corpus.py`, `corpus/` | The seeded corpus for the design, licence and release reviews and the runner that counts what a review row catches and what it flags on it; see "The seeded corpus". |
 | `run/lens-eval.py`, `corpus/lens/` | The role lenses: `kind = "lens"` rows a routed review assigns to its finders, the twelve seed rows, and the ablation eval that measures each lens with and without itself; see "The role lenses". |
+| `run/critic.py`, `run/critic-eval.py`, `corpus/critic/` | The critic lens: one seat on another model writes the strongest counter-case to a decision request or a study and re-derives two numbers it rests on, and the gate holds it when a number does not survive; the eval measures each seat on planted wrong numbers, planted one-sided requests and their clean twins; see "The critic lens". |
 | `run/licence.py` | The licence row: dependency and vendored-file licences against a caller's `.github/licence-policy.toml`; see "The licence row". |
 | `run/budget-monitor.py` | The gate budget monitor: prints each budgeted step's weekly p50/p95, the alarm and the fix task text; see "The budget monitor". |
 | `bin/gates.py`, `bin/rollout.toml` | `gates bump` and `gates rollback`, which move callers' locks; see "Bumping". |
@@ -1152,6 +1153,84 @@ At these counts each figure is a smoke reading; the follow-up is the larger labe
 `.ci/test-review.py` covers assignment (class, path, the final class, nothing on a trivial change, only the assigned lenses reaching the finder, a malformed lens refused before any seat) and `.ci/test-gate-runner.py` the lens row's keys and that it claims no path.
 The gates-proof rows are `review-lens` (a checklist item that is no question, refused), `lens-eval-miss` (the architect lens's real catch of the missing dry run emptied) and `lens-eval-false-alarm` (its real warning on a clean spec).
 No workflow calls `run/review.py` or `run/lens-eval.py`; wiring waits for the maintainer's weekly batch.
+
+## The critic lens
+
+`run/critic.py --request FILE --registry TOML --author MODEL --store DIR` sits one critic seat on a decision request or a study before it reaches the captain, and holds it when a number it rests on does not survive being worked out again.
+It is the factory plan's row "P3a-CRIT" (r5, "The council": "The council writes the strongest counter-case and re-derives two numbers before a recommendation reaches you"; review r4 7.4 and 8.2).
+Its docstring owns the exit statuses (0 pass, 1 held, 2 could not decide); the run ends with `critic: pass|fail|error: DETAIL`.
+
+**The lens.**
+The critic is the `kind = "lens"` row `critic` of `corpus/critic/gates.toml`, in the shape of "The role lenses", checked by `run/review.py`'s `lens_of` before any seat sits and given to the seat by its `lens_text`, role line, checklist, signature question, evidence and stop rule:
+
+| Checklist question | What the gate checks of the answer |
+| --- | --- |
+| Is the strongest case for the opposite choice made from the request's own evidence? | `counter_case`, and at least one of its `quotes` standing on its line |
+| Does the recommendation answer each line of its evidence that cuts against it? | each `omitted` quote standing on its line |
+| Does each number the recommendation rests on follow from the figures it cites? | each of `numbers` re-derived by the gate, at least two |
+| Is each share stated with the count it is a share of? | none; the seat reads it |
+
+Its `inputs`, `decisions/**` and `studies/**`, also assign it by rule to the finder of a routed review whose change commits a request or a study, as any lens is assigned.
+
+**The seat.**
+The critic sits on the first of `claude-sonnet-5-5` and `claude-opus-5-5` that is not `--author`, so Sonnet critiques Opus work and Opus critiques Sonnet work, as a review's finder is seated, in a fresh `claude -p` with no tools, through `run/review.py`'s login check, 60,000 and 4,000 token budgets and 300 s.
+Its independence is recorded as `cross-model` or `context-only`, never as a different family: with one vendor the plan's "a model family different from the author's" is a different Anthropic model until a second vendor's seat joins (r5, "Who reviews whom").
+It sees the request with its lines numbered and nothing else; there is no devil's advocate inside the author's session, because same-model debate collapses into agreement (r4 8.2).
+
+**The gate decides, not the seat.**
+The seat writes the arithmetic and the gate does it:
+
+1. every quote must stand on the line it names, ignoring spacing and `*` or backtick marks; a counter-case or omitted quote must be the whole line or at least 20 characters of it, and a number's quote any part of its line;
+2. a number's `stated` value and each operand's `value` must be numbers written on their quoted lines, and no operand may be the stated value on the stated line, which would agree by construction;
+3. the gate evaluates `expression` itself, allowing only `+ - * /`, parentheses, the operands' values and `100`; the seat's own result, if it gives one, is never read;
+4. a re-derived number disagrees when it is further from the stated one than the larger of 1% of the stated value and half a unit in its last stated digit, so `about 1.3%` for 4 of 300 agrees within 0.05 and 184.00 USD for 147.20 does not.
+
+One disagreeing number holds the request (`fail`), whatever else the answer holds.
+A pass needs two numbers re-derived and agreeing and one counter-case quote standing; fewer, or a seat that timed out, broke its budget, answered from another model or unreadably, is `error`, never a pass.
+Omitted evidence prints as `critic: omitted line N: QUOTE` and `critic: one-sided: ...; recorded for the captain, does not hold`, and is recorded with the counter-case: only a number beyond tolerance holds (maintainer decision).
+Each number prints as `critic: number line N: stated S, re-derived D from EXPR: agrees within T` or `disagrees beyond T, holds`, or `not re-derived: WHY`.
+
+**The record.**
+The verdict is appended to `DIR/records.jsonl` in `run/gate.py`'s shape with `gate = "critic"` and `head` the request's sha256, and `critic` holds the lens, the author, the CLI version, the seat with its model, independence, tokens, duration and reply log, the counter-case, every quote and number with why it stands or was dropped, and the tolerance.
+
+**The eval.**
+`run/critic-eval.py --corpus corpus/critic --store DIR [--case NAME]... [--record DIR]` runs `run/critic.py` on 24 requests, each once by each seat: the Sonnet critic on the request written as Opus and the Opus critic on it written as Sonnet.
+Its docstring owns the case shape and the exit statuses (0 every seat met its bar, 1 a bar missed, 2 undecided).
+
+| Plant (cases) | Requests | Caught when |
+| --- | --- | --- |
+| a wrong number (6) | a Mac runner's monthly cost, a cache hit rate, a review seat's monthly saving, a flaky-test share, an alert's precision, a pipeline's speedup; three are studies | the request is held on a number stated inside the seed |
+| one-sided (6) | retiring a deploy script two services still use, raising a timeout most of whose hits are one job, adopting an unmaintained parser, a speedup that left out the failed runs, dropping a security seat that caught the month's only leaks, merging repositories whose trial nearly tripled CI time | an omitted quote that stands sits inside the seed |
+| clean twin (12) | each of the above with its number right or its contrary evidence answered in the recommendation | never held and nothing omitted |
+
+Every request has at least two numbers that follow from its evidence, so a right request can pass.
+A hold on a one-sided case or a clean twin, whose numbers are all right, is a false hold, and an omitted quote on a clean twin a false one-sided flag.
+The bar per seat is r4 9.5's applied to both plants: at least 80% of the wrong numbers held and of the one-sided cases caught, at most 10% false holds and 10% false one-sided flags.
+
+**Measured** 2026-10-20 with CLI 2.1.302 through the subscription login, 48 seats, 0 undecided:
+
+| Seat (on requests written as) | Wrong numbers held | One-sided caught | False holds | False one-sided flags | Bar |
+| --- | --- | --- | --- | --- | --- |
+| `claude-sonnet-5-5` (Opus) | 6 of 6 | 6 of 6 | 0 of 18 | 4 of 12 | missed (flags) |
+| `claude-opus-5-5` (Sonnet) | 6 of 6 | 6 of 6 | 0 of 18 | 1 of 12 | met |
+
+Of the five false flags, three are Sonnet quoting a contrary line that the clean twin's recommendation answers in one sentence (the security seat, the sharding study, the repository merge), and two quote an evidence line no recommendation needs to answer: Sonnet the finder model's 8 of 14 seeds caught, and Opus the cache study's zero stale restores.
+Since a one-sided flag never holds, its cost is the captain reading a counter-case the request had already answered; a false hold, which would stop a right request, did not happen on either seat.
+The 48 seats used 1,523 to 1,679 input and 585 to 2,065 output tokens each, inside the 60,000 and 4,000 budgets, and none took over 20 s.
+
+This is the second run.
+The first, on the cases as first written, found three defects in them: the Mac's payback was stated as "within five months", which no seat can re-derive, so both seats on its clean twin were undecided; the finder-model request cited "28 seeded corpus cases" that its evidence never gave, and Opus held it there; and the disk alert's twin claimed the higher threshold "missed nothing" while actionable alerts fell from 10 to 9, which both seats flagged.
+Those three requests were corrected once, with the prompt, the seeds and the scoring unchanged, and every case was run again.
+The first run's counts were wrong numbers held 5 and 6 of 6, one-sided caught 5 and 6 of 6, false holds 0 and 1 of 18, false one-sided flags 4 and 1 of 12, with 4 undecided seats, Sonnet first.
+Its one Sonnet miss shows the limit of the design: on the planted 184.00 USD, Sonnet's counter-case named the error in prose, then derived the number as `2300 * 0.08`, from the wrong minutes, and the gate, which checks that each operand is written on its line but not that it is the right figure, agreed.
+In the second run Sonnet derived it from the macOS minutes and held it.
+At 6 plants a kind these are smoke counts: a seat whose re-derivation reproduces a wrong figure from the wrong operands is the miss to measure on a larger set, before the row leaves shadow.
+
+**Proof.**
+`.ci/test-critic.py` runs `run/critic.py` on the recorded seats, `.ci/fixtures/review/corpus/critic/NAME/MODEL/`, through `claude-recorded.py`, and `.ci/test-critic-eval.py` replays the eval; each case is run again against a copy with its control removed, and the eval's first case pins the table above.
+No case calls a model; an answer the live run did not give is written into a real envelope.
+The gates-proof rows are `critic-hold` (the real hold on the planted cost, against the real pass on its twin), `critic-unquoted` (a paraphrased counter-case refused), `critic-eval-miss` (a hold off the seed) and `critic-eval-false-alarm` (a hold on a clean twin).
+No workflow and no firstmate step calls `run/critic.py` yet; a critic seat inside the routed review, whose hold would fold as a `fail` on a change that commits a request, is the follow-up.
 
 ## The licence row
 

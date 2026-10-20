@@ -1,0 +1,3 @@
+plant = "number"
+defect = "the precision after is stated as 90%, but 9 of 15 alerts is 60%"
+seed = [6, 6]
