@@ -368,6 +368,19 @@ printf 'refs/heads/main %s refs/heads/main %040d\n' "$(git rev-parse HEAD)" 0 |
 finding = "IDENTITY OR MACHINE EXPOSURE"
 
 [[gate]]
+id = "artifact-scan"
+surface = "Release artifacts"
+gates = ["system-maintenance/git-hooks/artifact-scan.py"]
+test = "system-maintenance/git-hooks/test-artifact-scan.sh"
+suite = "shell"
+command = "system-maintenance/git-hooks/artifact-scan.py"
+# The home path is read from the account, never written here: the exposure gate refuses it in tracked text.
+red = '''python3 -c 'import os, pwd; print(pwd.getpwuid(os.getuid()).pw_dir)' > home && { printf 'MZ\0'; cat home; printf '/.cargo/registry/src/x\0'; } > release.bin'''
+clean = '''printf 'MZ\0/work/.cargo/registry/src/x\0' > release.bin'''
+run = 'python3 "$GATE" release.bin'
+finding = "machine.home-path"
+
+[[gate]]
 id = "signature-check"
 surface = "Pre-push"
 gates = ["system-maintenance/git-hooks/signature-check.py", "system-maintenance/git-hooks/pushrange.py"]

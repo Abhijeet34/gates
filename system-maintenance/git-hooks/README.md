@@ -344,6 +344,23 @@ Cost, measured 2026-09-17: 0.11s to derive the needles, 0.15s for an ordinary on
 `test-exposure-scan.sh` drives every class through real pushes, masks and all, including a new branch over an already-published leak, the no-`scutil` refusal, and this repository's own history as a first push to prove its fixtures do not fire.
 `test-global-hooks.sh` pins the dispatch.
 
+### Release artifacts
+
+The push gate reads no binary, and a compiled release carries what it was built from: a Rust panic location embeds the absolute path of every crate source, so an unremapped build holds the builder's home directory.
+Measured 2026-10-20 with `artifact-scan.py` over quoth's last local release build: 1131 `machine.home-path` hits in the app binary and 22 in the `whisper-server` sidecar.
+
+`artifact-scan.py <file-or-directory>...` runs the same derived needles over every byte of each artifact, so there is one needle source and it cannot drift from the push gate.
+A directory is walked, which covers a `.app` bundle, and a symlink's target text is read too.
+Each needle is recompiled as a byte pattern, so a path followed by a stray high byte is still a hit.
+It prints `class  count  path` per hit and never the value; a path that itself holds a needle is redacted.
+It exits 0 when clean, 1 on any `machine.*` hit, and 2 for a missing, unreadable or absent argument, so an artifact that was not read never passes.
+It is release tooling and not a hook: `install.sh` does not deploy it, and a release script calls it from a checkout of this repository before it signs or notarises.
+A compressed disk image is not meaningfully scanned, so scan the files that go into it.
+
+The fix belongs at the build, with `--remap-path-prefix` (rustc) or `-ffile-prefix-map` (clang); `trim-paths` in a Cargo profile is the better tool once it is stable.
+It was not on cargo 1.99.0, measured 2026-10-20: `feature trim-paths is required`.
+`test-artifact-scan.sh` plants this machine's values into random bytes at run time and drives every class, the directory walk and each exit code.
+
 ## This is an accident-catcher, not a control
 
 `git push --no-verify` bypasses every hook, and so does deleting the file.
