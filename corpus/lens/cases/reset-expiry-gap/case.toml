@@ -1,0 +1,4 @@
+lens = "tester"
+defect = "the acceptance criteria name no command that checks them"
+seed = [20, 24]
+terms = ["command", "verify", "verification", "runnable", "check"]

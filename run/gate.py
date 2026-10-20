@@ -15,7 +15,7 @@ The registry is `.github/gates.toml` in the tree under test, read at H, one
   run    = "cargo test --locked"                     # bash -e, at the checkout root
   tools  = { cargo = "cargo --version" }             # optional: probe whose output keys
   blocks = true                                      # optional: false reports only
-  kind   = "check"                                   # optional: check, review or docs
+  kind   = "check"                                   # optional: check, review, docs or lens
   shadow_since = 2026-10-19                          # optional: date it entered shadow
   scoped = true                                      # optional: only its inputs select it
 
@@ -25,6 +25,11 @@ reads it like any other, so an absent or `error` review never folds to pass.
 A review row with a record for H is folded even when selection left it out.
 A review row may also carry `lens`, `reviewers` and `budget`, which run/review.py
 reads and judges; on any other row they are unknown keys.
+
+A `lens` row is no gate: it carries a review lens (`role`, `checklist`,
+`question`, `evidence`, `stop`, `classes`) that run/review.py assigns to the
+review rows that sit, so `load` returns it only when asked for lenses, and it
+never claims a path, is selected, run or folded.
 
 Selection maps `git diff --name-only B...H` through each gate's inputs, and
 selects every gate when a changed path is named by no gate, is the registry or
@@ -72,7 +77,9 @@ from pathlib import Path
 REGISTRY = ".github/gates.toml"
 ROW_KEYS = {"id", "inputs", "run", "tools", "blocks", "kind", "shadow_since", "scoped"}
 REVIEW_KEYS = {"lens", "reviewers", "budget"}
-KINDS = {"check", "review", "docs"}
+LENS_KEYS = {"role", "checklist", "question", "evidence", "stop", "classes"}
+EXTRA_KEYS = {"review": REVIEW_KEYS, "lens": LENS_KEYS}
+KINDS = {"check", "review", "docs", "lens"}
 VERDICTS = {"pass", "fail", "error"}
 EVENTS = {"false-alarm", "proof-failed"}
 SHADOW_DAYS, SHADOW_RUNS = 14, 50
@@ -115,7 +122,8 @@ def glob_re(glob):
     return re.compile("".join(out) + r"\Z")
 
 
-def load(head):
+def load(head, lenses=False):
+    """The registry's gate rows, or with `lenses` its lens rows; every row is checked either way."""
     try:
         text = git("show", f"{head}:{REGISTRY}").decode()
         rows = tomllib.loads(text).get("gate", [])
@@ -130,7 +138,7 @@ def load(head):
         gid = row.get("id")
         # An unknown key is refused because a misspelt `tools` would drop the
         # probes from the key and reuse a verdict across a tool bump.
-        known = ROW_KEYS | (REVIEW_KEYS if row.get("kind") == "review" else set())
+        known = ROW_KEYS | EXTRA_KEYS.get(row.get("kind"), set())
         problems = [f"unknown key {k!r}" for k in sorted(set(row) - known)]
         if not isinstance(gid, str) or not gid:
             problems.append("no id")
@@ -168,7 +176,7 @@ def load(head):
             raise Undecided(f"{REGISTRY}: gate {gid!r}: {'; '.join(problems)}")
         seen.add(gid)
         row["_globs"] = [glob_re(g) for g in inputs]
-    return rows
+    return [r for r in rows if (r["kind"] == "lens") == lenses]
 
 
 def public(row):

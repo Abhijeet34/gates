@@ -1,0 +1,4 @@
+lens = "security"
+defect = "the delete-account endpoint does not check that the caller owns the account"
+seed = [10, 13]
+terms = ["auth", "caller", "role", "permission", "access", "signature", "verif", "owner", "owns", "forge", "anyone", "spoof"]

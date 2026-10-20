@@ -117,6 +117,8 @@ check_shell() {
     # The seeded corpus runner against recorded replies of its live run, and the licence policy row folded in shadow.
     python3 .ci/test-corpus.py || rc=1
     python3 .ci/test-licence.py || rc=1
+    # The role lenses' ablation eval against recorded replies of its second live run.
+    python3 .ci/test-lens-eval.py || rc=1
     # The exposure and signature gates, through real pushes into throwaway repositories.
     bash system-maintenance/git-hooks/test-exposure-scan.sh || rc=1
     bash system-maintenance/git-hooks/test-signature-check.sh || rc=1

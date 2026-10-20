@@ -1,0 +1,4 @@
+lens = "operations"
+defect = "the temporary export bucket and its access key are never removed"
+seed = [15, 19]
+terms = ["clean", "drop", "delete", "remov", "tear", "destroy", "temporar", "leftover", "linger"]

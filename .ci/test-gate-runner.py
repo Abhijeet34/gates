@@ -521,6 +521,45 @@ def review_keys_only_on_review_rows(runner):
     return None
 
 
+LENS = """
+[[gate]]
+id = "architect"
+kind = "lens"
+inputs = ["**"]
+role = "software architect"
+checklist = ["Can every step be undone?"]
+question = "Can it be undone?"
+evidence = "The quoted step."
+stop = "Report only gaps that affect correctness."
+"""
+
+
+def lens_row_is_no_gate(runner):
+    """A lens row claims no path and is never selected, so selection is unchanged."""
+    f = Fixture(runner)
+    base = f.commit({".github/gates.toml": REGISTRY + LENS})
+    f.commit({"notes/plan.txt": "a plan\n"})
+    rc, out = f.gate("select", "--base", base)
+    want = [f"{gid}\tnotes/plan.txt is named by no gate" for gid in ALL]
+    if rc != 0 or out.strip().splitlines() != want:
+        return f"a lens row changed selection (exit {rc}): {out.strip()!r}"
+    return None
+
+
+def lens_keys_only_on_lens_rows(runner):
+    f = Fixture(runner)
+    f.commit({".github/gates.toml": REGISTRY + LENS})
+    rc, out = f.gate("select", "--base", f.base)
+    if rc != 0:
+        return f"a lens row was refused (exit {rc}): {out.strip()}"
+    check = REGISTRY.replace('"$RUNS/docs"\'\n', '"$RUNS/docs"\'\nrole = "architect"\n')
+    f.commit({".github/gates.toml": check})
+    rc, out = f.gate("select", "--base", f.base)
+    if rc != 2 or "gate 'docs': unknown key 'role'" not in out:
+        return f"a check row carrying role was not refused (exit {rc}): {out.strip()}"
+    return None
+
+
 # (case, control it proves, text in run/gate.py, the text with the control removed)
 CASES = [
     (
@@ -628,8 +667,20 @@ CASES = [
     (
         review_keys_only_on_review_rows,
         "the review keys being a review row's alone",
-        '(REVIEW_KEYS if row.get("kind") == "review" else set())',
-        "REVIEW_KEYS",
+        'EXTRA_KEYS.get(row.get("kind"), set())',
+        "REVIEW_KEYS | LENS_KEYS",
+    ),
+    (
+        lens_keys_only_on_lens_rows,
+        "the lens keys being a lens row's alone",
+        'EXTRA_KEYS.get(row.get("kind"), set())',
+        "REVIEW_KEYS | LENS_KEYS",
+    ),
+    (
+        lens_row_is_no_gate,
+        "a lens row kept out of the gate rows",
+        'return [r for r in rows if (r["kind"] == "lens") == lenses]',
+        "return rows",
     ),
     (
         scoped_row_ignores_unrelated_paths,

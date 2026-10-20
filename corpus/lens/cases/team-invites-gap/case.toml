@@ -1,0 +1,4 @@
+lens = "product-stakeholder"
+defect = "the spec lists no out-of-scope items"
+seed = [6, 7]
+terms = ["out of scope", "out-of-scope", "scope", "exclu", "not building", "non-goal"]

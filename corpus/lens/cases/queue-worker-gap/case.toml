@@ -1,0 +1,4 @@
+lens = "operations"
+defect = "the new worker's deploy has no rollback"
+seed = [16, 21]
+terms = ["rollback", "roll back", "revert", "undo", "back out"]

@@ -1,0 +1,4 @@
+lens = "operations"
+defect = "the temporary staging table is never dropped"
+seed = [15, 19]
+terms = ["clean", "drop", "delete", "remov", "tear", "destroy", "temporar", "leftover", "linger"]

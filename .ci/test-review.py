@@ -791,6 +791,110 @@ def every_verdict_carries_the_fields(script):
     return None if got == want else f"the verdicts carried {got}, not {want}"
 
 
+# --- the role lenses -----------------------------------------------------------------------
+
+LENS_ROWS = """
+[[gate]]
+id = "tester"
+kind = "lens"
+inputs = ["**"]
+role = "test engineer"
+checklist = ["Would the change's own check fail before it and pass after it?"]
+question = "Would this check still pass if the change were reverted?"
+evidence = "The quoted line, and the check it lacks."
+stop = "Report only gaps that affect correctness or the stated requirements."
+
+[[gate]]
+id = "designer"
+kind = "lens"
+inputs = ["**/*.css"]
+role = "product designer"
+checklist = ["Does each new screen state its empty, loading and error states?"]
+question = "What does the user see when this is empty, slow or broken?"
+evidence = "The quoted line that adds the screen."
+stop = "Report only gaps that affect correctness or the stated requirements."
+
+[[gate]]
+id = "architect"
+kind = "lens"
+inputs = ["**"]
+classes = ["large"]
+role = "software architect"
+checklist = ["Can every step be undone?"]
+question = "What does this choice prevent us from changing later?"
+evidence = "The quoted irreversible step."
+stop = "Report only gaps that affect correctness or the stated requirements."
+"""
+
+
+def system_prompt(call):
+    argv = call["argv"]
+    return argv[argv.index("--system-prompt") + 1]
+
+
+def lens_assigned_by_class_and_path(script):
+    f = Fixture(script)
+    f.row(LENS_ROWS)
+    why = expect(
+        "a medium change with three lens rows", f.route(), 1,
+        "review: route: lens tester: .github/gates.toml is under its inputs (class medium)",
+        "review: code-review: F1 error calc.py:5:",
+    )  # fmt: skip
+    if why:
+        return why
+    out = f.route()[1]
+    if "lens designer" in out or "lens architect" in out:
+        return f"a lens whose path or class the change misses was assigned:\n{out}"
+    finder = system_prompt(next(c for c in f.calls() if c["seat"] == "finder"))
+    want = "### Lens: tester\nRole, for tone only: test engineer.\nChecklist, each answered yes or no:\n- Would the change's own check fail"
+    if want not in finder or "Lens: designer" in finder or "Lens: architect" in finder:
+        return f"the finder did not read the tester lens alone:\n{finder}"
+    for c in f.calls():
+        if c["seat"] == "router" and "tester" in c["prompt"] + system_prompt(c):
+            return f"the router was shown a lens:\n{c['prompt']}"
+    rec = f.latest()["review"]
+    if rec["lenses"] != ["tester"] or list(rec["route"]["lenses"]) != ["tester"]:
+        return f"the record does not carry the tester lens alone: {rec['lenses']}, {rec['route']['lenses']}"
+    return None
+
+
+def raised_class_assigns_its_lenses(script):
+    """The lenses follow the final class, which the router may raise but never lower."""
+    f = Fixture(script)
+    f.row(LENS_ROWS)
+    f.router({"class": "large", "reviews": [{"gate": "code-review", "why": "code"}]})
+    return expect(
+        "a medium change the router sizes large", f.route(), 1,
+        "review: route: lens tester: .github/gates.toml is under its inputs (class large)",
+        "review: route: lens architect: .github/gates.toml is under its inputs (class large)",
+    )  # fmt: skip
+
+
+def trivial_assigns_no_lens(script):
+    f = Fixture(script, "guard", "unreproduced")
+    f.row(LENS_ROWS.replace('classes = ["large"]\n', ""))
+    f.router(SKIP)
+    rc, out = f.route(size="trivial")
+    if rc != 0 or "route: lens" in out:
+        return f"a trivial change was assigned a lens (exit {rc}):\n{out}"
+    return None
+
+
+def malformed_lens_refused(script):
+    f = Fixture(script)
+    f.row(
+        LENS_ROWS.replace('"Can every step be undone?"', '"Every step can be undone."')
+    )
+    why = expect(
+        "a lens whose checklist holds a statement", f.route(), 2,
+        "review: error: .github/gates.toml: lens 'architect': checklist must be a"
+        " non-empty list of yes or no questions",
+    )  # fmt: skip
+    if not why and f.calls():
+        why = f"a seat sat under a malformed lens: {[c['seat'] for c in f.calls()]}"
+    return why
+
+
 # (case, control it proves, text in run/review.py, the text with the control removed)
 CASES = [
     (reproduced_finding_blocks, "a verified finding blocks", "f.update(verified=why is None, blocks=why is None)", "f.update(verified=why is None, blocks=False)"),
@@ -829,6 +933,13 @@ CASES = [
     (downgrade_records_finder_dissent, "the dissent recorded", 'if v["vote"] != won:', "if False:"),
     (every_verdict_carries_the_fields, "the weakest label deciding independence", 'return "context-only" if "context-only" in labels else "cross-model"', 'return "cross-model"'),
     (every_verdict_carries_the_fields, "dissent on a verdict no seat reached", 'state.setdefault("dissent", [])', "pass"),
+    (lens_assigned_by_class_and_path, "a lens's classes", 'if hit and size in lens["classes"]:', "if hit:"),
+    (lens_assigned_by_class_and_path, "a lens's inputs", 'if hit and size in lens["classes"]:', 'if size in lens["classes"]:'),
+    (lens_assigned_by_class_and_path, "only the assigned lenses reaching the finder", 'assigned = [lr for lr in lenses if lr["id"] in plan["lenses"]]', "assigned = lenses"),
+    (lens_assigned_by_class_and_path, "the lens block in the finder's prompt", 'finder_system(lens, [lens_text(lr, "checklist") for lr in lenses])', "finder_system(lens)"),
+    (raised_class_assigns_its_lenses, "the final class assigning lenses", 'plan["lenses"] = assign(lenses, paths, plan["class"])', 'plan["lenses"] = assign(lenses, paths, given)'),
+    (trivial_assigns_no_lens, "a trivial change getting no lens", 'LENS_CLASSES = ("medium", "large")', "LENS_CLASSES = CLASSES"),
+    (malformed_lens_refused, "a lens's checklist of yes or no questions", 'and all(isinstance(q, str) and q.strip().endswith("?") for q in items)', "and all(isinstance(q, str) for q in items)"),
 ]  # fmt: skip
 
 

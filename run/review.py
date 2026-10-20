@@ -51,6 +51,13 @@ when its inputs miss it, and one row's verified block refuses the change. A row
 run/gate.py selects that does not sit is recorded as a `pass` naming why, unless
 it already has a record for H. Every record then carries the `route`.
 
+Routed, the rule also assigns the registry's `kind = "lens"` rows: a lens whose
+`classes` hold the final class and whose `inputs` match a touched path joins
+the finder of every row that sits, as a yes or no checklist with its signature
+question, the evidence a finding must carry and its stop rule; `role` is one
+line for tone only. The router never sees a lens, so no agent picks one.
+README.md, "The role lenses", owns the seed rows and their eval.
+
 The verdict is appended to DIR/records.jsonl in run/gate.py's record shape, so
 `gate.py fold` reads it: `fail` when a blocking finding is verified, `pass` when
 none is, `error` when the review could not decide: the CLI is missing or logged in
@@ -170,6 +177,14 @@ touching authentication, cryptography, a sandbox, credentials, settings or permi
 - reviews: each registered review row whose lens this change needs, by its gate id."""
 
 
+LENS_PREAMBLE = """Lenses. Read the change through each lens below as well. A lens is a \
+checklist, not a character: answer each of its questions yes or no against the change, \
+and report a finding only for a no that leaves a gap, carrying the evidence the lens \
+names and kept within its stop rule."""
+LENS_MODES = ("checklist", "bare", "persona")
+LENS_CLASSES = ("medium", "large")  # a trivial change runs no review, so no lens
+
+
 class Undecided(Exception):
     """The review could not establish a verdict; recorded as `error`, never a pass."""
 
@@ -249,6 +264,79 @@ def config(row):
     if problems:
         raise Undecided(f"{gate.REGISTRY}: gate {gid!r}: {'; '.join(problems)}")
     return lens, reviewers, {**BUDGET, **extra}
+
+
+def lens_of(row, where=gate.REGISTRY):
+    """A lens row's fields, or gate.Undecided naming what is wrong with it."""
+    problems = []
+
+    def text(key):
+        v = row.get(key)
+        if not isinstance(v, str) or not v.strip() or "\n" in v.strip():
+            problems.append(f"{key} must be one line of text")
+
+    for key in ("role", "question", "evidence", "stop"):
+        text(key)
+    items = row.get("checklist")
+    if not (
+        isinstance(items, list)
+        and items
+        and all(isinstance(q, str) and q.strip().endswith("?") for q in items)
+    ):
+        problems.append("checklist must be a non-empty list of yes or no questions")
+    classes = row.get("classes", list(LENS_CLASSES))
+    if not (isinstance(classes, list) and classes and set(classes) <= set(CLASSES)):
+        problems.append(f"classes must be a non-empty list of {', '.join(CLASSES)}")
+    if problems:
+        raise gate.Undecided(f"{where}: lens {row['id']!r}: {'; '.join(problems)}")
+    return {**row, "classes": classes}
+
+
+def assign(lenses, paths, size):
+    """{lens id: why the rule assigns it} for a change of `size` touching `paths`."""
+    out = {}
+    for lens in lenses:
+        hit = next((p for p in paths if gate.matches(lens, p)), None)
+        if hit and size in lens["classes"]:
+            out[lens["id"]] = (
+                f"{printable(hit, 120)} is under its inputs (class {size})"
+            )
+    return out
+
+
+def lens_text(lens, mode):
+    """One lens as the finder reads it: `checklist` as review uses it, `bare` without
+    the role line, `persona` the role line alone (the eval's ablation arms)."""
+    head = f"### Lens: {lens['id']}"
+    if mode == "persona":
+        return f"{head}\nYou are a seasoned {lens['role']}. Review the change from that position."
+    lines = [head]
+    if mode == "checklist":
+        lines.append(f"Role, for tone only: {lens['role']}.")
+    lines += ["Checklist, each answered yes or no:"]
+    lines += [f"- {q.strip()}" for q in lens["checklist"]]
+    lines += [
+        f"Signature question: {lens['question'].strip()}",
+        f"A finding from this lens carries: {lens['evidence'].strip()}",
+        f"Stop rule: {lens['stop'].strip()}",
+    ]
+    return "\n".join(lines)
+
+
+def finder_system(lens, blocks=()):
+    """The finder's system prompt for a row of `lens`, with each lens block after it."""
+    system = FINDER.format(lens=lens)
+    return "\n\n".join([system, LENS_PREAMBLE, *blocks]) if blocks else system
+
+
+def finder_prompt(records, title, diff, seat="finder"):
+    return "\n\n".join(
+        [
+            f"seat: {seat}",
+            f"## Check results at the head\n{records}",
+            f"## {title}\n{diff}",
+        ]
+    )
 
 
 def seats(reviewers, author):
@@ -379,8 +467,9 @@ def picks(answer, rows):
     return size, named
 
 
-def route(rows, base, head, given, author, store, say):
-    """Which review rows sit and why: the rule's floor plus the router's picks."""
+def route(rows, lenses, base, head, given, author, store, say):
+    """Which review rows sit and why: the rule's floor plus the router's picks,
+    and which lenses the rule assigns to their finders."""
     entries = touched(base, head)
     paths = [p for p, _, _ in entries]
     plan = {"given": given, "class": given, "router": None, "fallback": None}
@@ -429,6 +518,7 @@ def route(rows, base, head, given, author, store, say):
             named = {}
         plan["router"] = sat[0] if sat else None
     need = floor(rows, paths, plan["class"])
+    plan["lenses"] = assign(lenses, paths, plan["class"])
     plan["rows"] = {}
     for r in rows:
         if r["kind"] != "review":
@@ -480,6 +570,8 @@ def route(rows, base, head, given, author, store, say):
             say(f"route: {gid} sits: named by the router: {e['router']}")
         else:
             say(f"route: {gid} does not sit: {e['why']}")
+    for lid, why in plan["lenses"].items():
+        say(f"route: lens {lid}: {why}")
     return plan
 
 
@@ -789,13 +881,15 @@ def tally(finding, why, state, say):
             )
 
 
-def review(rows, row, base, head, author, store, state, say, whole=False):
+def review(rows, row, base, head, author, store, state, say, whole=False, lenses=()):
     """(verdict, detail). Fills `state` as it goes, so an Undecided keeps what was learnt.
-    With `whole`, a row whose inputs the change misses reads all of it."""
+    With `whole`, a row whose inputs the change misses reads all of it; `lenses`
+    are the lens rows the route assigned, each read by the finder."""
     lens, reviewers, budget = config(row)
     finder, verifier = seats(reviewers, author)
     judge = adjudicator(reviewers, verifier, author)
     state.update(lens=lens, author=author, seats=[], findings=[], veto=[], dissent=[])
+    state["lenses"] = [lr["id"] for lr in lenses]
     diff = change(rows, row, base, head)
     if whole and not diff.strip():
         diff = change([], row, base, head)
@@ -803,12 +897,8 @@ def review(rows, row, base, head, author, store, state, say, whole=False):
         return "pass", "nothing under its inputs changed, so no seat sat"
     state["cli"] = harness()
     records = checks(rows, head, store)
-    prompt = "\n\n".join(
-        [
-            "seat: finder",
-            f"## Check results at the head\n{records}",
-            f"## The change (git diff {base[:12]}...{head[:12]})\n{diff}",
-        ]
+    prompt = finder_prompt(
+        records, f"The change (git diff {base[:12]}...{head[:12]})", diff
     )
     escalates = (
         f", adjudicator {judge} on a dissent ({independence(judge, author)} from the author)"
@@ -828,7 +918,7 @@ def review(rows, row, base, head, author, store, state, say, whole=False):
     seconds = budget["finder_seconds"]
     answer = sit(
         seat,
-        FINDER.format(lens=lens),
+        finder_system(lens, [lens_text(lr, "checklist") for lr in lenses]),
         prompt,
         seconds,
         f"its {seconds}s budget",
@@ -919,13 +1009,14 @@ def record(store, row, head, base, started, t0, verdict, detail, state):
     )
 
 
-def sitting(rows, row, base, head, author, store, say, plan=None):
+def sitting(rows, row, base, head, author, store, say, plan=None, lenses=()):
     """Run one review row, append its record and return its verdict."""
     started, t0, state = stamp(), time.monotonic(), {}
     try:
         verdict, detail = review(
-            rows, row, base, head, author, store, state, say, whole=plan is not None
-        )
+            rows, row, base, head, author, store, state, say,
+            whole=plan is not None, lenses=lenses,
+        )  # fmt: skip
     except (Undecided, gate.Undecided) as e:
         verdict, detail = "error", str(e)
     if plan is not None:
@@ -940,11 +1031,12 @@ def tagger(say, gid):
     return lambda line: say(f"{gid}: {line}")
 
 
-def routed(rows, base, head, size, author, store, say):
+def routed(rows, lenses, base, head, size, author, store, say):
     """Route the change, run each row that sits, and pass each selected row that does not."""
     chosen = gate.select(rows, base, head)
     held = {r["gate"] for r in gate.records(store, strict=False) if r["head"] == head}
-    plan = route(rows, base, head, size, author, store, say)
+    plan = route(rows, lenses, base, head, size, author, store, say)
+    assigned = [lr for lr in lenses if lr["id"] in plan["lenses"]]
     verdicts = {}
     for row in rows:
         if row["kind"] != "review":
@@ -952,7 +1044,9 @@ def routed(rows, base, head, size, author, store, say):
         gid, entry = row["id"], plan["rows"][row["id"]]
         tagged = tagger(say, gid)
         if entry["sits"]:
-            verdicts[gid] = sitting(rows, row, base, head, author, store, tagged, plan)
+            verdicts[gid] = sitting(
+                rows, row, base, head, author, store, tagged, plan, assigned
+            )
         # A row that already holds a verdict for H keeps it, so a pass here never covers a fail.
         elif gid in chosen and gid not in held:
             state = {
@@ -1012,7 +1106,11 @@ def main():
             )
         rows = gate.load(head)
         if args.size:
-            verdict = routed(rows, base, head, args.size, args.author, args.store, say)
+            # A malformed lens refuses the route before any seat sits, so no record claims it was read.
+            lenses = [lens_of(r) for r in gate.load(head, lenses=True)]
+            verdict = routed(
+                rows, lenses, base, head, args.size, args.author, args.store, say
+            )
             return {"pass": 0, "fail": 1}.get(verdict, 2)
         row = next((r for r in rows if r["id"] == args.gate), None)
         # Recorded against another kind of row, an error would refuse a check that passed.

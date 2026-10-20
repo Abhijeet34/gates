@@ -1,0 +1,4 @@
+lens = "designer"
+defect = "the new invoice list screen states no empty, loading or error state"
+seed = [10, 12]
+terms = ["empty", "loading", "error state", "states", "progress"]

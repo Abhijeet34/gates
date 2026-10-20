@@ -1,0 +1,4 @@
+lens = "operations"
+defect = "the config change raising rate limits has no rollback"
+seed = [14, 19]
+terms = ["rollback", "roll back", "revert", "undo", "back out"]

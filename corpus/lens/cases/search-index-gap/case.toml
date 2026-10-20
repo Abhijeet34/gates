@@ -1,0 +1,4 @@
+lens = "operations"
+defect = "the switch to the new search index has no rollback"
+seed = [14, 19]
+terms = ["rollback", "roll back", "revert", "undo", "back out"]
