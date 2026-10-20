@@ -1,0 +1,4 @@
+lens = "open-alternative"
+defect = "the product name contains the incumbent's mark"
+seed = [4, 8]
+terms = ["trademark", "mark", "acme"]

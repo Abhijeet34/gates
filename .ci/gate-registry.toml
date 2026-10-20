@@ -1380,6 +1380,20 @@ clean = '''bash "$ROOT/.ci/fixtures/review/corpus-case.sh" lens rate-limit-clean
 run = 'PATH="$PWD/.stub:$PATH" CLAUDE_RECORDED_REPLIES="$PWD/replies" python3 "$GATE" --corpus "$ROOT/corpus/lens" --case "$(cat case)" --store store'
 finding = "lens-eval: architect: bar missed: flags 1 of 1, over 10%"
 
+# The open-alternative lens, replayed from its live run: red, the lens's real catch of
+# the request for the incumbent's layout emptied, a missed bar; clean, the real catch.
+[[gate]]
+id = "lens-eval-open-alternative-miss"
+surface = "Code review"
+gates = ["run/lens-eval.py"]
+test = ".ci/test-lens-eval.py"
+suite = "shell"
+command = "run/lens-eval.py"
+red = '''bash "$ROOT/.ci/fixtures/review/corpus-case.sh" lens open-alt-same-layout-gap '{"findings": []}' lens-open-alternative-checklist'''
+clean = '''bash "$ROOT/.ci/fixtures/review/corpus-case.sh" lens open-alt-same-layout-gap'''
+run = 'PATH="$PWD/.stub:$PATH" CLAUDE_RECORDED_REPLIES="$PWD/replies" python3 "$GATE" --corpus "$ROOT/corpus/lens" --case "$(cat case)" --store store'
+finding = "lens-eval: open-alternative: bar missed: catches 0 of 1, under 80%"
+
 # The critic lens, replayed from the eval's second live run: red, the real Sonnet
 # critic's hold on the planted 184.00 USD; clean, its real pass on the clean twin.
 [[gate]]

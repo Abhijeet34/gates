@@ -858,6 +858,27 @@ def lens_assigned_by_class_and_path(script):
     return None
 
 
+def seed_open_alternative_lens_assigned_by_path(script):
+    """The shipped open-alternative row, not a stand-in, rides the existing selector."""
+    seed = (ROOT / "corpus/lens/gates.toml").read_text()
+    row = seed[seed.index('[[gate]]\nid = "open-alternative"') :]
+    f = Fixture(script)
+    f.row(row)
+    rc, out = f.route()
+    if "lens open-alternative" in out:
+        return f"a change touching no product path was assigned the lens (exit {rc}):\n{out}"
+    f.change({"product/request.md": "# Request\nProduct: Openwrite\n"})
+    why = expect(
+        "a medium change adding a product request", f.route(), 1,
+        "review: route: lens open-alternative: product/request.md is under its inputs (class medium)",
+    )  # fmt: skip
+    if why:
+        return why
+    finder = system_prompt([c for c in f.calls() if c["seat"] == "finder"][-1])
+    want = "- Does the product name contain none of those marks, compared ignoring case, spacing, punctuation and diacritics?"
+    return None if want in finder else f"the finder did not read the lens checklist:\n{finder}"
+
+
 def raised_class_assigns_its_lenses(script):
     """The lenses follow the final class, which the router may raise but never lower."""
     f = Fixture(script)
@@ -937,6 +958,8 @@ CASES = [
     (lens_assigned_by_class_and_path, "a lens's inputs", 'if hit and size in lens["classes"]:', 'if size in lens["classes"]:'),
     (lens_assigned_by_class_and_path, "only the assigned lenses reaching the finder", 'assigned = [lr for lr in lenses if lr["id"] in plan["lenses"]]', "assigned = lenses"),
     (lens_assigned_by_class_and_path, "the lens block in the finder's prompt", 'finder_system(lens, [lens_text(lr, "checklist") for lr in lenses])', "finder_system(lens)"),
+    (seed_open_alternative_lens_assigned_by_path, "a lens's inputs", 'if hit and size in lens["classes"]:', 'if size in lens["classes"]:'),
+    (seed_open_alternative_lens_assigned_by_path, "the lens block in the finder's prompt", 'finder_system(lens, [lens_text(lr, "checklist") for lr in lenses])', "finder_system(lens)"),
     (raised_class_assigns_its_lenses, "the final class assigning lenses", 'plan["lenses"] = assign(lenses, paths, plan["class"])', 'plan["lenses"] = assign(lenses, paths, given)'),
     (trivial_assigns_no_lens, "a trivial change getting no lens", 'LENS_CLASSES = ("medium", "large")', "LENS_CLASSES = CLASSES"),
     (malformed_lens_refused, "a lens's checklist of yes or no questions", 'and all(isinstance(q, str) and q.strip().endswith("?") for q in items)', "and all(isinstance(q, str) for q in items)"),

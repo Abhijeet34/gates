@@ -1,0 +1,4 @@
+lens = "open-alternative"
+defect = "the request reuses the incumbent's icons"
+seed = [11, 11]
+terms = ["icon", "artwork", "copied", "copy", "resource", "taken"]

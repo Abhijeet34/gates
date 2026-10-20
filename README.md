@@ -24,7 +24,7 @@ Licensed under the Apache License 2.0; see `LICENSE` and `NOTICE`.
 | `run/mutation.py` | The mutation rows: a mutant of a change's lines that no test kills, with a full run when the change deletes or weakens a test; see "The mutation rows". |
 | `run/review.py` | The review rows: a finder session on a model other than the author's, then a verifier pass that must reproduce each blocking finding before it blocks, each seat within its token and time budget, with a Haiku router checked by a rule floor and a veto rule that settles disagreement; see "The review rows". |
 | `run/corpus.py`, `corpus/` | The seeded corpus for the design, licence and release reviews and the runner that counts what a review row catches and what it flags on it; see "The seeded corpus". |
-| `run/lens-eval.py`, `corpus/lens/` | The role lenses: `kind = "lens"` rows a routed review assigns to its finders, the twelve seed rows, and the ablation eval that measures each lens with and without itself; see "The role lenses". |
+| `run/lens-eval.py`, `corpus/lens/` | The role lenses: `kind = "lens"` rows a routed review assigns to its finders, the thirteen seed rows, and the ablation eval that measures each lens with and without itself; see "The role lenses". |
 | `run/critic.py`, `run/critic-eval.py`, `corpus/critic/` | The critic lens: one seat on another model writes the strongest counter-case to a decision request or a study and re-derives two numbers it rests on, and the gate holds it when a number does not survive; the eval measures each seat on planted wrong numbers, planted one-sided requests and their clean twins; see "The critic lens". |
 | `run/licence.py` | The licence row: dependency and vendored-file licences against a caller's `.github/licence-policy.toml`; see "The licence row". |
 | `run/budget-monitor.py` | The gate budget monitor: prints each budgeted step's weekly p50/p95, the alarm and the fix task text; see "The budget monitor". |
@@ -1106,9 +1106,10 @@ Each assigned lens reaches the finder of every row that sits, after the finder's
 | `tester` | any path, medium or large | Would this check still pass if the change were reverted? |
 | `operations` | migrations, SQL, deploy, infrastructure and workflow paths | If this goes wrong in the night, how do we see it and how do we undo it? |
 | `designer` | style, markup and UI component paths | What does the user see when this is empty, slow or broken? |
+| `open-alternative` | `product/**`, `docs/product/**`, medium or large | Could the incumbent's owner point at this name, picture or screen as theirs? |
 
 **The eval.**
-`run/lens-eval.py --corpus corpus/lens --store DIR [--case NAME]... [--record DIR]` is r4 9.5's ablation: 20 specs with one seeded gap each and their 20 gap-free twins, under `corpus/lens/cases/`.
+`run/lens-eval.py --corpus corpus/lens --store DIR [--case NAME]... [--record DIR]` is r4 9.5's ablation: 26 specs with one seeded gap each and their 22 gap-free twins, under `corpus/lens/cases/`.
 Its docstring owns the case shape and the exit statuses (0 every lens that ran met its bar, 1 a bar missed, 2 undecided).
 Each spec reaches a fresh finder seat as a change adding `spec.md`, through `run/review.py`'s own seat, login check, budgets and finder prompt, in four arms: `checklist` (the lens as review gives it), `bare` (without the role line), `persona` ("You are a seasoned ROLE"), and `none`.
 
@@ -1120,12 +1121,23 @@ Each spec reaches a fresh finder seat as a change adding `spec.md`, through `run
 | an irreversible migration with no dry run (3) | `architect` |
 | no out-of-scope list (3) | `product-stakeholder` |
 | a new screen with no empty, loading or error state (2) | `designer` |
+| a product name holding the incumbent's mark, exact (1) or differing by case, spacing and a diacritic (1) | `open-alternative` |
+| a request for the incumbent's screens, as a replica (1) or as "the same layout" (1), or its icons (1) | `open-alternative` |
+| interop claims marked neither `standard`, `vendor-spec` nor `observed` (1) | `open-alternative` |
 
 A seed is caught by an `error` or `warning` finding inside the seed's lines whose claim names one of the case's `terms`, so a finding there about something else does not count; any `error` or `warning` flags a clean spec.
 The bar per lens is r4 9.5's: at least 80% of its own seeds caught as `checklist`, at most 10% of clean specs flagged.
 The ablation is `keep` when checklist recall beats `none` by more than the 95% half-width of the difference, `1.96 * sqrt(2p(1-p)/n)` with `p` pooled, else `cut`; the role line is `keep` when `checklist` beats `bare`, else `remove`.
-The verdicts are printed and not applied: at 2 to 6 seeds a lens they are noise, so all twelve rows stay in shadow and nothing is cut until a larger set decides (decided in review).
+The verdicts are printed and not applied: at 2 to 6 seeds a lens they are noise, so all thirteen rows stay in shadow and nothing is cut until a larger set decides (decided in review).
 The five other product lenses own no gap class here and print as unmeasured.
+
+**The open-alternative lens** is plan row P5-OA4's lens half, for requests the factory's open-alternative template shapes (incumbent, product name, formats, workflows, jurisdictions, licence).
+Its four checks are the incumbent's marks listed, the name free of them ignoring case, spacing, punctuation and diacritics, no copied icon or artwork and no screen asked to match the incumbent's layout however worded, and each interop claim marked `standard`, `vendor-spec` or `observed`.
+It adds 6 seeded specs and 2 gap-free twins (a word processor and a spreadsheet), `open-alt-*` under `corpus/lens/cases/`, and so raises every lens's clean count from 20 to 22.
+Measured 2026-10-21 with CLI 2.1.304, finder `claude-sonnet-5-5`, same arms: checklist caught 6 of 6 seeds (bare 4, persona 5, none 5) and flagged 3 of 22 clean specs against 10 of 22 for no lens, so the bar misses on flags only, as the other lenses do.
+The finder alone catches five of six seeds, so ablation reads `cut` (checklist beats none by 0.17, half-width 0.31); only the unmarked interop claims are a gap the finder misses without the lens.
+Each check was removed in turn and its cases re-run live (`.ci/fixtures/review/corpus/lens-without-N/`): without the interop item the seed is missed (0 of 1), without any of the other three the finder still catches its cases, so those three are not shown red when removed and stay in the row for the name and look gaps the finder names unprompted.
+
 
 **Measured** 2026-10-20 with CLI 2.1.302 through the subscription login, finder `claude-sonnet-5-5` on specs written as `claude-opus-5-5`, 220 seats, 0 undecided:
 
@@ -1151,7 +1163,7 @@ At these counts each figure is a smoke reading; the follow-up is the larger labe
 **Proof.**
 `.ci/test-lens-eval.py` replays the second run's recorded seats, `.ci/fixtures/review/corpus/lens/NAME/`, through `claude-recorded.py`, then again against a copy of the eval with each case's control removed; its first case pins the table above.
 `.ci/test-review.py` covers assignment (class, path, the final class, nothing on a trivial change, only the assigned lenses reaching the finder, a malformed lens refused before any seat) and `.ci/test-gate-runner.py` the lens row's keys and that it claims no path.
-The gates-proof rows are `review-lens` (a checklist item that is no question, refused), `lens-eval-miss` (the architect lens's real catch of the missing dry run emptied) and `lens-eval-false-alarm` (its real warning on a clean spec).
+The gates-proof rows are `review-lens` (a checklist item that is no question, refused), `lens-eval-miss` (the architect lens's real catch of the missing dry run emptied), `lens-eval-false-alarm` (its real warning on a clean spec) and `lens-eval-open-alternative-miss` (the open-alternative lens's real catch of a request for the incumbent's layout emptied).
 No workflow calls `run/review.py` or `run/lens-eval.py`; wiring waits for the maintainer's weekly batch.
 
 ## The critic lens
