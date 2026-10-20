@@ -219,7 +219,7 @@ shadow_since = 2026-10-19
 ```
 
 `.ci/test-docs-truth.py` runs the cases of all four rules and runs these rows through `run/gate.py`, which folds each to `shadow` with a `shadow_since` and refuses without one. No workflow calls the script: a step in `shared-instruction-truth.yml` is the maintainer's to add in the weekly batch.
-`.ci/check.sh` runs `owner`, `commands` and `emdash` on this tree and not `budget`, because this tree's own `AGENTS.md` is over it.
+`.ci/check.sh` runs `owner`, `commands` and `emdash` on this tree and not yet `budget`, though this tree's own `AGENTS.md` now fits it.
 
 ## The budget monitor
 
