@@ -335,7 +335,11 @@ def open_alternative_checks():
 REMOVED = {
     0: ["open-alt-name-mark-gap", "open-alt-name-variant-gap"],
     1: ["open-alt-name-mark-gap", "open-alt-name-variant-gap"],
-    2: ["open-alt-screen-replica-gap", "open-alt-same-layout-gap", "open-alt-copied-icons-gap"],
+    2: [
+        "open-alt-screen-replica-gap",
+        "open-alt-same-layout-gap",
+        "open-alt-copied-icons-gap",
+    ],
     3: ["open-alt-interop-unmarked-gap"],
 }
 
@@ -345,7 +349,9 @@ def open_alternative_check_removed(script):
         corpus = Path(tempfile.mkdtemp(dir=workdir), "lens")
         shutil.copytree(CORPUS, corpus)
         rows = corpus / "gates.toml"
-        rows.write_text(rows.read_text().replace(open_alternative_checks()[item], "", 1))
+        rows.write_text(
+            rows.read_text().replace(open_alternative_checks()[item], "", 1)
+        )
         replay = Replay(*cases, root=FIXTURES / f"corpus/lens-without-{item}")
         got = replay.run(script, corpus=corpus)
         if item == 3:

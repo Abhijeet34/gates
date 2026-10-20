@@ -876,7 +876,11 @@ def seed_open_alternative_lens_assigned_by_path(script):
         return why
     finder = system_prompt([c for c in f.calls() if c["seat"] == "finder"][-1])
     want = "- Does the product name contain none of those marks, compared ignoring case, spacing, punctuation and diacritics?"
-    return None if want in finder else f"the finder did not read the lens checklist:\n{finder}"
+    return (
+        None
+        if want in finder
+        else f"the finder did not read the lens checklist:\n{finder}"
+    )
 
 
 def raised_class_assigns_its_lenses(script):
