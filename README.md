@@ -1139,7 +1139,7 @@ The finder alone catches five of six seeds, so ablation reads `cut` (checklist b
 Each check was removed in turn and its cases re-run live (`.ci/fixtures/review/corpus/lens-without-N/`): without the interop item the seed is missed (0 of 1), without any of the other three the finder still catches its cases, so those three are not shown red when removed and stay in the row for the name and look gaps the finder names unprompted.
 
 
-**Measured** 2026-10-20 with CLI 2.1.302 through the subscription login, finder `claude-sonnet-5-5` on specs written as `claude-opus-5-5`, replayed over 48 cases (22 clean specs, 26 seeds, the `open-alternative` row included), 0 undecided; `.ci/test-lens-eval.py` pins these counts:
+**Measured** 2026-10-20 and 2026-10-21 (the open-alternative seats, CLI 2.1.304) with CLI 2.1.302 through the subscription login, finder `claude-sonnet-5-5` on specs written as `claude-opus-5-5`, replayed over 48 cases (22 clean specs, 26 seeds, the `open-alternative` row included), 0 undecided; `.ci/test-lens-eval.py` pins these counts:
 
 | Lens | Seeds caught: checklist, bare, persona, none | Clean flagged: checklist, none | Bar | Ablation | Role line |
 | --- | --- | --- | --- | --- | --- |

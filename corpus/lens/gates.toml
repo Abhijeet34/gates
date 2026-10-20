@@ -4,7 +4,8 @@
 # (run/lens-eval.py) that measures them on corpus/lens/cases.
 #
 # The seven product lenses are the product-lifecycle playbook's (its roles.md), for
-# product-level documents; the five engineering lenses are review r4 9.4's.
+# product-level documents; the five engineering lenses are review r4 9.4's; the
+# open-alternative lens is factory plan row P5-OA4's, for open-alternative requests.
 
 [[gate]]
 id = "product-analyst"
