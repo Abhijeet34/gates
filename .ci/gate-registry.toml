@@ -1140,6 +1140,28 @@ echo '{"/repos/o/r": {"body": {"id": 2, "full_name": "o/renamed", "description":
 run = '''python3 "$ROOT/.ci/fixtures/gh-recorded-server.py" replies.json -- sh -c 'exec python3 "$GATE" compare --api "$GH_RECORDED_API" .''''
 finding = "fakes: compare: gh: tests/fixtures/repo.json (GET /repos/o/r): removed .full_name (string)"
 
+# The daily smoke's bootstrap (shared-fakes-smoke.yml) runs this same command over every
+# declared GitHub fake, so the row proves it with the same loopback server as fakes-compare.
+[[gate]]
+id = "fakes-smoke-workflow"
+surface = "Test quality"
+gates = [".github/workflows/shared-fakes-smoke.yml", "run/fakes.py"]
+test = ".ci/test-fakes.py"
+suite = "shell"
+command = "run/fakes.py"
+red = '''
+mkdir -p .github tests/fixtures && printf '[[fake]]\nid = "gh"\npaths = ["tests/**"]\nnames = ["gh"]\nstands_for = "the GitHub REST API, through gh"\nreal = "sync.sh"\ncompare = "fakes.py compare"\nrecorded = 2026-10-15\n\n[[fake.github]]\nrequest = "/repos/o/r"\nrecording = "tests/fixtures/repo.json"\n' > .github/fakes.toml
+echo '{"id": 1, "full_name": "o/r", "description": null}' > tests/fixtures/repo.json
+echo '{"/repos/o/r": {"body": {"id": 2, "description": "GitHub stopped sending full_name"}}}' > replies.json
+'''
+clean = '''
+mkdir -p .github tests/fixtures && printf '[[fake]]\nid = "gh"\npaths = ["tests/**"]\nnames = ["gh"]\nstands_for = "the GitHub REST API, through gh"\nreal = "sync.sh"\ncompare = "fakes.py compare"\nrecorded = 2026-10-15\n\n[[fake.github]]\nrequest = "/repos/o/r"\nrecording = "tests/fixtures/repo.json"\n' > .github/fakes.toml
+echo '{"id": 1, "full_name": "o/r", "description": null}' > tests/fixtures/repo.json
+echo '{"/repos/o/r": {"body": {"id": 2, "full_name": "o/renamed", "description": "new values, one shape"}}}' > replies.json
+'''
+run = '''python3 "$ROOT/.ci/fixtures/gh-recorded-server.py" replies.json -- sh -c 'exec python3 "$GATE" compare --out smoke --api "$GH_RECORDED_API" .''''
+finding = "fakes: compare: gh: tests/fixtures/repo.json (GET /repos/o/r): removed .full_name (string)"
+
 # A drift the last compare wrote refuses a fake still inside its freshness.
 [[gate]]
 id = "fakes-stale-drift"

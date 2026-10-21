@@ -768,10 +768,23 @@ Its cache key is its inputs, so a pass is reused until a recording changes, and 
 `.ci/test-fakes.py` proves the comparison against `.ci/fixtures/gh-recorded-server.py`, a loopback server of recorded replies that lives exactly as long as the command it wraps and logs each request's method and `Authorization`, and runs this row through `run/gate.py` with a hand-edited recording folding to `shadow`.
 Two registry rows prove it by execution through the same server: `fakes-compare` (a field GitHub stopped sending) and `fakes-stale-drift`.
 
-**The workflow edit**, which waits for the maintainer's weekly batch because no workflow is edited here:
+**The workflow** is `.github/workflows/shared-fakes-smoke.yml`: `on: workflow_call`, `permissions: contents: read`, one `ubuntu-latest` job with `timeout-minutes: 10`, the three bootstrap steps of `shared-guard-generated-files.yml`, then one step with `env: GITHUB_TOKEN: ${{ github.token }}` running the smoke command above.
+The `fakes-smoke-workflow` registry row proves the command it runs through the loopback server.
+A caller that declares a GitHub fake schedules it in `.github/workflows/fakes-smoke.yml`, pinned like every other call (see "Calling a workflow"), which needs a tagged commit that holds the workflow first:
 
-- In this repository, `.github/workflows/shared-fakes-smoke.yml`: `on: workflow_call`, `permissions: contents: read`, one `ubuntu-latest` job with `timeout-minutes: 10` and the three bootstrap steps of `shared-guard-generated-files.yml` (the caller checkout, the `.gates` checkout at `job.workflow_sha`, and "Resolve the locked gates commit"), then one step with `env: GITHUB_TOKEN: ${{ github.token }}` running the smoke command above; a `gate-registry.toml` row naming the file in the same commit.
-- In each caller that declares a GitHub fake, `.github/workflows/fakes-smoke.yml`: `on: schedule: - cron: "41 5 * * *"` and `workflow_dispatch:`, `permissions: contents: read`, and one job, `uses: Abhijeet34/gates/.github/workflows/shared-fakes-smoke.yml@main`.
+```yaml
+on:
+  schedule:
+    - cron: "41 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    uses: Abhijeet34/gates/.github/workflows/shared-fakes-smoke.yml@<40-hex commit> # vN
+```
 
 ## The mutation rows
 
