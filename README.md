@@ -877,16 +877,20 @@ A tracked file under D that differs from HEAD is refused `dirty-tree`, because t
 
 `.ci/test-mutation.py` drives the script against `.ci/fixtures/mutation/stub-tool.py`, which answers as the real tools did on the fixtures beside it, and runs the Rust row through `run/gate.py` in shadow, established and unselected.
 Five registry rows prove the script by execution on a real crate and package with that stub (`mutation-rust`, `mutation-rust-weakened`, `mutation-typescript`, `mutation-typescript-weakened`, `mutation-tool-missing`).
-The stub is a fake of a local binary, which l1's rule 2 allows for nothing; it stands in only because the CI jobs install neither tool.
+The stub is a fake of a local binary, which l1's rule 2 allows for nothing; it stands in only where a tool is not installed: the `gates-proof` job and a bare checkout.
 `.ci/test-mutation.py --real` puts the same fixtures to cargo-mutants 27.1.0 and Stryker 10.0.0, installing the fixture package's devDependencies with npm:
 
 ```bash
 python3 .ci/test-mutation.py --real
 ```
 
-**Not in CI.**
-Running `--real` in CI needs a workflow edit, which waits for the maintainer's weekly batch: in `ci.yml`'s `shell` job, a pinned `actions/setup-node` step for Node 22 and a step that downloads the cargo-mutants 27.1.0 Linux tarball and checks the sha256 above, then `python3 .ci/test-mutation.py --real` in `check_shell` in the same change.
-No workflow calls `run/mutation.py`.
+**In CI.**
+`ci.yml`'s `shell` job installs Node 22 and cargo-mutants (the test installs Stryker with npm), and `check_shell` runs `python3 .ci/test-mutation.py --real` when `CI` is set: a SHA-pinned `actions/setup-node` for Node 22, and a step that downloads the cargo-mutants 27.1.0 tarball and refuses it unless it has the sha256 above.
+It runs on every pull request and push, over the fixtures only (2 to 13 s per case).
+A full run over a real code base is not this job's: it costs 627 s on gh-axi and about 98 h on quoth, so by the maintainer's decision of 2026-10-21 a caller runs it on a weekly schedule, and at pull-request time a caller runs the diff the change touches.
+No workflow here calls `run/mutation.py` on a code base, since this repository has no Rust or TypeScript source to mutate.
+The stub keeps the cases whose answer the real tools cannot be made to give (a wrong version, a dirty tree, an exit status, the base comparison), and the gate registry's five mutation rows, which run in the `gates-proof` job where neither tool is installed.
+The stub's copy of the weak, strong, removed and added assertion cases is retired from `.ci/test-mutation.py`; the registry rows still run those inputs.
 
 ## The review rows
 

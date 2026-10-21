@@ -42,6 +42,27 @@ jobs:
       # scanner, which refuses without an inspector.
       - name: Install the watermark gate's inspector
         run: sudo apt-get update && sudo apt-get install -y libimage-exiftool-perl
+
+      # `.ci/test-mutation.py --real` puts run/mutation.py to the pinned tools
+      # on its fixtures only. Stryker 10 needs Node 22, and the runner's cargo
+      # is its Rust toolchain. A full run over a real code base is the caller's
+      # weekly schedule, never this job: README.md, "The mutation rows".
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+      # The pin and its checksum are the README's "Pins" table.
+      - name: Install cargo-mutants
+        run: |
+          version=27.1.0
+          sha256=dfe6dc37d0342c891d2829b5a695aa57c2d0edecef7e7d0399a30cc6e206411e
+          tarball=cargo-mutants-x86_64-unknown-linux-gnu.tar.gz
+          cd "$(mktemp -d)"
+          curl -fsSL "https://github.com/sourcefrog/cargo-mutants/releases/download/v${version}/${tarball}" -o "$tarball"
+          echo "${sha256}  ${tarball}" | sha256sum --check --strict
+          tar -xzf "$tarball" cargo-mutants
+          sudo install -m 0755 cargo-mutants /usr/local/bin/cargo-mutants
+          cargo mutants --version
+
       - run: .ci/check.sh shell
 
   python:
