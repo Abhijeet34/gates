@@ -433,7 +433,13 @@ def real_cases(seen):
         repo = make()
         t0 = time.monotonic()
         results.append(
-            expect(name, gate(lang, repo), want, *needles, absent=absent[0] if absent else ())
+            expect(
+                name,
+                gate(lang, repo),
+                want,
+                *needles,
+                absent=absent[0] if absent else (),
+            )
         )
         seen.append((name, time.monotonic() - t0))
         _, left = run("git", "status", "--porcelain", "--ignored", cwd=repo)
