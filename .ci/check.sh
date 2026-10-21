@@ -109,9 +109,13 @@ check_shell() {
     python3 .ci/test-slop-rules.py || rc=1
     # The fake rows (undeclared doubles, counterparts, freshness), and their scoped shadow rows under the runner.
     python3 .ci/test-fakes.py || rc=1
-    # The mutation rows against a stub tool, and their scoped shadow row under the runner.
-    # `--real`, with cargo-mutants and Stryker, is not run here: README.md, "The mutation rows".
+    # The mutation rows' decisions against a stub tool, and their scoped shadow row under the runner.
     python3 .ci/test-mutation.py || rc=1
+    # The same fixtures put to cargo-mutants and Stryker, which ci.yml installs. Only CI runs it:
+    # a bare checkout lacks the tools, and a skip on a missing tool would pass CI the same way.
+    if [ -n "${CI:-}" ]; then
+        python3 .ci/test-mutation.py --real || rc=1
+    fi
     # The review row's seats, budgets, verifier pass, router and veto against recorded model replies, and its rows folded in shadow.
     python3 .ci/test-review.py || rc=1
     # The seeded corpus runner against recorded replies of its live run, and the licence policy row folded in shadow.

@@ -3,15 +3,18 @@
 
     .ci/test-mutation.py            the tool is .ci/fixtures/mutation/stub-tool.py
     .ci/test-mutation.py --real     cargo-mutants 27.1.0 on PATH, and npm to install
-                                    Stryker 10.0.0 and vitest into a fixture package
+                                    Stryker 10.0.0 and vitest into a fixture package;
+                                    ci.yml's `shell` job runs it (check_shell, under CI)
 
 Each case builds a repository from .ci/fixtures/mutation with a base and a change,
 runs one row and requires its exit status and a line of its output. The default
 run proves the script's own decisions against a stub that answers as the real
-tools did on these fixtures: which change runs the diff and which the full run,
-which survivor is the change's, and which failure is a typed refusal. `--real`
-puts the same fixtures to the pinned tools; it is not part of .ci/check.sh until
-the CI jobs install them (README.md, "The mutation rows").
+tools did on these fixtures: which survivor is the change's, which change is a
+weakening, and which failure is a typed refusal. `--real` puts the fixtures to
+the pinned tools for what the stub only replays: the weak, strong, removed and
+added assertion of each language. The stub's copy of those four is the gate
+registry's mutation rows, which run where no tool is installed (README.md,
+"The mutation rows").
 """
 
 import datetime
@@ -104,35 +107,7 @@ def refused(kind):
     return f"mutation: refused ({kind}):"
 
 
-# --- the diff and the full run -------------------------------------------------------
-
-
-def shapes(lang, survivor):
-    test = "src/lib.rs" if lang == "rust" else "test/math.test.ts"
-    return [
-        expect(
-            f"{lang}: a weak new test", gate(lang, build(lang, "weak")), 1, survivor
-        ),
-        expect(
-            f"{lang}: a strong new test",
-            gate(lang, build(lang, "strong")),
-            0,
-            "no mutant of this change survived",
-        ),
-        expect(
-            f"{lang}: an assertion removed runs every mutant",
-            gate(lang, build(lang, "strong", "weak")),
-            1,
-            f"mutation: {test}: asserts 3 -> 2: {FULL}",
-            survivor,
-        ),
-        expect(
-            f"{lang}: an assertion added is not a weakening",
-            gate(lang, build(lang, "weak", "strong")),
-            0,
-            absent=[FULL],
-        ),
-    ]
+# --- the full run's base comparison -------------------------------------------------
 
 
 def base_survivor():
@@ -450,12 +425,16 @@ def real_cases(seen):
         ("typescript: a weak new test", "typescript", lambda: ts("weak"), 1, [SURVIVOR_TS]),
         ("typescript: a strong new test", "typescript", lambda: ts("strong"), 0, ["0 survived"]),
         ("typescript: an assertion removed", "typescript", lambda: ts("strong", "weak"), 1, [FULL, SURVIVOR_TS]),
+        ("rust: an assertion added is not a weakening", "rust", lambda: build("rust", "weak", "strong", stub=False), 0, [], [FULL]),
+        ("typescript: an assertion added is not a weakening", "typescript", lambda: ts("weak", "strong"), 0, [], [FULL]),
     ]  # fmt: skip
     results = []
-    for name, lang, make, want, needles in cases:
+    for name, lang, make, want, needles, *absent in cases:
         repo = make()
         t0 = time.monotonic()
-        results.append(expect(name, gate(lang, repo), want, *needles))
+        results.append(
+            expect(name, gate(lang, repo), want, *needles, absent=absent[0] if absent else ())
+        )
         seen.append((name, time.monotonic() - t0))
         _, left = run("git", "status", "--porcelain", "--ignored", cwd=repo)
         litter = [
@@ -474,8 +453,7 @@ def main():
     if real:
         results = real_cases(seen)
     else:
-        results = shapes("rust", SURVIVOR_RS) + shapes("typescript", SURVIVOR_TS)
-        results += [
+        results = [
             base_survivor(),
             new_code_survivor(),
             *weakenings(),
