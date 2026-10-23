@@ -103,6 +103,9 @@ check_shell() {
     # The pinned-tool gates against stub tools, and their rows in shadow under the runner.
     # `--real`, with the pinned binaries, is not run here: README.md, "The tool rows".
     python3 .ci/test-tool-gates.py || rc=1
+    # The UI rows (axe, Linux pixel baselines) against a stub browser, and their rows in shadow under the runner.
+    # `--real`, with the pinned browser, is not run here: README.md, "The UI rows".
+    python3 .ci/test-ui-gates.py || rc=1
     # The contract, migration and fact rows over a change, and their scoped shadow rows under the runner.
     python3 .ci/test-change-gates.py || rc=1
     # The slop rows (source-text assertions, symbol truth, the UI rules of ~/STANDARDS.md), and their scoped shadow rows under the runner.
