@@ -16,6 +16,7 @@ Licensed under the Apache License 2.0; see `LICENSE` and `NOTICE`.
 | `run/permissions-diff.py` | The permissions-diff gate over the protected surface; see "The permissions-diff gate". |
 | `run/docs-truth.py`, `.github/docs.toml` | The four document rules (owner and reader, commands, byte budget, em dash) and this repository's own owner and reader list; see "The documentation rows". |
 | `run/tool-gates.py` | The pinned-tool gates (zizmor, actionlint, offline OSV-Scanner); see "The tool rows". |
+| `run/ui-gates.py`, `run/ui-gates.mjs` | The UI rows: axe accessibility and Linux pixel baselines in a pinned Chromium; see "The UI rows". |
 | `run/pr-text.py` | The pull request text scan over a title and body read as JSON on stdin; see "The text rows". |
 | `run/scratch-guard.py` | The scratch guard, which runs a gate or suite and refuses a file it left behind outside its own `TMPDIR`; see "The scratch rows". |
 | `run/change-gates.py` | The contract, migration and fact rows over a change, read from a caller's `.github/changes.toml`; see "The change rows". |
@@ -360,6 +361,65 @@ OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY=$HOME/.cache/osv-db python3 .ci/test-tool-g
 
 Installing the pinned tools in the `shell` job and adding `--real` to `check_shell` is a workflow edit, so it waits for the maintainer's weekly batch.
 No workflow calls `run/tool-gates.py` either.
+
+## The UI rows
+
+`run/ui-gates.py axe|pixel|record|stamp` judges a page (an http(s) URL or an HTML file) in a pinned headless Chromium; its docstring owns the exit statuses and the refusal types.
+It is plan row P3a-ROWS's last two rows, and its rules are the factory's `fac browse` gate rules (`docs/browse.md` there, "The gates"), on the same pins:
+
+- **axe**: axe-core's `wcag2a` and `wcag2aa` rules; a `serious` or `critical` violation is a finding, a `moderate` or `minor` one is printed and passes. axe is evaluated over the debugger protocol, so a page's `script-src 'none'` cannot keep it out.
+- **pixel**: a screenshot at 1280x800 against a baseline PNG; a pixel differs when any 8-bit channel moved by more than 25, two sizes are a finding, and a refusal keeps the screenshot and a diff (the shot faded, each differing pixel red) under `TMPDIR`. It judges only on Linux, where baselines are recorded: elsewhere it is refused `not-linux`, so a Mac's font rasterisation never turns it red. `record` writes a baseline, on Linux too.
+
+**Why not `fac browse` itself.**
+Its verbs answer only inside `fac workspace lease <root> --browse`, which needs a factory home and the clean workspace root of an admitted task, and `fac` is built from a private repository, which a caller's runner cannot check out (see "Pinning").
+So the row runs the same install through Playwright directly (`run/ui-gates.mjs`, 50 lines) and re-states the two rules in `run/ui-gates.py`, PNG decoding included, with no new dependency: Playwright and axe-core are the engine's own pins, and the comparison is the standard library's `zlib`.
+
+| Component | Pin | Checked by |
+| --- | --- | --- |
+| Playwright | 1.63.0 | the driver's report, before any verdict |
+| axe-core | 4.13.0 | the same |
+| Chromium headless shell | 153.0.8010.12 (Playwright build v1243) | `browser.version()`, the same |
+
+**Install.**
+`UI_GATES_MODULES` names a `node_modules` that holds the two packages, and Playwright finds the shell through its own `PLAYWRIGHT_BROWSERS_PATH`.
+On a machine with `fac browse install` done, its directory serves: the `node_modules` under `~/.cache/fac/browse/<key>/` and the shell under `~/.cache/fac/browse/browsers`.
+Elsewhere:
+
+```bash
+npm install --prefix "$HOME/.cache/ui-gates" --no-save playwright@1.63.0 axe-core@4.13.0
+```
+
+then `npx playwright install --with-deps chromium-headless-shell` from that directory, and `UI_GATES_MODULES=$HOME/.cache/ui-gates/node_modules`.
+Chromium aborts inside this machine's agent sandbox (Seatbelt), as the factory measured for `fac browse`, so a session runs the real cases with its sandbox off; inside it the row is refused `tool-error`, never passed.
+
+**Measured on this machine** (arm64 macOS, 2026-10-24, the pinned install, `.ci/test-ui-gates.py --real`): axe on one page 0.5 to 0.9 s; pixel 0.8 s when the page matches and 1.8 s when it does not, of which about 1 s is the comparison of 1,024,000 pixels in Python.
+The pixel cases ran with `uname` stubbed to Linux, since the gate refuses on a Mac; a run on Linux, where its baselines belong, has not been made, and whether the headless shell starts with its own sandbox on a GitHub-hosted Ubuntu runner is unmeasured.
+
+**The rows**, in a caller's `.github/gates.toml`, in shadow until the promotion rule in `run/gate.py` lets them block.
+The paths are the caller's; `stamp` prints the pins and the installed versions, so the runner's cache key moves with them.
+
+```toml
+[[gate]]
+id = "ui-axe"
+inputs = ["site/**"]
+tools = { ui = 'python3 "$GATES_DIR/run/ui-gates.py" stamp' }
+run = 'python3 "$GATES_DIR/run/ui-gates.py" axe site/index.html'
+shadow_since = 2026-10-24
+
+[[gate]]
+id = "ui-pixel"
+inputs = ["site/**", ".github/baselines/**"]
+tools = { ui = 'python3 "$GATES_DIR/run/ui-gates.py" stamp' }
+run = 'python3 "$GATES_DIR/run/ui-gates.py" pixel site/index.html .github/baselines/index.png'
+shadow_since = 2026-10-24
+```
+
+`.ci/test-ui-gates.py` runs both rows through `run/gate.py` against a stub browser and folds each to `shadow`, and with no window to a block.
+Three registry rows (`ui-axe`, `ui-pixel`, `ui-pixel-not-linux`) prove the script by execution with the stubs `.ci/fixtures/ui/build.sh` writes, because the `gates-proof` job installs no browser.
+
+**Not in CI.**
+`ci.yml` installs no browser, so `.ci/check.sh` runs the stub cases only, and `.ci/test-ui-gates.py --real` is run by hand.
+Installing the pinned browser in the `shell` job and running `--real` there is a workflow edit, so it waits for the maintainer's weekly batch; no workflow calls `run/ui-gates.py` either.
 
 ## The text rows
 

@@ -675,6 +675,47 @@ printf '#!/bin/sh\n[ "$1" = --version ] && { echo "zizmor 1.29.0"; exit 0; }\nex
 run = 'py=$(command -v python3); PATH="$PWD/bin" "$py" "$GATE" zizmor .'
 finding = "tool-gates: refused (missing-tool)"
 
+# The UI rows, axe and Linux pixel baselines; README.md, "The UI rows". The proof
+# installs no browser, so .ci/fixtures/ui/build.sh puts a stub node and uname on a
+# PATH of their own: the stub answers as the driver does, and the script under
+# proof makes every decision. `.ci/test-ui-gates.py --real` drives the pinned Chromium.
+[[gate]]
+id = "ui-axe"
+surface = "UI"
+gates = ["run/ui-gates.py", "run/ui-gates.mjs"]
+test = ".ci/test-ui-gates.py"
+suite = "shell"
+command = "run/ui-gates.py"
+red = 'bash "$ROOT/.ci/fixtures/ui/build.sh" axe red'
+clean = 'bash "$ROOT/.ci/fixtures/ui/build.sh" axe clean'
+run = 'py=$(command -v python3); PATH="$PWD/bin" UI_GATES_MODULES="$PWD/modules" "$py" "$GATE" axe page.html'
+finding = "ui-gates: axe refused: the gate blocks on serious and critical violations: page.html: image-alt (critical, 1 nodes)"
+
+[[gate]]
+id = "ui-pixel"
+surface = "UI"
+gates = ["run/ui-gates.py", "run/ui-gates.mjs"]
+test = ".ci/test-ui-gates.py"
+suite = "shell"
+command = "run/ui-gates.py"
+red = 'bash "$ROOT/.ci/fixtures/ui/build.sh" pixel red && bash "$ROOT/.ci/fixtures/ui/build.sh" linux'
+clean = 'bash "$ROOT/.ci/fixtures/ui/build.sh" pixel clean && bash "$ROOT/.ci/fixtures/ui/build.sh" linux'
+run = 'py=$(command -v python3); PATH="$PWD/bin" UI_GATES_MODULES="$PWD/modules" "$py" "$GATE" pixel page.html baseline.png'
+finding = "ui-gates: pixel refused page.html: 1 pixels differ from baseline.png by more than 25 in a channel"
+
+# A Mac's screenshot is never judged against a Linux baseline, even an identical one.
+[[gate]]
+id = "ui-pixel-not-linux"
+surface = "UI"
+gates = ["run/ui-gates.py"]
+test = ".ci/test-ui-gates.py"
+suite = "shell"
+command = "run/ui-gates.py"
+red = 'bash "$ROOT/.ci/fixtures/ui/build.sh" pixel clean && bash "$ROOT/.ci/fixtures/ui/build.sh" darwin'
+clean = 'bash "$ROOT/.ci/fixtures/ui/build.sh" pixel clean && bash "$ROOT/.ci/fixtures/ui/build.sh" linux'
+run = 'py=$(command -v python3); PATH="$PWD/bin" UI_GATES_MODULES="$PWD/modules" "$py" "$GATE" pixel page.html baseline.png'
+finding = "ui-gates: refused (not-linux)"
+
 # A row that takes a verdict only from its inputs and its own definition (`scoped`) stays
 # out of a change to a path no row names, so the slow advisory row runs on a lockfile
 # change and on nothing else; README.md, "The tool rows".
