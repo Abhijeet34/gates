@@ -241,7 +241,23 @@ def driver_cases():
     node(
         shell, 'echo \'{"versions": {"playwright": "1.63.0", "browser": "154.0.0.0"}}\''
     )
+    stale = fixture("pixel red", "linux")
+    node(
+        stale,
+        'for out; do :; done\n/bin/cp shot.png "$out"\n'
+        'echo \'{"versions": {"playwright": "1.63.0", "browser": "154.0.0.0"}}\'',
+    )
+    stale_result = gate(stale, "record", "page.html", "base/new.png")
+    stale_error = expect(
+        "driver: record with another headless shell",
+        stale_result,
+        2,
+        refused("wrong-version"),
+    )
+    if not stale_error and (stale / "base/new.png").exists():
+        stale_error = "driver: record kept a baseline from another headless shell"
     return [
+        stale_error,
         expect(
             "driver: Playwright does not load",
             gate(gone, "axe", "page.html"),

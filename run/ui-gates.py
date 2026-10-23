@@ -292,8 +292,14 @@ def pixel(page, baseline):
 
 def record(page, baseline):
     linux()
-    Path(baseline).parent.mkdir(parents=True, exist_ok=True)
-    browse("shot", page, str(Path(baseline).resolve()))
+    out = Path(tempfile.mkdtemp(prefix="ui-gates-"))
+    try:
+        browse("shot", page, str(out / "baseline.png"))
+        Path(baseline).parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(out / "baseline.png", baseline)
+    finally:
+        # Best effort: the directory is under TMPDIR and holds nothing the caller needs.
+        shutil.rmtree(out, ignore_errors=True)
     print(f"ui-gates: recorded {baseline} from {page}")
     return 0
 
