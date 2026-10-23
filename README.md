@@ -372,7 +372,7 @@ It is plan row P3a-ROWS's last two rows, and its rules are the factory's `fac br
 
 **Why not `fac browse` itself.**
 Its verbs answer only inside `fac workspace lease <root> --browse`, which needs a factory home and the clean workspace root of an admitted task, and `fac` is built from a private repository, which a caller's runner cannot check out (see "Pinning").
-So the row runs the same install through Playwright directly (`run/ui-gates.mjs`, 50 lines) and re-states the two rules in `run/ui-gates.py`, PNG decoding included, with no new dependency: Playwright and axe-core are the engine's own pins, and the comparison is the standard library's `zlib`.
+So the row runs the same install through Playwright directly (`run/ui-gates.mjs`) and re-states the two rules in `run/ui-gates.py`, PNG decoding included, with no new dependency: Playwright and axe-core are the engine's own pins, and the comparison is the standard library's `zlib`.
 
 | Component | Pin | Checked by |
 | --- | --- | --- |
