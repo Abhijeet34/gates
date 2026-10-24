@@ -33,6 +33,14 @@ ENV = {
 }
 workdir = tempfile.mkdtemp()
 NO_BASE = "0" * 40
+OUTSIDE = Path(workdir) / "outside"
+OUTSIDE.mkdir()
+(OUTSIDE / "snapshot.md").write_text("usage: cli\n")
+(OUTSIDE / "migration.sql").write_text("CREATE TABLE other (a TEXT);\n")
+
+
+class Link(str):
+    """A file given as a Link is a symlink to this target."""
 
 
 def run(*args, cwd, env=ENV):
@@ -49,7 +57,11 @@ def repo(base_files, change_files, deleted=()):
         for name, text in files.items():
             path = here / name
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(text)
+            if isinstance(text, Link):
+                path.unlink(missing_ok=True)
+                path.symlink_to(text)
+            else:
+                path.write_text(text)
 
     put(base_files)
     run("git", "add", "-A", cwd=here)
@@ -497,6 +509,141 @@ CASES = [
         2,
         "decision must be a non-empty string",
     ),
+    # --- declarations come from the base ---
+    (
+        "migrations read the base's declaration of the directory",
+        "migrations",
+        {
+            ".github/changes.toml": MIGRATE.format(extra=""),
+            "migrations/0001_a.sql": TABLE,
+        },
+        {
+            ".github/changes.toml": MIGRATE.format(extra="").replace(
+                'dir = "migrations"', 'dir = "elsewhere"'
+            ),
+            "migrations/0001_a.sql": TABLE + "-- tweak\n",
+        },
+        (),
+        "base",
+        1,
+        "migrations: d1: migrations/0001_a.sql was edited",
+    ),
+    (
+        "migrations read the base's declaration when the change has none",
+        "migrations",
+        {
+            ".github/changes.toml": MIGRATE.format(extra=""),
+            "migrations/0001_a.sql": TABLE,
+        },
+        {"migrations/0001_a.sql": TABLE + "-- tweak\n"},
+        (".github/changes.toml",),
+        "base",
+        1,
+        "migrations: d1: migrations/0001_a.sql was edited",
+    ),
+    (
+        "migrations run the dry run the base declares",
+        "migrations",
+        {".github/changes.toml": SQLITE, "migrations/0001_a.sql": TABLE},
+        {
+            ".github/changes.toml": MIGRATE.format(extra=""),
+            "migrations/0002_b.sql": "ALTER TABLE gone ADD COLUMN b TEXT;\n",
+        },
+        (),
+        "base",
+        1,
+        "migrations/0002_b.sql failed in a scratch database: no such table: gone",
+    ),
+    (
+        "contracts read the base's declaration when the change has none",
+        "contracts",
+        {
+            ".github/changes.toml": SOURCES,
+            "skills/cli/SKILL.md": "v1\n",
+            "src/cli.js": "a\n",
+        },
+        {"src/cli.js": "b\n"},
+        (".github/changes.toml",),
+        "base",
+        1,
+        "contracts: cli: src/cli.js changed and skills/cli/SKILL.md did not",
+    ),
+    (
+        "contracts run the command the base declares",
+        "contracts",
+        {
+            ".github/changes.toml": contract_toml('command = "echo usage: cli --new"'),
+            "skills/cli/SKILL.md": "usage: cli\n",
+        },
+        {
+            ".github/changes.toml": contract_toml('command = "echo usage: cli"'),
+        },
+        (),
+        "base",
+        1,
+        "contracts: cli: the output of 'echo usage: cli --new' differs",
+    ),
+    (
+        "a base that declares nothing is undeclared",
+        "contracts",
+        {"README.md": "x\n"},
+        {".github/changes.toml": SOURCES, "skills/cli/SKILL.md": "v1\n"},
+        (),
+        "base",
+        2,
+        "refused (undeclared): .github/changes.toml declares no [[contract]] at the base",
+    ),
+    (
+        "the empty tree has no base to read, so the working tree's declarations are used",
+        "migrations",
+        {},
+        {
+            ".github/changes.toml": SQLITE,
+            "migrations/0001_a.sql": "ALTER TABLE gone ADD COLUMN b TEXT;\n",
+        },
+        (),
+        NO_BASE,
+        1,
+        "migrations/0001_a.sql failed in a scratch database",
+    ),
+    # --- a symlink may not lead out of the tree ---
+    (
+        "a contract snapshot behind a symlink leaving the tree is refused",
+        "contracts",
+        {
+            ".github/changes.toml": contract_toml('command = "echo usage: cli"'),
+            "skills/cli/SKILL.md": "usage: cli\n",
+        },
+        {"skills/cli/SKILL.md": Link(OUTSIDE / "snapshot.md")},
+        (),
+        "base",
+        2,
+        "refused (outside-tree): skills/cli/SKILL.md resolves outside the tree",
+    ),
+    (
+        "a contract snapshot behind a symlink within the tree is read",
+        "contracts",
+        {
+            ".github/changes.toml": contract_toml('command = "echo usage: cli"'),
+            "skills/cli/SKILL.md": "usage: cli\n",
+            "docs/usage.md": "usage: cli\n",
+        },
+        {"skills/cli/SKILL.md": Link("../../docs/usage.md")},
+        (),
+        "base",
+        0,
+        "every declared contract matches its snapshot",
+    ),
+    (
+        "an added migration behind a symlink leaving the tree is refused",
+        "migrations",
+        {".github/changes.toml": SQLITE, "migrations/0001_a.sql": TABLE},
+        {"migrations/0002_b.sql": Link(OUTSIDE / "migration.sql")},
+        (),
+        "base",
+        2,
+        "refused (outside-tree): migrations/0002_b.sql resolves outside the tree",
+    ),
 ]
 
 
@@ -543,6 +690,37 @@ id = "docs"
 inputs = ["docs/**"]
 run = "true"
 """
+
+
+def declared_commands_get_no_credentials():
+    """A declared command is repository code: its environment carries no credential."""
+    env = {**ENV, "GATES_FIXTURE_TOKEN": "hunter2"}
+    probe = 'test -z "${GATES_FIXTURE_TOKEN:-}" && test -z "$(ls -A "$HOME")"'
+    here = repo(
+        {
+            ".github/changes.toml": MIGRATE.format(extra=f"dry_run = '{probe}'"),
+            "migrations/0001_a.sql": TABLE,
+        },
+        {"migrations/0002_b.sql": TABLE.replace("waitlist", "other")},
+    )
+    contract = repo(
+        {
+            ".github/changes.toml": contract_toml(
+                'command = \'printf "%s" "${GATES_FIXTURE_TOKEN:-}"\''
+            ),
+            "skills/cli/SKILL.md": "",
+        },
+        {"README.md": "x\n"},
+    )
+    failures = []
+    for row, repository in (("migrations", here), ("contracts", contract)):
+        rc, out = run(
+            sys.executable, str(GATE), row, "--base", "base", str(repository),
+            cwd=repository, env=env,
+        )  # fmt: skip
+        if rc != 0:
+            failures.append(f"{row}: the command saw the token, exit {rc}:\n{out}")
+    return "\n".join(failures) or None
 
 
 def under_the_runner():
@@ -592,9 +770,9 @@ def under_the_runner():
 
 def main():
     failures = [expect(*case) for case in CASES]
-    failures += [under_the_runner()]
+    failures += [declared_commands_get_no_credentials(), under_the_runner()]
     failures = [f for f in failures if f]
-    total = len(CASES) + 1
+    total = len(CASES) + 2
     for f in failures:
         print(f"FAIL {f}", file=sys.stderr)
     print(f"test-change-gates: {total - len(failures)} of {total} cases passed")

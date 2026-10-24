@@ -124,17 +124,41 @@ def scope(root, base):
         spec = [base, "HEAD"]
     else:
         spec = [f"{base}...HEAD"]
-    found, path = {}, None
-    for line in git(
-        root, "diff", "-U0", "--relative", "--no-renames", "--no-color", *spec
-    ).splitlines():
-        if line.startswith("+++ "):
-            path = line[6:] if line.startswith("+++ b/") else None
-            if path:
-                found[path] = set()
-        elif path and (hunk := HUNK.match(line)):
-            start, count = int(hunk[1]), int(hunk[2] or 1)
-            found[path].update(range(start, start + count))
+    flags = ["--relative", "--no-renames", "--no-color", *spec]
+    names = git(root, "diff", "--raw", "-z", *flags)
+    patch = git(root, "diff", "-U0", *flags)
+    try:
+        return added_lines(names, patch)
+    except ValueError as e:
+        raise Refused("tool-error", str(e)) from e
+
+
+def added_lines(names, patch):
+    """{path: set of line numbers `patch` adds}, from `git diff --raw -z` and `git diff -U0` over one range.
+
+    A patch header quotes a path with a quote, backslash or control character
+    and pads one with a space, so the paths come from the NUL-separated list,
+    which git never rewrites, and pair with their patch sections by order.
+    """
+    fields = names.split("\0")[:-1]
+    paths = fields[1::2]
+    sections = re.split(r"^diff --git ", patch, flags=re.M)[1:]
+    if len(fields) != 2 * len(paths) or len(sections) != len(paths):
+        raise ValueError(
+            f"git listed {len(paths)} changed paths but {len(sections)} patch sections"
+        )
+    found = {}
+    for path, section in zip(paths, sections, strict=True):
+        in_header = True
+        for line in section.splitlines():
+            if in_header and line.startswith("+++ "):
+                if line != "+++ /dev/null":
+                    found[path] = set()
+            elif hunk := HUNK.match(line):
+                in_header = False
+                if path in found:
+                    start, count = int(hunk[1]), int(hunk[2] or 1)
+                    found[path].update(range(start, start + count))
     return found
 
 
