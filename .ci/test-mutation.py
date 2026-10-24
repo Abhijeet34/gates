@@ -240,6 +240,102 @@ def scoping():
     ]
 
 
+# --- a run that tested nothing, and a source judged whatever its file name --------------
+
+
+def nothing_tested():
+    rust_const = build("rust", "strong")
+    retag(rust_const)
+    edit(
+        rust_const,
+        "src/lib.rs",
+        "pub fn double",
+        "pub const LIMIT: u32 = 10;\npub fn double",
+    )
+    commit(rust_const, "add a constant")
+    rust_doc = build("rust", "strong")
+    retag(rust_doc)
+    edit(rust_doc, "src/lib.rs", "pub fn double", "// doubles\npub fn double")
+    commit(rust_doc, "comment only")
+    rust_ignore = build("rust", "strong")
+    retag(rust_ignore)
+    edit(
+        rust_ignore,
+        "src/lib.rs",
+        "    #[test]\n    fn even",
+        "    #[test]\n    #[ignore]\n    fn even",
+    )
+    commit(rust_ignore, "ignore a test")
+    ts_const = build("typescript", "strong")
+    retag(ts_const)
+    with (ts_const / "src/math.ts").open("a") as f:
+        f.write("export const LIMIT = 10;\n")
+    commit(ts_const, "add a constant")
+    ts_doc = build("typescript", "strong")
+    retag(ts_doc)
+    with (ts_doc / "src/math.ts").open("a") as f:
+        f.write("// trailing note\n")
+    commit(ts_doc, "comment only")
+    ts_gone = build("typescript", "strong")
+    retag(ts_gone)
+    (ts_gone / "test/math.test.ts").unlink()
+    commit(ts_gone, "delete the tests")
+    ts_named = build("typescript", "strong")
+    retag(ts_named)
+    (ts_named / "src/odd name.ts").write_text("export const odd = 1;\n")
+    commit(ts_named, "add a source named with a space")
+    empty = {"STUB_EMPTY": "1"}
+    nothing = refused("nothing-mutated")
+    return [
+        expect(
+            "rust: changed code with no mutant tested",
+            gate("rust", rust_const),
+            2,
+            nothing,
+            absent=["0 survived"],
+        ),
+        expect(
+            "rust: a comment-only change has no code to mutate",
+            gate("rust", rust_doc),
+            0,
+            "nothing to mutate",
+        ),
+        expect(
+            "rust: a deleted or weakened test and no mutant tested",
+            gate("rust", rust_ignore, env=empty),
+            2,
+            nothing,
+            FULL,
+        ),
+        expect(
+            "typescript: changed code with no mutant tested",
+            gate("typescript", ts_const),
+            2,
+            nothing,
+        ),
+        expect(
+            "typescript: a comment-only change has no code to mutate",
+            gate("typescript", ts_doc),
+            0,
+            "nothing to mutate",
+        ),
+        expect(
+            "typescript: a deleted or weakened test and no mutant tested",
+            gate("typescript", ts_gone, env=empty),
+            2,
+            nothing,
+            FULL,
+        ),
+        expect(
+            "typescript: a source is judged whatever its file name",
+            gate("typescript", ts_named),
+            2,
+            nothing,
+            absent=["nothing to mutate"],
+        ),
+    ]
+
+
 # --- refusals ------------------------------------------------------------------------
 
 
@@ -464,6 +560,7 @@ def main():
             new_code_survivor(),
             *weakenings(),
             *scoping(),
+            *nothing_tested(),
             *refusals(),
         ]
         results += runner_cases()

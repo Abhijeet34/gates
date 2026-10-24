@@ -12,7 +12,8 @@ STUB_VERSION overrides the reported version, STUB_EXIT forces an exit status
 (4 is cargo-mutants' failing baseline), STUB_NO_MUTANTS makes `cargo mutants` an
 unknown command, STUB_IN_PLACE fails a run not passed --in-place, and
 STUB_REUSED adds a survivor on an unchanged line, as
-Stryker's --incremental report carries one from an earlier run.
+Stryker's --incremental report carries one from an earlier run, and STUB_EMPTY
+reports no mutant at all, as a change to comments alone does.
 """
 
 import json
@@ -67,7 +68,9 @@ def cargo(args):
         ]
     if diff is None:
         found.append(outcome("double -> i32", 2, 5, 10, "0", "double(3)" not in source))
-    if not found:
+    if env("STUB_EMPTY"):
+        found = []
+    if not found and diff is not None:
         print(" INFO No mutants to filter")
         return 0
     out = Path(opts["--output"]) / "mutants.out"
@@ -135,6 +138,8 @@ def stryker(args):
                 "double(3)" not in tests or bool(env("STUB_REUSED")),
             )
         )
+    if env("STUB_EMPTY"):
+        found = []
     report = {
         "files": {
             "src/math.ts": {
