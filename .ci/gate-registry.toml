@@ -987,6 +987,52 @@ echo 'Pinned to tool 1.3.' > README.md && git commit -qam change
 run = 'python3 "$GATE" facts --base base .'
 finding = "facts: README.md:1: still states 'tool 1.2', superseded (pin; decided in review)"
 
+# Declarations are read at the base: a landed migration stays protected where the base declared its directory.
+[[gate]]
+id = "migration-declared-at-base"
+surface = "Migrations"
+gates = ["run/change-gates.py"]
+test = ".ci/test-change-gates.py"
+suite = "shell"
+command = "run/change-gates.py"
+red = '''
+git init -q -b main && mkdir -p .github migrations
+printf '[[migrations]]\nid = "d1"\ndir = "migrations"\n' > .github/changes.toml
+echo 'CREATE TABLE t (a TEXT);' > migrations/0001_t.sql && git add -A && git commit -qm base && git tag base
+printf '[[migrations]]\nid = "d1"\ndir = "elsewhere"\n' > .github/changes.toml
+echo 'CREATE TABLE t (a TEXT, b TEXT);' > migrations/0001_t.sql && git commit -qam change
+'''
+clean = '''
+git init -q -b main && mkdir -p .github migrations
+printf '[[migrations]]\nid = "d1"\ndir = "migrations"\n' > .github/changes.toml
+echo 'CREATE TABLE t (a TEXT);' > migrations/0001_t.sql && git add -A && git commit -qm base && git tag base
+printf '[[migrations]]\nid = "d1"\ndir = "elsewhere"\n' > .github/changes.toml
+echo 'ALTER TABLE t ADD COLUMN b TEXT;' > migrations/0002_b.sql && git add -A && git commit -qm change
+'''
+run = 'python3 "$GATE" migrations --base base .'
+finding = "migrations: d1: migrations/0001_t.sql was edited"
+
+# A snapshot behind a symlink leaving the tree is refused; one behind a symlink within the tree is read.
+[[gate]]
+id = "contract-snapshot-contained"
+surface = "Public contracts"
+gates = ["run/change-gates.py"]
+test = ".ci/test-change-gates.py"
+suite = "shell"
+command = "run/change-gates.py"
+red = '''
+mkdir -p .github skills/cli
+printf '[[contract]]\nid = "cli"\nsnapshot = "skills/cli/SKILL.md"\ncommand = "echo usage: cli"\n' > .github/changes.toml
+ln -s /etc/hosts skills/cli/SKILL.md
+'''
+clean = '''
+mkdir -p .github skills/cli docs
+printf '[[contract]]\nid = "cli"\nsnapshot = "skills/cli/SKILL.md"\ncommand = "echo usage: cli"\n' > .github/changes.toml
+echo 'usage: cli' > docs/usage.md && ln -s ../../docs/usage.md skills/cli/SKILL.md
+'''
+run = 'python3 "$GATE" contracts .'
+finding = "change-gates: refused (outside-tree): skills/cli/SKILL.md resolves outside the tree"
+
 # Slop a tree can answer, one row per rule over one script, in shadow and scoped to the files
 # each judges; README.md, "The slop rows". With no --base a row judges every file under the
 # working directory, so each input is a few files and no repository.
@@ -1075,6 +1121,24 @@ red = '''echo '.a { z-index: 9999; }' > a.css'''
 clean = '''echo '.a { z-index: var(--z-modal); }' > a.css'''
 run = 'python3 "$GATE" z-index .'
 finding = "a.css:1: z-index: 9999 is an arbitrary z-index"
+
+[[gate]]
+id = "ui-z-index-named-path"
+surface = "UI standards"
+gates = ["run/slop-rules.py"]
+test = ".ci/test-slop-rules.py"
+suite = "shell"
+command = "run/slop-rules.py"
+red = '''
+git init -q -b main && echo x > README.md && git add -A && git commit -qm base && git tag base
+echo '.a { z-index: 9999; }' > 'say "hi".css' && git add -A && git commit -qm change
+'''
+clean = '''
+git init -q -b main && echo x > README.md && git add -A && git commit -qm base && git tag base
+echo '.a { z-index: var(--z-modal); }' > 'say "hi".css' && git add -A && git commit -qm change
+'''
+run = 'python3 "$GATE" z-index --base base .'
+finding = 'slop-rules: z-index: say "hi".css:1:'
 
 [[gate]]
 id = "ui-em-dash"
@@ -1182,6 +1246,28 @@ command = "run/fakes.py"
 red = '''mkdir .github && printf '[[fake]]\nid = "gh"\npaths = ["tests/**"]\nnames = ["gh"]\nstands_for = "the GitHub REST API, through gh"\nreal = "sync.sh"\nreal_name = "gh"\ncompare = "tests/compare-gh.sh"\nrecorded = %s\n' 2026-10-01 > .github/fakes.toml'''
 clean = '''mkdir .github && printf '[[fake]]\nid = "gh"\npaths = ["tests/**"]\nnames = ["gh"]\nstands_for = "the GitHub REST API, through gh"\nreal = "sync.sh"\nreal_name = "gh"\ncompare = "tests/compare-gh.sh"\nrecorded = %s\n' 2026-10-15 > .github/fakes.toml'''
 run = 'python3 "$GATE" stale --today 2026-10-19 .'
+finding = "fakes: stale: gh: recorded 2026-10-01, 18 days ago, past its 7-day freshness"
+
+# With --base the freshness is the base's declared `recorded`, so a change is judged by the date it was written against.
+[[gate]]
+id = "fakes-stale-at-base"
+surface = "Test quality"
+gates = ["run/fakes.py"]
+test = ".ci/test-fakes.py"
+suite = "shell"
+command = "run/fakes.py"
+red = '''
+git init -q -b main && mkdir .github && printf '[[fake]]\nid = "gh"\npaths = ["tests/**"]\nnames = ["gh"]\nstands_for = "the GitHub REST API, through gh"\nreal = "sync.sh"\nreal_name = "gh"\ncompare = "tests/compare-gh.sh"\nrecorded = %s\n' 2026-10-01 > .github/fakes.toml
+git add -A && git commit -qm base && git tag base
+printf '[[fake]]\nid = "gh"\npaths = ["tests/**"]\nnames = ["gh"]\nstands_for = "the GitHub REST API, through gh"\nreal = "sync.sh"\nreal_name = "gh"\ncompare = "tests/compare-gh.sh"\nrecorded = %s\n' 2026-10-19 > .github/fakes.toml
+git commit -qam change
+'''
+clean = '''
+git init -q -b main && mkdir .github && printf '[[fake]]\nid = "gh"\npaths = ["tests/**"]\nnames = ["gh"]\nstands_for = "the GitHub REST API, through gh"\nreal = "sync.sh"\nreal_name = "gh"\ncompare = "tests/compare-gh.sh"\nrecorded = %s\n' 2026-10-15 > .github/fakes.toml
+git add -A && git commit -qm base && git tag base
+echo notes > README.md && git add -A && git commit -qm change
+'''
+run = 'python3 "$GATE" stale --base base --today 2026-10-19 .'
 finding = "fakes: stale: gh: recorded 2026-10-01, 18 days ago, past its 7-day freshness"
 
 # A recorded GitHub reply against a fresh one, from the loopback server in place of
@@ -1294,6 +1380,19 @@ red = '''mkdir repo && (cd repo && bash "$ROOT/.ci/fixtures/mutation/build.sh" -
 clean = '''mkdir repo && (cd repo && bash "$ROOT/.ci/fixtures/mutation/build.sh" --stub typescript weak strong)'''
 run = 'cd repo && python3 "$GATE" typescript --base base .'
 finding = "mutation: test/math.test.ts: asserts 3 -> 2: a test was deleted or weakened"
+
+# A change to code cargo-mutants has no mutant for, such as a constant, tests nothing, and a run that tested nothing proves nothing.
+[[gate]]
+id = "mutation-nothing-mutated"
+surface = "Test quality"
+gates = ["run/mutation.py"]
+test = ".ci/test-mutation.py"
+suite = "shell"
+command = "run/mutation.py"
+red = '''mkdir repo && (cd repo && bash "$ROOT/.ci/fixtures/mutation/build.sh" --stub rust strong && git tag -f base && { echo 'pub const LIMIT: u32 = 10;'; cat src/lib.rs; } > lib.new && mv lib.new src/lib.rs && git commit -qam constant)'''
+clean = '''mkdir repo && (cd repo && bash "$ROOT/.ci/fixtures/mutation/build.sh" --stub rust strong)'''
+run = 'cd repo && PATH="$PWD/.stub:$PATH" python3 "$GATE" rust --base base .'
+finding = "mutation: refused (nothing-mutated)"
 
 # A package without the pinned Stryker is a refusal, never a pass over nothing.
 [[gate]]

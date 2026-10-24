@@ -494,6 +494,10 @@ Under the guard such a leftover lands in the guard's own directory and is remove
 `run/change-gates.py contracts|migrations|facts [--base B] [root]` judges one change against what a repository declares in `.github/changes.toml`.
 Its docstring owns the exit statuses (0 nothing to name, 1 a finding, 2 could not decide, with a typed `refused (TYPE)` line) and the declaration keys.
 Nothing is guessed from the tree: a repository that declares nothing gets `refused (undeclared)`, so a row cannot pass over a file it was never told about.
+With a `--base`, `contracts` and `migrations` read the declarations as the base commit has them, so a change is judged by the declarations it was written against.
+A base with no `.github/changes.toml` is `undeclared`, which means the change that first adds the file is refused once; a base of forty zeros has no commit to read and uses the working tree's.
+`facts` reads the working tree's declaration, because the declaration is where a change records its decision, and compares it with the base's.
+A snapshot, a migration directory or a migration that is, or sits behind, a symlink leaving the tree is `refused (outside-tree)`, and a declared command runs with `PATH`, the locale, `TMPDIR` and an empty `HOME`, not the runner's credentials.
 
 **What the callers declare today** (read 2026-10-19 across the fleet's clones):
 
@@ -573,13 +577,14 @@ shadow_since = 2026-10-19
 
 The `facts` row runs when the declaration changes, which is when a decision is recorded; a new file that states an old fact later is not caught by it.
 `.ci/test-change-gates.py` runs these three rows through `run/gate.py`, folds each red one to `shadow`, and shows a change to `src/app.py` leaves them unselected.
-Five registry rows (`contract-snapshot-sources`, `contract-snapshot-command`, `migration-immutable`, `migration-dry-run`, `fact-change-sweep`) prove the script by execution.
+Seven registry rows (`contract-snapshot-sources`, `contract-snapshot-command`, `migration-immutable`, `migration-dry-run`, `fact-change-sweep`, `migration-declared-at-base`, `contract-snapshot-contained`) prove the script by execution.
 No workflow calls it: `BASE_SHA` and a `.github/changes.toml` come from a caller, and a step is the maintainer's weekly batch.
 
 ## The slop rows
 
 `run/slop-rules.py ROW [--base B] [root]` holds one change to the slop a tree alone can answer.
 With `--base` a row judges what `git diff B...HEAD` added, so a stale line already on the base is not the change's; without it, every file under `root`.
+The changed paths come from `git diff --raw -z`, and the added lines from the patch, paired by order, because a patch header quotes a name with a quote or a backslash and pads one with a space; `run/fakes.py` and `run/mutation.py` read a change through the same function.
 Its docstring owns the rules and the exit statuses (0 nothing to name, 1 a finding, 2 could not decide), and each finding is one line, `slop-rules: tests: path:LINE: what`.
 Seven rows, each a registry entry and a row of a caller's `.github/gates.toml` in shadow and `scoped`, so that a change to a path the row does not name does not select it.
 
@@ -663,7 +668,7 @@ shadow_since = 2026-10-19
 The other four UI rows (`contrast`, `z-index`, `em-dash`, `reduced-motion`) take the same shape with their name in `run`.
 `reduced-motion` reads the whole tree for a handler, so its `inputs` must also name the files that could hold one, or a change to the stylesheet that holds it would not re-run the row.
 `.ci/test-slop-rules.py` runs the rows through `run/gate.py`, folds each red one to `shadow`, and shows a change to an unrelated file leaves all seven unselected.
-Nine registry rows prove the script by execution (`slop-tests-source-text`, `slop-symbols-path`, `slop-symbols-function`, `slop-symbols-flag`, `ui-easing`, `ui-contrast`, `ui-z-index`, `ui-em-dash`, `ui-reduced-motion`).
+Ten registry rows prove the script by execution (`slop-tests-source-text`, `slop-symbols-path`, `slop-symbols-function`, `slop-symbols-flag`, `ui-easing`, `ui-contrast`, `ui-z-index`, `ui-z-index-named-path`, `ui-em-dash`, `ui-reduced-motion`).
 No workflow calls it: `BASE_SHA` comes from a caller, and a step is the maintainer's weekly batch.
 
 ## The fake rows
@@ -768,24 +773,27 @@ shadow_since = 2026-10-19
 id = "fakes-counterpart"
 inputs = [".github/fakes.toml", "tests/**", "bin/sync.py"]
 scoped = true
-run = 'python3 "$GATES_DIR/run/fakes.py" counterpart'
+tools = { base = 'git merge-base "$BASE_SHA" HEAD' }
+run = 'python3 "$GATES_DIR/run/fakes.py" counterpart --base "$BASE_SHA"'
 shadow_since = 2026-10-19
 
 [[gate]]
 id = "fakes-stale"
 inputs = [".github/fakes.toml", "tests/**", "bin/sync.py"]
 scoped = true
-tools = { today = 'date -u +%F' }
-run = 'python3 "$GATES_DIR/run/fakes.py" stale'
+tools = { today = 'date -u +%F', base = 'git merge-base "$BASE_SHA" HEAD' }
+run = 'python3 "$GATES_DIR/run/fakes.py" stale --base "$BASE_SHA"'
 shadow_since = 2026-10-19
 ```
 
 `counterpart` and `stale` name the declaration, every fake's `paths` and every `real` file as their inputs, so a change to a test that uses a fake, or to the code it fakes, selects them: that is "a PR whose selected tests use a registered fake" (l1, 10.3).
 `stale` keys on today's date through its `tools` probe, so yesterday's pass is not reused once a fake goes past its freshness.
+With `--base`, `counterpart` and `stale` judge the fakes as the base declares them, so a change is judged by the declarations it was written against; the cost is that a change which refreshes a recording is judged by the stale declaration until it merges, which is why these rows stay in shadow.
+A base with no `.github/fakes.toml` declares no fake, and a base of forty zeros uses the working tree's declaration.
 With `--base`, `undeclared` judges only the lines a change added, so a repository's existing doubles do not turn its next change red; the change that adds or edits `.github/fakes.toml` sweeps every test file, so deleting a declaration cannot pass, and that first sweep is where existing doubles become declarations or conversion tasks (l1, 10.3: "its first run is a baseline").
 l1 asks for a stale fake's verdict to be `error`; `run/gate.py` records any non-zero exit as `fail`, which refuses in the fold the same way, so the runner is unchanged here.
 `.ci/test-fakes.py` runs the three rows through `run/gate.py`, folds each red one to `shadow`, and shows a change to an unrelated file leaves them unselected.
-Five registry rows prove these rows by execution (`fakes-undeclared-program`, `fakes-undeclared-mock`, `fakes-undeclared-hand`, `fakes-counterpart`, `fakes-stale`).
+Six registry rows prove these rows by execution (`fakes-undeclared-program`, `fakes-undeclared-mock`, `fakes-undeclared-hand`, `fakes-counterpart`, `fakes-stale`, `fakes-stale-at-base`).
 No workflow calls it: `BASE_SHA` and a `.github/fakes.toml` come from a caller, and a step is the maintainer's weekly batch.
 
 **Record and compare.**
@@ -872,6 +880,8 @@ A mutant counts when it touches a line `git diff B...HEAD` adds or rewrites unde
 Stryker 10.0.0's `--incremental` report also carries reused mutants outside `--mutate` (measured 2026-10-19 on the fixture: a range holding one blank line tested 0 mutants and reported 7), so the row keeps only the mutants whose span touches a changed line.
 A survivor is cargo-mutants' `MissedMutant`, or Stryker's `Survived` or `NoCoverage`; a timeout counts as killed, as Stryker scores it, and a mutant that does not compile is not counted.
 Rust test code is never mutated by cargo-mutants, and the TypeScript row mutates `.ts`, `.tsx`, `.mts` and `.cts` files that are not tests, fixtures, declarations or `*.config.*`.
+A run that tested no mutant proves nothing, so when the change adds a line of code (not blank, not a comment and, in Rust, before the file's first `#[cfg(test)]`) and the tool still tested zero mutants, the row is `refused (nothing-mutated)`; a change with no such line, such as a comment or an added assertion, mutates nothing and passes with "nothing to mutate".
+The full run applies the same refusal when it tests none.
 
 **Deleting or weakening a test.**
 `--in-diff` matches only code under test, so a change that removes an assertion and touches no source mutates nothing and passes (r4, section 5).
@@ -964,7 +974,7 @@ The `base` probe keys the verdict on the merge base, since the same head judged 
 A tracked file under D that differs from HEAD is refused `dirty-tree`, because the tools mutate the working tree and the verdict is recorded for HEAD.
 
 `.ci/test-mutation.py` drives the script against `.ci/fixtures/mutation/stub-tool.py`, which answers as the real tools did on the fixtures beside it, and runs the Rust row through `run/gate.py` in shadow, established and unselected.
-Five registry rows prove the script by execution on a real crate and package with that stub (`mutation-rust`, `mutation-rust-weakened`, `mutation-typescript`, `mutation-typescript-weakened`, `mutation-tool-missing`).
+Six registry rows prove the script by execution on a real crate and package with that stub (`mutation-rust`, `mutation-rust-weakened`, `mutation-typescript`, `mutation-typescript-weakened`, `mutation-tool-missing`, `mutation-nothing-mutated`).
 The stub is a fake of a local binary, which l1's rule 2 allows for nothing; it stands in only where a tool is not installed: the `gates-proof` job and a bare checkout.
 `.ci/test-mutation.py --real` puts the same fixtures to cargo-mutants 27.1.0 and Stryker 10.0.0, installing the fixture package's devDependencies with npm:
 
@@ -977,7 +987,7 @@ python3 .ci/test-mutation.py --real
 It runs on every pull request and push, over the fixtures only (2 to 13 s per case).
 A full run over a real code base is not this job's: it costs 627 s on gh-axi and about 98 h on quoth, so by the maintainer's decision of 2026-10-21 a caller runs it on a weekly schedule, and at pull-request time a caller runs the diff the change touches.
 No workflow here calls `run/mutation.py` on a code base, since this repository has no Rust or TypeScript source to mutate.
-The stub keeps the cases whose answer the real tools cannot be made to give (a wrong version, a dirty tree, an exit status, the base comparison), and the gate registry's five mutation rows, which run in the `gates-proof` job where neither tool is installed.
+The stub keeps the cases whose answer the real tools cannot be made to give (a wrong version, a dirty tree, an exit status, the base comparison), and the gate registry's six mutation rows, which run in the `gates-proof` job where neither tool is installed.
 The stub's copy of the weak, strong, removed and added assertion cases is retired from `.ci/test-mutation.py`; the registry rows still run those inputs.
 
 ## The review rows

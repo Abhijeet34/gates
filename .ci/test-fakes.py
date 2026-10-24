@@ -96,6 +96,17 @@ def since(name, base_files, change_files, want, finding=None, deleted=()):
     return judge(name, rc, out, want, finding)
 
 
+def at_base(
+    name, row, base_files, change_files, want, finding, extra, deleted, base="base"
+):
+    """`row --base` over a change: the declarations it judges are the base's."""
+    here = repo(base_files, change_files, deleted)
+    rc, out = run(
+        sys.executable, str(GATE), row, "--base", base, *extra, str(here), cwd=here
+    )  # fmt: skip
+    return judge(name, rc, out, want, finding)
+
+
 def entry(fid="gh", **keys):
     """One [[fake]] table; a key given as None is left out."""
     row = {
@@ -113,6 +124,7 @@ def entry(fid="gh", **keys):
 
 
 DECLARED = {".github/fakes.toml": entry(), "sync.sh": "gh api repos\n"}
+STALE = ("--today", "2026-10-19")
 SHIM = (
     'bin=$(mktemp -d)\nprintf "#!/bin/sh\\nexit 0\\n" > "$bin/{name}"\n'
     'chmod +x "$bin/{name}"\nPATH="$bin:$PATH" ./sync.sh\n'
@@ -562,11 +574,11 @@ SWEEPS = [
         TODAY,
     ),
     (
-        "--base belongs to undeclared only",
-        "stale",
+        "--base belongs to undeclared, counterpart and stale",
+        "compare",
         {CONFIG: entry()},
         2,
-        "--base applies to undeclared only",
+        "--base applies to undeclared, counterpart and stale only",
         "--base",
         "HEAD",
     ),
@@ -600,6 +612,13 @@ SINCE = [
         "tests/test-sync.sh:2: the stand-in program gh",
     ),
     (
+        "a double added to a test file is judged whatever the file's name",
+        {"README.md": "x\n"},
+        {'tests/test a "b".py': "@patch('a.b')\ndef test_a():\n    pass\n"},
+        1,
+        "the mock a.b",
+    ),
+    (
         "a tracked vendored tree is not judged",
         {"README.md": "x\n"},
         {"vendor/x/test_a.py": '@patch("a.b")\ndef test_a():\n    pass\n'},
@@ -615,6 +634,95 @@ SINCE = [
         },
         {"tests/test_b.py": "x = 2\n"},
         0,
+    ),
+]
+
+
+# (name, row, base files, change files, want, finding, extra arguments, deleted files[, base])
+AT_BASE = [
+    (
+        "counterpart reads the base's declaration when the change has none",
+        "counterpart",
+        DECLARED,
+        {},
+        1,
+        "gh: sync.sh does not exist, so the fake stands for nothing",
+        (),
+        ("sync.sh", CONFIG),
+    ),
+    (
+        "counterpart reads the base's `real`",
+        "counterpart",
+        DECLARED,
+        {CONFIG: entry(real='"other.sh"'), "other.sh": "gh\n"},
+        1,
+        "gh: sync.sh does not exist, so the fake stands for nothing",
+        (),
+        ("sync.sh",),
+    ),
+    (
+        "counterpart: a change that leaves the real file and declaration alone",
+        "counterpart",
+        {**DECLARED, "tests/test-sync.sh": SHIM.format(name="gh")},
+        {"notes.txt": "x\n"},
+        0,
+        "every declared fake has its real counterpart (1 declared)",
+        (),
+        (),
+    ),
+    (
+        "stale reads the base's `recorded`",
+        "stale",
+        {**DECLARED, CONFIG: entry(recorded="2026-10-01")},
+        {CONFIG: entry(recorded="2026-10-19")},
+        1,
+        "gh: recorded 2026-10-01, 18 days ago, past its 7-day freshness",
+        STALE,
+        (),
+    ),
+    (
+        "stale reads the base's `drift`",
+        "stale",
+        {
+            **DECLARED,
+            CONFIG: entry(recorded="2026-10-18", drift='"2026-10-18: retyped ."'),
+        },
+        {CONFIG: entry(recorded="2026-10-18")},
+        1,
+        "gh: its last compare found drift",
+        STALE,
+        (),
+    ),
+    (
+        "stale: a fresh base and an unrelated change",
+        "stale",
+        {**DECLARED, CONFIG: entry(recorded="2026-10-18")},
+        {"notes.txt": "x\n"},
+        0,
+        "every declared fake is fresh (1 declared, today 2026-10-19)",
+        STALE,
+        (),
+    ),
+    (
+        "a base with no declaration declares none",
+        "stale",
+        {"README.md": "x\n"},
+        {CONFIG: entry(recorded="2020-01-01")},
+        0,
+        "(0 declared, today 2026-10-19)",
+        STALE,
+        (),
+    ),
+    (
+        "the empty tree has no declaration to read, so the working tree's is used",
+        "stale",
+        {},
+        {CONFIG: entry(recorded="2020-01-01")},
+        1,
+        "gh: recorded 2020-01-01",
+        STALE,
+        (),
+        NO_BASE,
     ),
 ]
 
@@ -660,11 +768,15 @@ INPUTS = {
         "tools = { base = 'git merge-base \"$BASE_SHA\" HEAD' }",
         ' --base "$BASE_SHA"',
     ),
-    "counterpart": ('["tests/**", "sync.sh", ".github/fakes.toml"]', "", ""),
+    "counterpart": (
+        '["tests/**", "sync.sh", ".github/fakes.toml"]',
+        "tools = { base = 'git merge-base \"$BASE_SHA\" HEAD' }",
+        ' --base "$BASE_SHA"',
+    ),
     "stale": (
         '["tests/**", "sync.sh", ".github/fakes.toml"]',
-        "tools = { today = 'date -u +%F' }",
-        "",
+        "tools = { today = 'date -u +%F', base = 'git merge-base \"$BASE_SHA\" HEAD' }",
+        ' --base "$BASE_SHA"',
     ),
 }
 
@@ -676,9 +788,13 @@ def under_the_runner():
         ROWS.format(row=r, inputs=i, tools=t, args=a, since=date)
         for r, (i, t, a) in INPUTS.items()
     )
-    base = {".github/gates.toml": registry, "assets/logo.txt": "a\n"}
-    red = {
+    base = {
+        ".github/gates.toml": registry,
+        "assets/logo.txt": "a\n",
         CONFIG: entry(recorded="2026-01-01"),
+        "sync.sh": "gh\n",
+    }
+    red = {
         "sync.sh": "curl\n",
         "tests/test-sync.sh": SHIM.format(name="git"),
     }
@@ -1227,6 +1343,7 @@ def compare_under_the_runner():
 def main():
     failures = [sweep(*case) for case in SWEEPS]
     failures += [since(*case) for case in SINCE]
+    failures += [at_base(*case) for case in AT_BASE]
     failures += [default_today(), without_siblings(), under_the_runner()]
     failures += compares()
     singles = [
@@ -1243,7 +1360,7 @@ def main():
     ]
     failures += [case() for case in singles]
     failures = [f for f in failures if f]
-    total = len(SWEEPS) + len(SINCE) + 3 + len(COMPARES) + len(singles)
+    total = len(SWEEPS) + len(SINCE) + len(AT_BASE) + 3 + len(COMPARES) + len(singles)
     for f in failures:
         print(f"FAIL {f}", file=sys.stderr)
     print(f"test-fakes: {total - len(failures)} of {total} cases passed")

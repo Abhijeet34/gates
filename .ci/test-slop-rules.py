@@ -635,6 +635,22 @@ SINCE = [
         1,
         "a.css:2:",
     ),
+    *[
+        (
+            f"z-index is judged in a file name {label}",
+            "z-index",
+            {"README.md": "x\n"},
+            {name: ".a { z-index: 9999; }\n"},
+            1,
+            f"slop-rules: z-index: {name}:1:",
+        )
+        for label, name in (
+            ("holding a quote", 'say "hi".css'),
+            ("holding a backslash", "back\\slash.css"),
+            ("holding a space", "sp ace.css"),
+            ("holding a non-ASCII letter", "caf\u00e9.css"),
+        )
+    ],
     (
         "an old em dash is not a new one",
         "em-dash",
