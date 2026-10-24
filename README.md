@@ -1373,29 +1373,32 @@ vendored = ["vendor/**"]                     # files whose own licence is judged
 "uv:requests" = "Apache-2.0"                 # npm:NAME, uv:NAME, cargo:NAME, any @VERSION, or path:GLOB
 "path:vendor/leftpad/**" = "MIT"
 
-[reviewed]                                   # why a licence needing review was accepted
-"npm:some-mpl-lib" = "maintainer decision 2026-10-19: used unmodified"
+[reviewed]                                   # the expression accepted, and why it needed review
+"npm:some-mpl-lib" = { accepts = "MPL-2.0", reason = "maintainer decision 2026-10-19: used unmodified" }
 ```
 
 | Source | Its licence |
 | --- | --- |
 | a tracked `package-lock.json` (none under `node_modules`) | each entry's `license`, the legacy object and list forms included; the project's own entry and workspace links are its code and are skipped; a lockfileVersion 1 records none |
 | a tracked `uv.lock` | none is recorded, so a `[declared]` entry; the editable or virtual project is skipped |
-| a tracked `pnpm-lock.yaml` (lockfileVersion 6 or 9) | none is recorded, so each package's own `package.json` in the installed tree beside it (`node_modules/.pnpm`, or `node_modules` when hoisted), keyed `npm:NAME`; a package not installed needs review |
-| a tracked `Cargo.lock` | each crate's `license` from `cargo metadata --offline --locked --all-features`, run beside it, with the legacy `MIT/Apache-2.0` read as `OR`; a crate with no `source` is a workspace member or path dependency and is skipped |
+| a tracked `pnpm-lock.yaml` (lockfileVersion 6 or 9) | none is recorded, so each package's own `package.json` in the installed tree beside it, keyed `npm:NAME`, taken only at the path its lock entry derives: `node_modules/.pnpm/NAME@VERSION` (a `_` peer suffix allowed, `/` in a scope written `+`) or `node_modules/NAME` when hoisted, and only when its own name and version match and no symlink lies on the path; a package not installed there needs review |
+| a tracked `Cargo.lock` | each crate's `license` from `cargo metadata --manifest-path ... --offline --locked --all-features`, run from an empty directory outside the tree with `RUSTC_WRAPPER` and `RUSTC_WORKSPACE_WRAPPER` emptied and `RUSTC` unset, with the legacy `MIT/Apache-2.0` read as `OR`; a crate with no `source` is a workspace member or path dependency and is skipped |
 | a tracked file under a `vendored` glob | its own `SPDX-License-Identifier` in its first 30 lines, else a `[declared]` path entry; a vendored tree's `LICENSE`, `COPYING`, `NOTICE` and `README` files are its notices and are skipped |
 
 A dependency's exact `@VERSION` entry wins over its name, because a licence can change between releases.
+Ids are compared as SPDX compares them, without regard to case, in the policy's lists, in `[reviewed]` and in the expression: `gpl-3.0-only` is refused when the policy refuses `GPL-3.0-only`.
 The expression is SPDX: `OR` takes its best alternative and `AND` its worst part, so `MIT OR GPL-3.0-only` is allowed and `MIT AND AGPL-3.0-only` refused; an `X WITH EXCEPTION` pair counts only as listed, since an exception changes the terms.
 An id no list names, an expression that does not parse, and a dependency or file with no licence each need review, never pass: an unknown licence is the case the row exists for.
-Needing review refuses until `[reviewed]` records why it was accepted, and no entry accepts a refused licence; the policy is the one place a reviewed decision lives, so the next change reads it.
-An id in two lists, an unknown key or a malformed table is `bad-policy`.
+Needing review refuses until `[reviewed]` records the expression it accepts and why, and no entry accepts a refused licence; the policy is the one place a reviewed decision lives, so the next change reads it.
+An entry accepts only the expression it records, so a dependency whose licence has since changed to another needing review is reported again, naming both; an entry cannot accept a dependency with no licence, which is named under `[declared]` instead.
+An id in two lists (in any case), an unknown key, a `[reviewed]` value that is not a table of `accepts` and `reason`, or a malformed table is `bad-policy`.
 
 Both new readers need the caller's tree installed first: `pnpm install` for the package.json files, and `cargo fetch --locked` (or a `cargo vendor` directory source) for the crates, since `--offline` makes no network call.
+The tree configures neither cargo nor its toolchain, because cargo takes its configuration, and rustup its override, from the working directory, and a `rustc-wrapper` or `rustc` there names a program the row would run: the toolchain is the runner's own, and a vendored tree's `[source]` replacement belongs in the runner's `CARGO_HOME` configuration, not in the tree's `.cargo/config.toml`.
 A crate cargo cannot resolve offline, or a `Cargo.lock` behind its `Cargo.toml`, is `undecided (tool-error)`, because `--locked` refuses rather than rewriting the caller's lockfile; `--all-features` resolves the crates only an optional feature pulls in, without which 7 of quoth's 612 locked crates went unread (measured 2026-10-24).
 `cargo deny` was rejected for this: its advisories half duplicates OSV and `cargo audit`, and only its licence half was new.
 
-Left out: recognising a licence from its text, which a header or a `[declared]` entry states instead; and any registry lookup, which would make the row neither offline nor deterministic.
+Left out: recognising a licence from its text, which a header or a `[declared]` entry states instead; any registry lookup, which would make the row neither offline nor deterministic; and any lockfile but the four named above (`yarn.lock`, `bun.lock`, `poetry.lock` and `go.sum`, say), which the row skips without a word.
 The whole tracked tree is judged, not only the change, so a lockfile change also reports an older dependency no policy covers; a caller's first run is where those become `[declared]` or `[reviewed]` entries.
 
 **The row**, in a caller's `.github/gates.toml`, in shadow until the promotion rule in `run/gate.py` lets it block, and scoped to the files it reads:

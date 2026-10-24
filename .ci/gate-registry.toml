@@ -1570,7 +1570,7 @@ git init -q && mkdir .github && printf 'allowed = ["MIT"]\nreview = ["MPL-2.0"]\
 echo '{"lockfileVersion": 3, "packages": {"node_modules/mpl": {"version": "1.0.0", "license": "MPL-2.0"}}}' > package-lock.json && git add -A
 '''
 clean = '''
-git init -q && mkdir .github && printf 'allowed = ["MIT"]\nreview = ["MPL-2.0"]\n[reviewed]\n"npm:mpl" = "decided in review"\n' > .github/licence-policy.toml
+git init -q && mkdir .github && printf 'allowed = ["MIT"]\nreview = ["MPL-2.0"]\n[reviewed]\n"npm:mpl" = { accepts = "MPL-2.0", reason = "decided in review" }\n' > .github/licence-policy.toml
 echo '{"lockfileVersion": 3, "packages": {"node_modules/mpl": {"version": "1.0.0", "license": "MPL-2.0"}}}' > package-lock.json && git add -A
 '''
 run = 'python3 "$GATE" .'

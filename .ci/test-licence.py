@@ -135,17 +135,45 @@ snapshots:
 """
 
 
-def run(script, files, policy=POLICY):
-    """(exit status, output) of the row on a repository holding `files`, every one tracked."""
-    repo = Path(tempfile.mkdtemp(dir=workdir))
+def runner_tmp(repo):
+    """A TMPDIR whose cargo configuration names the repository's vendored directory source.
+
+    The row reads no cargo configuration from the tree, so a `cargo vendor` tree's
+    own `.cargo/config.toml` is not what lets it resolve offline. Cargo reads the
+    configuration of its working directory's parents, and the row works under TMPDIR.
+    """
+    tmp = Path(tempfile.mkdtemp(dir=workdir))
+    for d in sorted(repo.rglob("vendor")):
+        if any(d.glob("*/.cargo-checksum.json")):
+            (tmp / ".cargo").mkdir()
+            (tmp / ".cargo/config.toml").write_text(
+                f'[source.crates-io]\nreplace-with = "v"\n[source.v]\ndirectory = "{d}"\n'
+            )
+            break
+    return tmp
+
+
+def run(
+    script, files, policy=POLICY, *, repo=None, executable=(), links=None, env=None
+):
+    """(exit status, output) of the row on a repository holding `files`, every one tracked.
+
+    `links` maps a path in the repository to a directory it is a symlink to.
+    """
+    repo = repo or Path(tempfile.mkdtemp(dir=workdir))
     for rel, text in {".github/licence-policy.toml": policy, **files}.items():
         (repo / rel).parent.mkdir(parents=True, exist_ok=True)
         (repo / rel).write_text(text)
+        if rel in executable:
+            (repo / rel).chmod(0o755)
+    for rel, target in (links or {}).items():
+        (repo / rel).parent.mkdir(parents=True, exist_ok=True)
+        (repo / rel).symlink_to(target)
     subprocess.run(["git", "init", "-q", str(repo)], env=ENV, check=True)
     subprocess.run(["git", "-C", str(repo), "add", "-A"], env=ENV, check=True)
     proc = subprocess.run(
         [sys.executable, str(script), str(repo)],
-        env=ENV,
+        env={**ENV, **(env or {}), "TMPDIR": str(runner_tmp(repo))},
         capture_output=True,
         text=True,
     )
@@ -189,7 +217,10 @@ def review_needs_a_record(script):
         "licence: review: package-lock.json: npm:mpl 1.0.0: MPL-2.0 needs review;"
         " record why it is accepted under [reviewed]",
     )  # fmt: skip
-    reviewed = POLICY + '[reviewed]\n"npm:mpl" = "decided in review: used unmodified"\n'
+    reviewed = (
+        POLICY
+        + '[reviewed]\n"npm:mpl" = { accepts = "MPL-2.0", reason = "decided in review: used unmodified" }\n'
+    )
     return why or expect(
         "a reviewed MPL-2.0",
         run(script, lockfile, reviewed),
@@ -199,7 +230,10 @@ def review_needs_a_record(script):
 
 
 def reviewed_cannot_accept_refused(script):
-    policy = POLICY + '[reviewed]\n"npm:gpl" = "decided in review"\n'
+    policy = (
+        POLICY
+        + '[reviewed]\n"npm:gpl" = { accepts = "GPL-3.0-only", reason = "decided in review" }\n'
+    )
     got = run(script, {"package-lock.json": lock(gpl="GPL-3.0-only")}, policy)
     return expect(
         "a reviewed GPL-3.0-only", got, 1, "npm:gpl 1.0.0: GPL-3.0-only is refused"
@@ -350,6 +384,188 @@ def policy_contradiction_undecided(script):
     )  # fmt: skip
 
 
+def cargo_wrapper_not_run(script):
+    repo = Path(tempfile.mkdtemp(dir=workdir))
+    files = crates(("mit-crate", "1.0.0", "MIT"))
+    files["app/.cargo/config.toml"] += '[build]\nrustc-wrapper = "./wrapper.sh"\n'
+    files["app/wrapper.sh"] = (
+        '#!/bin/sh\necho "$@" >> "$(dirname "$0")/ran"\nexec "$@"\n'
+    )
+    got = run(script, files, repo=repo, executable=("app/wrapper.sh",))
+    ran = repo / "app/ran"
+    if ran.exists():
+        return f"the tree's rustc wrapper ran: {ran.read_text().strip()}"
+    return expect("a crate beside a rustc wrapper", got, 0, "1 dependencies")
+
+
+def cargo_compiler_from_config_not_run(script):
+    repo = Path(tempfile.mkdtemp(dir=workdir))
+    files = crates(("mit-crate", "1.0.0", "MIT"))
+    files["app/.cargo/config.toml"] += '[build]\nrustc = "./fake-rustc.sh"\n'
+    files["app/fake-rustc.sh"] = (
+        '#!/bin/sh\necho "$@" >> "$(dirname "$0")/ran"\nexec rustc "$@"\n'
+    )
+    got = run(script, files, repo=repo, executable=("app/fake-rustc.sh",))
+    ran = repo / "app/ran"
+    if ran.exists():
+        return f"the tree's rustc ran: {ran.read_text().strip()}"
+    return expect("a crate beside a configured rustc", got, 0, "1 dependencies")
+
+
+def cargo_wrapper_from_environment_not_run(script):
+    repo = Path(tempfile.mkdtemp(dir=workdir))
+    wrapper = repo / "wrapper.sh"
+    ran = repo / "ran"
+    files = crates(("mit-crate", "1.0.0", "MIT"))
+    files["wrapper.sh"] = f'#!/bin/sh\necho "$@" >> "{ran}"\nexec "$@"\n'
+    got = run(
+        script, files, repo=repo, executable=("wrapper.sh",),
+        env={"RUSTC_WRAPPER": str(wrapper)},
+    )  # fmt: skip
+    if ran.exists():
+        return (
+            f"a rustc wrapper named by the environment ran: {ran.read_text().strip()}"
+        )
+    return expect("a crate with RUSTC_WRAPPER set", got, 0, "1 dependencies")
+
+
+def pnpm_decoy_manifest_not_read(script):
+    files = pnpm_tree(
+        PNPM9, gpl_lib=("1.0.0", "GPL-3.0-or-later"), scope__fmt=("2.0.0", "MIT")
+    )
+    files["web/node_modules/decoy/package.json"] = json.dumps(
+        {"name": "gpl-lib", "version": "1.0.0", "license": "MIT"}
+    )
+    policy = POLICY.replace('"AGPL-3.0-only"]', '"AGPL-3.0-only", "GPL-3.0-or-later"]')
+    return expect(
+        "a decoy package.json claiming an installed package", run(script, files, policy), 1,
+        "npm:gpl-lib 1.0.0: GPL-3.0-or-later is refused",
+    )  # fmt: skip
+
+
+def pnpm_decoy_is_not_installed(script):
+    files = pnpm_tree(PNPM9, scope__fmt=("2.0.0", "MIT"))
+    files["web/node_modules/decoy/package.json"] = json.dumps(
+        {"name": "gpl-lib", "version": "1.0.0", "license": "MIT"}
+    )
+    return expect(
+        "a decoy package.json for a package not installed", run(script, files), 1,
+        "npm:gpl-lib 1.0.0: not installed, so no package.json to read",
+    )  # fmt: skip
+
+
+def pnpm_mismatched_manifest_not_read(script):
+    files = pnpm_tree(PNPM9, scope__fmt=("2.0.0", "MIT"))
+    store = "web/node_modules/.pnpm/gpl-lib@1.0.0/node_modules/gpl-lib/package.json"
+    files[store] = json.dumps({"name": "gpl-lib", "version": "9.9.9", "license": "MIT"})
+    return expect(
+        "a manifest at the derived path naming another version", run(script, files), 1,
+        "npm:gpl-lib 1.0.0: not installed, so no package.json to read",
+    )  # fmt: skip
+
+
+def pnpm_manifest_outside_tree_not_read(script):
+    outside = Path(tempfile.mkdtemp(dir=workdir))
+    (outside / "node_modules/gpl-lib").mkdir(parents=True)
+    (outside / "node_modules/gpl-lib/package.json").write_text(
+        json.dumps({"name": "gpl-lib", "version": "1.0.0", "license": "MIT"})
+    )
+    files = pnpm_tree(PNPM9, scope__fmt=("2.0.0", "MIT"))
+    got = run(
+        script, files,
+        links={"web/node_modules/.pnpm/gpl-lib@1.0.0": outside},
+    )  # fmt: skip
+    return expect(
+        "a store entry that links out of the tree", got, 1,
+        "npm:gpl-lib 1.0.0: not installed, so no package.json to read",
+    )  # fmt: skip
+
+
+def pnpm_peer_suffixed_directory_read(script):
+    files = pnpm_tree(PNPM9, scope__fmt=("2.0.0", "MIT"))
+    files["web/node_modules/.pnpm/gpl-lib@1.0.0_react@18.2.0/node_modules/gpl-lib/package.json"] = (
+        json.dumps({"name": "gpl-lib", "version": "1.0.0", "license": "GPL-3.0-only"})
+    )  # fmt: skip
+    return expect(
+        "a package installed under a peer-suffixed directory", run(script, files), 1,
+        "npm:gpl-lib 1.0.0: GPL-3.0-only is refused",
+    )  # fmt: skip
+
+
+def lower_case_id_refused(script):
+    got = run(script, {"package-lock.json": lock(gpl="gpl-3.0-only", ok="mit")})
+    return expect(
+        "a lower-case gpl-3.0-only beside a lower-case mit", got, 1,
+        "licence: refused: package-lock.json: npm:gpl 1.0.0: gpl-3.0-only is refused",
+        "licence: 1 refused, 0 need review",
+    )  # fmt: skip
+
+
+def lower_case_policy_id_matches(script):
+    policy = POLICY.replace('"GPL-3.0-only"', '"gpl-3.0-only"')
+    got = run(script, {"package-lock.json": lock(gpl="GPL-3.0-only")}, policy)
+    return expect("a policy listing gpl-3.0-only", got, 1, "GPL-3.0-only is refused")
+
+
+def lists_differing_in_case_contradict(script):
+    policy = POLICY.replace('allowed = ["MIT"', 'allowed = ["gpl-3.0-only", "MIT"')
+    got = run(script, {"package-lock.json": lock(a="MIT")}, policy)
+    return expect(
+        "an id allowed and refused in different case", got, 2,
+        "licence: undecided (bad-policy): licence-policy.toml: 'GPL-3.0-only' is in both allowed and refused",
+    )  # fmt: skip
+
+
+MPL_REVIEWED = (
+    POLICY.replace('review = ["MPL-2.0"]', 'review = ["MPL-2.0", "LGPL-2.1-or-later"]')
+    + '[reviewed]\n"npm:mpl" = { accepts = "MPL-2.0", reason = "used unmodified" }\n'
+)
+
+
+def reviewed_accepts_only_its_expression(script):
+    got = run(
+        script, {"package-lock.json": lock(mpl="LGPL-2.1-or-later")}, MPL_REVIEWED
+    )
+    return expect(
+        "a [reviewed] MPL-2.0 entry over a dependency now under LGPL-2.1-or-later", got, 1,
+        "licence: review: package-lock.json: npm:mpl 1.0.0: LGPL-2.1-or-later needs review;"
+        " [reviewed] accepts MPL-2.0, not LGPL-2.1-or-later",
+    )  # fmt: skip
+
+
+def reviewed_expression_is_case_folded(script):
+    policy = MPL_REVIEWED.replace('accepts = "MPL-2.0"', 'accepts = "mpl-2.0"')
+    got = run(script, {"package-lock.json": lock(mpl="MPL-2.0")}, policy)
+    return expect(
+        "a [reviewed] entry in lower case", got, 0, "(1 by a [reviewed] entry)"
+    )
+
+
+def reviewed_needs_a_licence_to_match(script):
+    policy = POLICY + '[reviewed]\n"uv:requests" = { accepts = "MIT", reason = "r" }\n'
+    got = run(script, {"uv.lock": uv_lock("requests")}, policy)
+    return expect(
+        "a [reviewed] entry for a dependency with no licence", got, 1,
+        "uv:requests 1.0: no licence recorded; name it under [declared]",
+    )  # fmt: skip
+
+
+def reviewed_shape_checked(script):
+    files = {"package-lock.json": lock(mpl="MPL-2.0")}
+    for what, value in (
+        ("a reason alone", '"decided in review"'),
+        ("a table with no expression", '{ reason = "decided in review" }'),
+    ):
+        got = run(script, files, POLICY + f'[reviewed]\n"npm:mpl" = {value}\n')
+        why = expect(
+            f"a [reviewed] entry of {what}", got, 2,
+            "licence: undecided (bad-policy): licence-policy.toml: [reviewed] 'npm:mpl' must be a table of accepts and reason",
+        )  # fmt: skip
+        if why:
+            return why
+    return None
+
+
 def corpus_cases_agree(script):
     """The row over corpus/licence: each seeded case refused, each clean one passed."""
     wrong = []
@@ -435,7 +651,7 @@ CASES = [
     (refused_dependency, "a refused licence refusing", '    if state == "refused":\n', "    if False:\n"),
     (or_takes_best_alternative, "OR taking its best alternative", "return min(got, key=lambda v: RANK[v[0]])", "return max(got, key=lambda v: RANK[v[0]])"),
     (and_takes_worst_part, "AND taking its worst part", "return max(got, key=lambda v: RANK[v[0]])", "return min(got, key=lambda v: RANK[v[0]])"),
-    (review_needs_a_record, "review refusing without a record", 'if state == "review" and reviewed is None:', "if False:"),
+    (review_needs_a_record, "review refusing without a record", "if recorded is not None and fold(recorded) == fold(expr):", "if True:"),
     (reviewed_cannot_accept_refused, "no record accepting a refused licence", '    if state == "refused":\n', '    if state == "refused" and reviewed is None:\n'),
     (unlisted_licence_needs_review, "an unlisted id needing review", 'return "review", f"{tok} is in no list of the policy"', 'return "allowed", f"{tok} is in no list of the policy"'),
     (malformed_expression_needs_review, "a whole expression required", 'raise ValueError(f"{peek()} after a whole expression")', "pass"),
@@ -444,14 +660,29 @@ CASES = [
     (legacy_slash_is_or, "the legacy slash read as OR", 'expr = re.sub(r"\\s*/\\s*", " OR ", crate.get("license") or "") or None', 'expr = crate.get("license") or None'),
     (optional_crate_judged, "every feature's crates resolved", '        "--all-features",\n', ""),
     (stale_cargo_lock_undecided, "cargo kept from rewriting the lockfile", '        "--locked",\n', ""),
-    (pnpm_package_refused, "a pnpm package's licence read from its package.json", "            installed[got] = licence_field(", "            installed[got] = None and licence_field("),
+    (pnpm_package_refused, "a pnpm package's licence read from its package.json", "licence_field(data.get(\"license\")),", "None and licence_field(data.get(\"license\")),"),
     (pnpm_uninstalled_needs_review, "an uninstalled pnpm package needing review", '            expr, why = None, "not installed, so no package.json to read"', '            expr, why = "MIT", "not installed, so no package.json to read"'),
     (pnpm_v6_keys_read, "a lockfileVersion 6 key read", """PNPM_KEY = re.compile(r"  ['\\"]?/?(""", """PNPM_KEY = re.compile(r"  ['\\"]?("""),
     (project_and_links_skipped, "the project and links skipped", 'if (\n                "node_modules/" not in where\n                or not isinstance(item, dict)\n                or item.get("link")\n            ):', "if not where or not isinstance(item, dict):"),
     (vendored_file_header, "a vendored file's own header read", "            return m.group(1).strip()\n", "            return None\n"),
     (notice_files_not_judged, "a vendored tree's notice files skipped", ' or NOTICES.match(\n            rel.rsplit("/", 1)[-1]\n        )', ""),
-    (policy_contradiction_undecided, "a licence in two lists refused", 'problems.append(f"{lid!r} is in both {named[lid]} and {k}")', "pass"),
+    (policy_contradiction_undecided, "a licence in two lists refused", 'problems.append(f"{lid!r} is in both {named[fold(lid)]} and {k}")', "pass"),
     (under_the_runner, "a refused licence refusing", '    if state == "refused":\n', "    if False:\n"),
+    (cargo_wrapper_not_run, "cargo run from outside the tree, with no wrapper", "cwd=outside, env=env,", "cwd=(root / path).parent, env=None,"),
+    (cargo_compiler_from_config_not_run, "cargo run from outside the tree", "cwd=outside,", "cwd=(root / path).parent,"),
+    (cargo_wrapper_from_environment_not_run, "an empty wrapper overriding the environment's", "env.update({k: \"\" for k in CARGO_WRAPPERS})", "pass"),
+    (pnpm_decoy_manifest_not_read, "a manifest taken only where the lock entry derives it", "    for manifest in derived:", "    for manifest in [*modules.glob(\"*/package.json\"), *derived]:"),
+    (pnpm_decoy_is_not_installed, "a manifest taken only where the lock entry derives it", "    for manifest in derived:", "    for manifest in [*modules.glob(\"*/package.json\"), *derived]:"),
+    (pnpm_mismatched_manifest_not_read, "a manifest's own name and version matching the entry", "    if found == (name, ver):", "    if isinstance(data, dict):"),
+    (pnpm_manifest_outside_tree_not_read, "a symlink in the manifest's path refused", "manifest.resolve() != manifest", "False"),
+    (pnpm_peer_suffixed_directory_read, "a peer-suffixed store directory read", "or d.name.startswith(f\"{stem}_\")", "or False"),
+    (lower_case_id_refused, "a policy id stored folded", "named[fold(lid)] = k", "named[lid] = k"),
+    (lower_case_policy_id_matches, "an id looked up by its folded form", "state = lists.get(fold(tok))", "state = lists.get(tok)"),
+    (lists_differing_in_case_contradict, "a contradiction found across case", "if fold(lid) in named and named[fold(lid)] != k:", "if lid in named and named[lid] != k:"),
+    (reviewed_accepts_only_its_expression, "a [reviewed] entry accepting only its expression", " and fold(recorded) == fold(expr)", ""),
+    (reviewed_expression_is_case_folded, "the recorded expression compared folded", "fold(recorded) == fold(expr)", "recorded == expr"),
+    (reviewed_needs_a_licence_to_match, "a [reviewed] entry needing a licence to match", "if reviewed and expr is not None else None", "if reviewed else None"),
+    (reviewed_shape_checked, "a [reviewed] entry's shape checked", '                    and set(val) == {"accepts", "reason"}\n', ""),
     (corpus_cases_agree, "a vendored file's own header read", "            return m.group(1).strip()\n", "            return None\n"),
 ]  # fmt: skip
 
