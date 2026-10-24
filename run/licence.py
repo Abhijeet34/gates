@@ -268,16 +268,10 @@ def pnpm(root, path, text):
         if ver == "link":
             continue
         if (name, ver) in installed:
-            expr, why = (
-                installed[name, ver],
-                "its package.json names no licence; name it under [declared]",
-            )
+            expr, why = installed[name, ver], "its package.json names no licence"
         else:
-            expr, why = (
-                None,
-                "not installed, so no package.json to read; run pnpm install or name it under [declared]",
-            )
-        out.append((f"npm:{name}", ver, expr, why))
+            expr, why = None, "not installed, so no package.json to read"
+        out.append((f"npm:{name}", ver, expr, f"{why}; name it under [declared]"))
     return out
 
 

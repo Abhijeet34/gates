@@ -97,12 +97,14 @@ def expect(what, got, status, *texts):
 
 
 def measured_counts(script):
-    """Every case of each corpus, replayed, gives the counts of the live run."""
+    """Every case the live run recorded, replayed, gives the counts of that run."""
     for lens, want in MEASURED.items():
-        replay = Replay(lens, sorted(os.listdir(FIXTURES / "corpus" / lens))[0])
+        # A case added since, such as licence's gpl-crate and gpl-pnpm, has no reply to replay.
+        recorded = sorted(os.listdir(FIXTURES / "corpus" / lens))
+        replay = Replay(lens, recorded[0])
         shutil.rmtree(replay.dir / "replies" / lens)
         shutil.copytree(FIXTURES / "corpus" / lens, replay.dir / "replies" / lens)
-        rc, out = replay.run(script, cases=[])
+        rc, out = replay.run(script, cases=recorded)
         if want not in out:
             return f"{lens}: no {want!r} in: {out.strip()}"
     return None

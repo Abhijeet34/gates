@@ -61,6 +61,80 @@ def uv_lock(*names):
     return "\n".join(rows) + "\n"
 
 
+def crates(*rows, optional=()):
+    """A Cargo project whose crates.io dependencies are vendored, as `cargo vendor` leaves them.
+
+    Each row is (name, version, licence); `optional` names rows behind a feature.
+    A directory source keeps `cargo metadata --offline` off the network and the registry cache.
+    """
+    deps = "".join(
+        f'{n} = {{ version = "{v}", optional = true }}\n'
+        if n in optional
+        else f'{n} = "{v}"\n'
+        for n, v, _ in rows
+    )
+    features = (
+        f"\n[features]\nextra = {[f'dep:{n}' for n in optional]}\n".replace("'", '"')
+        if optional
+        else ""
+    )
+    files = {
+        "app/Cargo.toml": f'[package]\nname = "app"\nversion = "0.1.0"\nedition = "2021"\n\n[dependencies]\n{deps}{features}',
+        "app/src/main.rs": "fn main() {}\n",
+        "app/.cargo/config.toml": '[source.crates-io]\nreplace-with = "v"\n[source.v]\ndirectory = "vendor"\n',
+    }
+    lock = [
+        'version = 4\n\n[[package]]\nname = "app"\nversion = "0.1.0"\ndependencies = [\n'
+    ]
+    lock += [f' "{n}",\n' for n, _, _ in sorted(rows)] + ["]\n"]
+    for n, v, lic in sorted(rows):
+        lock.append(
+            f'\n[[package]]\nname = "{n}"\nversion = "{v}"\nsource = "registry+https://github.com/rust-lang/crates.io-index"\n'
+        )
+        files[f"app/vendor/{n}/Cargo.toml"] = (
+            f'[package]\nname = "{n}"\nversion = "{v}"\nedition = "2021"\nlicense = "{lic}"\n'
+        )
+        files[f"app/vendor/{n}/src/lib.rs"] = ""
+        files[f"app/vendor/{n}/.cargo-checksum.json"] = '{"files": {}, "package": null}'
+    files["app/Cargo.lock"] = "".join(lock)
+    return files
+
+
+def pnpm_tree(lockfile, **installed):
+    """A pnpm project: its lockfile, and one installed package.json per keyword (`_` for `-`, `__` for a scope)."""
+    files = {"web/pnpm-lock.yaml": lockfile}
+    for key, (version, lic) in installed.items():
+        name = ("@" if "__" in key else "") + key.replace("__", "/").replace("_", "-")
+        files[
+            f"web/node_modules/.pnpm/{name.replace('/', '+')}@{version}/node_modules/{name}/package.json"
+        ] = json.dumps({"name": name, "version": version, "license": lic})
+    return files
+
+
+PNPM9 = """lockfileVersion: '9.0'
+
+importers:
+
+  .:
+    dependencies:
+      gpl-lib:
+        specifier: ^1.0.0
+        version: 1.0.0
+
+packages:
+
+  '@scope/fmt@2.0.0':
+    resolution: {integrity: sha512-AAAA}
+
+  gpl-lib@1.0.0:
+    resolution: {integrity: sha512-BBBB}
+
+snapshots:
+
+  gpl-lib@1.0.0: {}
+"""
+
+
 def run(script, files, policy=POLICY):
     """(exit status, output) of the row on a repository holding `files`, every one tracked."""
     repo = Path(tempfile.mkdtemp(dir=workdir))
@@ -162,6 +236,75 @@ def missing_licence_needs_declaring(script):
     )
 
 
+def refused_crate(script):
+    files = crates(
+        ("gpl-crate", "1.0.0", "GPL-3.0-only"), ("legacy", "2.0.0", "MIT/Apache-2.0")
+    )
+    return expect(
+        "a GPL-3.0-only crate", run(script, files), 1,
+        "licence: refused: app/Cargo.lock: cargo:gpl-crate 1.0.0: GPL-3.0-only is refused",
+        "licence: 1 refused, 0 need review",
+    )  # fmt: skip
+
+
+def legacy_slash_is_or(script):
+    files = crates(
+        ("legacy", "2.0.0", "MIT/Apache-2.0"), ("spaced", "1.0.0", "MIT / ISC")
+    )
+    # The project's own crate has no source, so it is skipped like an npm workspace link.
+    return expect("MIT/Apache-2.0", run(script, files), 0, "2 dependencies")
+
+
+def optional_crate_judged(script):
+    files = crates(("gpl-crate", "1.0.0", "GPL-3.0-only"), optional=("gpl-crate",))
+    return expect(
+        "a GPL-3.0-only crate behind a feature", run(script, files), 1,
+        "cargo:gpl-crate 1.0.0: GPL-3.0-only is refused",
+    )  # fmt: skip
+
+
+def stale_cargo_lock_undecided(script):
+    files = crates(("mit-crate", "1.0.0", "MIT"))
+    files["app/Cargo.lock"] = files["app/Cargo.lock"].replace(' "mit-crate",\n', "")
+    files["app/Cargo.lock"] = files["app/Cargo.lock"].split(
+        '\n\n[[package]]\nname = "mit-crate"'
+    )[0]
+    # The row must never rewrite a caller's lockfile, so a stale one is undecided, not resolved.
+    return expect(
+        "a Cargo.lock behind its Cargo.toml", run(script, files), 2,
+        "licence: undecided (tool-error): app/Cargo.lock: cargo metadata exited 101",
+    )  # fmt: skip
+
+
+def pnpm_package_refused(script):
+    files = pnpm_tree(
+        PNPM9, gpl_lib=("1.0.0", "GPL-3.0-or-later"), scope__fmt=("2.0.0", "MIT")
+    )
+    policy = POLICY.replace('"AGPL-3.0-only"]', '"AGPL-3.0-only", "GPL-3.0-or-later"]')
+    return expect(
+        "a GPL-3.0-or-later pnpm package", run(script, files, policy), 1,
+        "licence: refused: web/pnpm-lock.yaml: npm:gpl-lib 1.0.0: GPL-3.0-or-later is refused",
+        "licence: 1 refused, 0 need review",
+    )  # fmt: skip
+
+
+def pnpm_uninstalled_needs_review(script):
+    files = pnpm_tree(PNPM9, scope__fmt=("2.0.0", "MIT"))
+    return expect(
+        "a pnpm package not installed", run(script, files), 1,
+        "licence: review: web/pnpm-lock.yaml: npm:gpl-lib 1.0.0: not installed, so no package.json to read",
+    )  # fmt: skip
+
+
+def pnpm_v6_keys_read(script):
+    v6 = "lockfileVersion: '6.0'\n\npackages:\n\n  /gpl-lib@1.0.0(react@18.2.0):\n    resolution: {integrity: sha512-BBBB}\n"
+    files = pnpm_tree(v6, gpl_lib=("1.0.0", "GPL-3.0-only"))
+    return expect(
+        "a lockfileVersion 6 key with a peer suffix", run(script, files), 1,
+        "npm:gpl-lib 1.0.0: GPL-3.0-only is refused",
+    )  # fmt: skip
+
+
 def project_and_links_skipped(script):
     data = json.loads(lock(a="MIT"))
     data["packages"]["node_modules/local"] = {
@@ -229,7 +372,7 @@ def corpus_cases_agree(script):
 
 ROW = """[[gate]]
 id = "licence"
-inputs = ["**/package-lock.json", "**/uv.lock", "vendor/**", ".github/licence-policy.toml"]
+inputs = ["**/package-lock.json", "**/uv.lock", "**/pnpm-lock.yaml", "**/Cargo.lock", "vendor/**", ".github/licence-policy.toml"]
 scoped = true
 run = 'python3 "$GATES_DIR/run/licence.py"'
 shadow_since = {since}
@@ -297,6 +440,13 @@ CASES = [
     (unlisted_licence_needs_review, "an unlisted id needing review", 'return "review", f"{tok} is in no list of the policy"', 'return "allowed", f"{tok} is in no list of the policy"'),
     (malformed_expression_needs_review, "a whole expression required", 'raise ValueError(f"{peek()} after a whole expression")', "pass"),
     (missing_licence_needs_declaring, "a dependency with no licence needing one", '    if expr is None:\n        state, why = "review", missing\n', '    if expr is None:\n        state, why = "allowed", missing\n'),
+    (refused_crate, "a crate's licence read from cargo metadata", "            expr = re.sub(", "            expr = None and re.sub("),
+    (legacy_slash_is_or, "the legacy slash read as OR", 'expr = re.sub(r"\\s*/\\s*", " OR ", crate.get("license") or "") or None', 'expr = crate.get("license") or None'),
+    (optional_crate_judged, "every feature's crates resolved", '        "--all-features",\n', ""),
+    (stale_cargo_lock_undecided, "cargo kept from rewriting the lockfile", '        "--locked",\n', ""),
+    (pnpm_package_refused, "a pnpm package's licence read from its package.json", "            installed[got] = licence_field(", "            installed[got] = None and licence_field("),
+    (pnpm_uninstalled_needs_review, "an uninstalled pnpm package needing review", '            expr, why = None, "not installed, so no package.json to read"', '            expr, why = "MIT", "not installed, so no package.json to read"'),
+    (pnpm_v6_keys_read, "a lockfileVersion 6 key read", """PNPM_KEY = re.compile(r"  ['\\"]?/?(""", """PNPM_KEY = re.compile(r"  ['\\"]?("""),
     (project_and_links_skipped, "the project and links skipped", 'if (\n                "node_modules/" not in where\n                or not isinstance(item, dict)\n                or item.get("link")\n            ):', "if not where or not isinstance(item, dict):"),
     (vendored_file_header, "a vendored file's own header read", "            return m.group(1).strip()\n", "            return None\n"),
     (notice_files_not_judged, "a vendored tree's notice files skipped", ' or NOTICES.match(\n            rel.rsplit("/", 1)[-1]\n        )', ""),
