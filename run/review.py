@@ -11,20 +11,22 @@ run/gate.py owns. A review row adds three keys:
   budget    = { finder_seconds = 300 }                  # optional: overrides BUDGET per key
 
 MODEL is the model that wrote the change, or `unknown`. The finder is the first
-reviewer that differs from it; the verifier is the first that differs from the
-finder, preferring one that differs from the author too. Each seat is a fresh
+reviewer of another family than it; the verifier is the first of another family
+than the finder, preferring one of another family than the author too. A family
+is the RANK word an id names, so `claude-opus-5-5` and a dated Opus id are one. Each seat is a fresh
 `claude -p` session with no tools, no settings, no saved session, run in an
 empty directory. The finder's prompt is the change and the check records of H in
 DIR. The verifier's is the change, the check records, one finding and its
 reproduction. Neither ever sees a transcript, and the verifier never sees the
 finder's other findings or its reply. Each seat records its independence from
-the author and from the finder: `cross-model` when the model ids differ,
+the author and from the finder: `cross-model` when the families differ,
 `context-only` when they match or the author is `unknown`.
 
 Only an `error` finding can block, and only once the verifier pass reproduces it:
 its quote is line `line` of `path` at H, its `reproduce` command, run in a fresh
-export of H with no credential in its environment and an empty HOME, exits
-non-zero and not 126 or 127, and the verifier session answers that the output
+export of H with no credential in its environment and an empty HOME, inside a
+sandbox with no network that writes only the export, that HOME and a TMPDIR and
+reads nothing else under the user's home, exits non-zero and not 126 or 127, and the verifier session answers that the output
 demonstrates the claimed defect. A finding that fails a step is kept in the record and
 printed as downgraded with the reason; it never blocks and is never dropped.
 
@@ -46,7 +48,8 @@ it: no row for a trivial change, else every review row whose inputs, or a path
 no row claims, the change touches, and every `lens = "security"` row once the
 change is large, which a SENSITIVE path makes it. A floor row the router skipped
 sits anyway, printed as skipped; an unavailable router or an unreadable answer
-leaves the floor alone. Each row that sits runs as ID would, on the whole change
+leaves the floor alone, except that a trivial class it could not confirm records
+every selected row `error`, since a trivial floor seats nothing. Each row that sits runs as ID would, on the whole change
 when its inputs miss it, and one row's verified block refuses the change. A row
 run/gate.py selects that does not sit is recorded as a `pass` naming why, unless
 it already has a record for H. Every record then carries the `route`.
@@ -62,8 +65,8 @@ The verdict is appended to DIR/records.jsonl in run/gate.py's record shape, so
 `gate.py fold` reads it: `fail` when a blocking finding is verified, `pass` when
 none is, `error` when the review could not decide: the CLI is missing or logged in
 with anything but the subscription, a seat timed out, broke its token budget,
-answered from another model or gave no readable answer, or the verifier pass ran
-out of time. README.md, "The review rows", owns the sources of the rules and budgets.
+answered from another model or named none, or gave no readable answer, the verifier
+pass ran out of time, or this host has no sandbox for a reproducing command. README.md, "The review rows", owns the sources of the rules and budgets.
 
 Exit status: 0 pass, 1 a verified blocking finding, 2 could not decide; with C,
 1 when any row that sat refused, else 2 when any could not decide.
@@ -73,7 +76,9 @@ import argparse
 import datetime
 import json
 import os
+import pwd
 import re
+import shutil
 import signal
 import subprocess
 import sys
@@ -98,7 +103,7 @@ SEVERITIES = ("error", "warning", "nit")
 # The subscription login and the setup-token made from it; an API key or a cloud
 # provider's credentials are not the fleet's harness path.
 AUTH_METHODS = ("claude.ai", "oauth_token")
-REPRODUCE_ENV = ("PATH", "LANG", "TERM", "TMPDIR")
+REPRODUCE_ENV = ("PATH", "LANG", "TERM")
 SECRET_WORDS = ("TOKEN", "SECRET", "KEY", "PASSWORD", "CREDENTIAL")
 OUTPUT_TAIL = 4000  # bytes of a reproduction's output the verifier reads
 CLI_SECONDS = 30
@@ -198,7 +203,7 @@ def scrubbed(keep=()):
     }
 
 
-def reproduce_env(home):
+def reproduce_env(home, tmp):
     """The few variables a reproducing command may inherit, with every login pointed at `home`."""
     kept = {
         k: v for k, v in os.environ.items() if k in REPRODUCE_ENV or k.startswith("LC_")
@@ -206,11 +211,54 @@ def reproduce_env(home):
     return {
         **kept,
         "HOME": str(home),
+        "TMPDIR": str(tmp),
         "XDG_CONFIG_HOME": str(home / ".config"),
         "GH_CONFIG_DIR": str(home / "gh"),
         "GIT_CONFIG_GLOBAL": os.devnull,
         "GIT_CONFIG_SYSTEM": os.devnull,
     }
+
+
+def confinement(tree, home, tmp):
+    """The argv prefix that runs a reproducing command with no network, writing only
+    under `tree`, `home` and `tmp`, and reading nothing under the user's home but
+    those; Undecided on a host with no sandbox to give it."""
+    writable = [os.path.realpath(p) for p in (tree, home, tmp)]
+    hidden = sorted(
+        {
+            os.path.realpath(pwd.getpwuid(os.getuid()).pw_dir),
+            os.path.realpath(os.environ.get("HOME") or "/"),
+        }
+        - {"/"}
+    )
+    # One switch per control serves both sandboxes, so each has one place to remove.
+    network = False
+    if sys.platform == "darwin":
+        q = json.dumps  # an SBPL string takes JSON's quoting
+        rules = ["(version 1)", "(allow default)"]
+        if not network:
+            rules.append("(deny network*)")
+        rules += [f"(deny file-read* file-write* (subpath {q(p)}))" for p in hidden]
+        rules.append("(deny file-write*)")
+        # The last matching rule wins, so a writable tree under a hidden home is still readable.
+        rules += [f"(allow file-read* file-write* (subpath {q(p)}))" for p in writable]
+        rules.append(
+            '(allow file-write* (literal "/dev/null") (literal "/dev/tty") (subpath "/dev/fd"))'
+        )
+        return ["/usr/bin/sandbox-exec", "-p", "\n".join(rules)]
+    if shutil.which("bwrap"):
+        argv = ["bwrap", "--ro-bind", "/", "/", "--dev", "/dev", "--unshare-pid",
+                "--proc", "/proc", "--die-with-parent", "--new-session"]  # fmt: skip
+        if not network:
+            argv.append("--unshare-net")
+        for p in hidden:
+            argv += ["--tmpfs", p]
+        for p in writable:
+            argv += ["--bind", p, p]
+        return argv
+    raise Undecided(
+        "no sandbox to run a reproducing command in: macOS's sandbox-exec, or bubblewrap (bwrap) elsewhere"
+    )
 
 
 def bounded(argv, seconds, data=None, **kw):
@@ -339,15 +387,22 @@ def finder_prompt(records, title, diff, seat="finder"):
     )
 
 
+def family(model):
+    """The model family a seat or author belongs to: a dated, suffixed or provider-prefixed
+    id of Opus is still Opus, so it never reads as independent of Opus."""
+    low = model.strip().lower()
+    return next((word for word in RANK if word in low), low)
+
+
 def seats(reviewers, author):
     """(finder model, verifier model) under the independence rule in the docstring."""
-    finder = next((m for m in reviewers if m != author), reviewers[0])
-    others = [m for m in reviewers if m != finder] or [finder]
-    return finder, next((m for m in others if m != author), others[0])
+    finder = next((m for m in reviewers if family(m) != family(author)), reviewers[0])
+    others = [m for m in reviewers if family(m) != family(finder)] or [finder]
+    return finder, next((m for m in others if family(m) != family(author)), others[0])
 
 
 def rank(model):
-    return max((n for word, n in RANK.items() if word in model), default=0)
+    return RANK.get(family(model), 0)
 
 
 def adjudicator(reviewers, verifier, author):
@@ -361,7 +416,11 @@ def adjudicator(reviewers, verifier, author):
 
 
 def independence(model, other):
-    return "cross-model" if other != "unknown" and model != other else "context-only"
+    return (
+        "cross-model"
+        if other != "unknown" and family(model) != family(other)
+        else "context-only"
+    )
 
 
 def weakest(seats):
@@ -536,12 +595,18 @@ def route(rows, lenses, base, head, given, author, store, say):
             and not plan["fallback"]
         ):
             entry["router_skipped"] = True
-        if not entry["sits"]:
+        if not entry["sits"] and plan["class"] != "trivial":
             entry["why"] = (
-                "a trivial change runs no review"
-                if plan["class"] == "trivial"
-                else "nothing under its inputs changed and the router did not name it"
+                "nothing under its inputs changed and the router did not name it"
             )
+        elif not entry["sits"] and plan["fallback"] and paths:
+            # Intake's trivial is the caller's word; only a router answer can confirm it.
+            entry["why"] = (
+                "the change is declared trivial and no router answer confirmed it"
+            )
+            entry["unconfirmed"] = True
+        elif not entry["sits"]:
+            entry["why"] = "a trivial change runs no review"
         plan["rows"][gid] = entry
     sized = f"class {plan['class']} (given {given}"
     if plan.get("sensitive"):
@@ -663,10 +728,11 @@ def sit(seat, system, prompt, seconds, limit, budget, store, record):
         ) from e
     seat.update(input_tokens=tokens_in, output_tokens=tokens_out)
     served = sorted(envelope.get("modelUsage") or {})
-    if served and served != [model]:
-        # A fallback model would make the seat's independence label false.
+    if served != [model]:
+        # A fallback model would make the seat's independence label false, and a reply
+        # naming no model cannot show it was not one.
         raise Undecided(
-            f"the {name} seat asked {model} but was answered by {', '.join(served)}"
+            f"the {name} seat asked {model} but was answered by {', '.join(served) or 'no named model'}"
         )
     if rc != 0 or envelope.get("is_error"):
         raise Undecided(f"the {name} on {model} failed: {printable(text)}")
@@ -732,9 +798,9 @@ def quoted(head, finding):
 def reproduce(head, command, seconds, store):
     """(exit status, output log, output tail) of the command at the root of a fresh export of H."""
     with tempfile.TemporaryDirectory(prefix="review-reproduce-") as tmp:
-        tree, home = Path(tmp, "tree"), Path(tmp, "home")
-        tree.mkdir()
-        home.mkdir()
+        tree, home, scratch = Path(tmp, "tree"), Path(tmp, "home"), Path(tmp, "tmp")
+        for d in (tree, home, scratch):
+            d.mkdir()
         export = [
             "bash",
             "-c",
@@ -749,8 +815,18 @@ def reproduce(head, command, seconds, store):
                 f"could not export the head: {done.stderr.decode(errors='replace').strip()}"
             )
         # An empty HOME keeps the command off this machine's git, gh and ssh logins.
-        env = reproduce_env(home)
-        done = bounded(["bash", "-e", "-c", command], seconds, cwd=tree, env=env)
+        env = reproduce_env(home, scratch)
+        jail = confinement(tree, home, scratch)
+        # A sandbox that cannot start exits non-zero too, which would read as a reproduction.
+        probe = bounded([*jail, "/usr/bin/true"], CLI_SECONDS, cwd=tree, env=env)
+        if probe is None or probe[0] != 0:
+            why = (
+                "timed out"
+                if probe is None
+                else printable(probe[2].decode(errors="replace"))
+            )
+            raise Undecided(f"the reproducing command's sandbox would not start: {why}")
+        done = bounded([*jail, "bash", "-e", "-c", command], seconds, cwd=tree, env=env)
     if done is None:
         return None
     rc, out, err = done
@@ -1057,10 +1133,21 @@ def routed(rows, lenses, base, head, size, author, store, say):
             }
             state["route"] = plan
             detail = f"not convened: {entry['why']}"
+            verdict = "error" if entry.get("unconfirmed") else "pass"
             record(
-                store, row, head, base, stamp(), time.monotonic(), "pass", detail, state
+                store,
+                row,
+                head,
+                base,
+                stamp(),
+                time.monotonic(),
+                verdict,
+                detail,
+                state,
             )
-            tagged(f"pass: {detail}")
+            tagged(f"{verdict}: {detail}")
+            if verdict == "error":
+                verdicts[gid] = verdict
     values = set(verdicts.values())
     verdict = "fail" if "fail" in values else "error" if "error" in values else "pass"
     rows_sat = ", ".join(f"{gid} {v}" for gid, v in verdicts.items()) or "no row sat"
