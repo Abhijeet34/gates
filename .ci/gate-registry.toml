@@ -1616,6 +1616,36 @@ clean = '''cp -R "$ROOT/." . && rm -rf .git'''
 run = 'python3 "$GATE" --gate commit-msg .'
 finding = "commit-msg: red input was not refused"
 
+[[gate]]
+id = "gate-shadow"
+surface = "Infra and CI config"
+gates = [
+  ".github/workflows/shared-gate-shadow.yml", ".github/workflows/gate-shadow.yml",
+  "run/gate-shadow.sh",
+]
+test = ".ci/test-gate-shadow.py"
+suite = "shell"
+command = "run/gate-shadow.sh"
+red = '''
+git init -q . && mkdir .github
+printf '[[gate]]\nid = "x"\ninputs = ["**"]\nrun = "exit 1"\nshadow_since = 2026-10-24\n' > .github/gates.toml
+git add -A && git commit -qm x
+'''
+clean = '''
+git init -q . && mkdir .github
+printf '[[gate]]\nid = "x"\ninputs = ["**"]\nrun = "true"\n' > .github/gates.toml
+git add -A && git commit -qm x
+'''
+# The script exits 0 by design, so the case reads its verdict file; a neutered
+# script writes none, and `! grep` then passes as the proof requires.
+run = '''
+store=$(mktemp -d)
+GATES_DIR="$ROOT" SHADOW_STORE="$store" bash -e "$GATE" >/dev/null
+cat "$store/shadow-verdict.txt" 2>/dev/null
+! grep -q '^verdict=\(refused\|shadow-red\)' "$store/shadow-verdict.txt" 2>/dev/null
+'''
+finding = "verdict=shadow-red"
+
 [[exempt]]
 path = "system-maintenance/git-hooks/post-checkout"
 reason = "git-lfs shim; gates nothing"

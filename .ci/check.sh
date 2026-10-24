@@ -87,6 +87,8 @@ check_shell() {
     bash .ci/test-suite-coverage.sh || rc=1
     # The gate runner's selection, cache and fold, each case also run without its control.
     python3 .ci/test-gate-runner.py || rc=1
+    # The shadow job's script: a failing row is recorded and never turns the job red.
+    python3 .ci/test-gate-shadow.py || rc=1
     # The budget monitor's alarm and fix task, replayed over pointback's check step.
     python3 .ci/test-budget-monitor.py || rc=1
     # The protected surface of security design 7.2, and its row in shadow under the runner.

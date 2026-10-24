@@ -1,0 +1,24 @@
+name: gate shadow
+
+# gates is the first caller of shared-gate-shadow.yml, by the same-repository
+# path, so a pull request that changes the runner is shadowed by the version it
+# changes. This workflow is not a required status: the branch ruleset requires
+# `checks` alone, and `needs` reaches only jobs of its own file, so nothing here
+# can turn `checks` red.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: gate-shadow-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  shadow:
+    uses: ./.github/workflows/shared-gate-shadow.yml
