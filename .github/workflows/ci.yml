@@ -35,7 +35,7 @@ jobs:
     name: shell
     if: github.event_name != 'schedule'
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # exiftool because .ci/test-watermark-scan-workflow.sh drives the real
@@ -62,6 +62,35 @@ jobs:
           tar -xzf "$tarball" cargo-mutants
           sudo install -m 0755 cargo-mutants /usr/local/bin/cargo-mutants
           cargo mutants --version
+
+      # `.ci/test-tool-gates.py --real` puts run/tool-gates.py to the pinned tools
+      # and a real npm advisory database. The pins and checksums are the README's
+      # "The tool rows".
+      - name: Install zizmor, actionlint and osv-scanner
+        run: |
+          pipx install zizmor==1.29.0
+          cd "$(mktemp -d)"
+          osv=osv-scanner_linux_amd64
+          curl -fsSL "https://github.com/google/osv-scanner/releases/download/v2.7.0/${osv}" -o "$osv"
+          echo "160c6253e2922e9e0a6a9771c5c4c40a4b3c6090b34a3cdd5e80c96cc2e4218b  ${osv}" | sha256sum --check --strict
+          sudo install -m 0755 "$osv" /usr/local/bin/osv-scanner
+          tarball=actionlint_1.7.12_linux_amd64.tar.gz
+          curl -fsSL "https://github.com/rhysd/actionlint/releases/download/v1.7.12/${tarball}" -o "$tarball"
+          echo "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  ${tarball}" | sha256sum --check --strict
+          tar -xzf "$tarball" actionlint
+          sudo install -m 0755 actionlint /usr/local/bin/actionlint
+          zizmor --version && osv-scanner --version && actionlint --version
+
+      # osv-scanner downloads the database of each ecosystem a lockfile names, so
+      # this one-package lockfile fetches npm's and nothing else.
+      - name: Download the OSV npm database
+        run: |
+          db="$RUNNER_TEMP/osv-db"
+          cd "$(mktemp -d)"
+          echo '{"lockfileVersion": 3, "packages": {"": {"name": "fx", "version": "1.0.0", "dependencies": {"lodash": "4.18.1"}}, "node_modules/lodash": {"version": "4.18.1", "resolved": "https://registry.npmjs.org/lodash/-/lodash-4.18.1.tgz"}}}' > package-lock.json
+          OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY="$db" osv-scanner scan source --offline --download-offline-databases -r . || [ $? -eq 1 ]
+          test -n "$(find "$db" -name all.zip)"
+          echo "OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY=$db" >> "$GITHUB_ENV"
 
       - run: .ci/check.sh shell
 

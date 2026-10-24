@@ -254,7 +254,7 @@ A refusal that is not a finding exits 2 and prints `tool-gates: refused (TYPE)`,
 A runner row also lists the version probe under `tools`, so the runner's cache key moves with the pin.
 
 **Install.**
-Nothing here installs them, and the CI jobs do not either (see "Not in CI" below).
+Nothing here installs them; the `shell` job installs them for the `--real` cases (see "In CI" below).
 
 ```bash
 uv tool install zizmor==1.29.0
@@ -366,15 +366,16 @@ shadow_since = 2026-10-19
 `.ci/test-tool-gates.py` runs these rows through `run/gate.py` against stub tools and folds each to `shadow`.
 Five registry rows (`workflow-zizmor`, `workflow-actionlint`, `advisories-osv`, `advisories-osv-stale`, `tool-missing`) prove the script by execution with stub tools, because the `gates-proof` job installs none of the real ones.
 
-**Not in CI.**
-`ci.yml` installs none of the three tools, so `.ci/check.sh` runs the stub cases only, and `.ci/test-tool-gates.py --real` (the pinned binaries on `PATH` and a database directory) is run by hand:
+**In CI.**
+The `shell` job installs the three pinned tools, with the checksums above, and downloads an npm-only database, then `.ci/check.sh` runs `.ci/test-tool-gates.py --real` when `CI` is set; a bare checkout runs the stub cases only, because a skip on a missing tool would pass the same way.
+The download step and the `--real` run in CI were not run for this change, since the sandbox it was built in cannot reach the database host.
+By hand, with the pinned binaries on `PATH`:
 
 ```bash
 OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY=$HOME/.cache/osv-db python3 .ci/test-tool-gates.py --real
 ```
 
-Installing the pinned tools in the `shell` job and adding `--real` to `check_shell` is a workflow edit, so it waits for the maintainer's weekly batch.
-No workflow calls `run/tool-gates.py` either.
+No workflow calls `run/tool-gates.py` itself.
 
 ## The UI rows
 

@@ -119,6 +119,11 @@ check_shell() {
     if [ -n "${CI:-}" ]; then
         python3 .ci/test-mutation.py --real || rc=1
     fi
+    # The tool rows put to the pinned zizmor, actionlint and osv-scanner and an npm database,
+    # which ci.yml installs. Only CI runs it, for the reason given above.
+    if [ -n "${CI:-}" ]; then
+        python3 .ci/test-tool-gates.py --real || rc=1
+    fi
     # The review row's seats, budgets, verifier pass, router and veto against recorded model replies, and its rows folded in shadow.
     python3 .ci/test-review.py || rc=1
     # The seeded corpus runner against recorded replies of its live run, and the licence policy row folded in shadow.

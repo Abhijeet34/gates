@@ -11,8 +11,8 @@ which status is a finding, which is a typed refusal. Each stub exits 99 unless i
 is called with the flags in GUARDS, so a call that could reach the network, or
 read configuration from the tree under review, fails here. `--real` is the same
 questions put to the real binaries, including a tree that plants each
-configuration the tool would read; it is not part of .ci/check.sh until the CI
-jobs install them (README.md, "The tool rows").
+configuration the tool would read; .ci/check.sh runs it only under CI, where
+ci.yml installs them (README.md, "The tool rows").
 """
 
 import datetime
