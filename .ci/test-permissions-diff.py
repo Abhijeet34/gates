@@ -57,6 +57,11 @@ red = "echo red"
 id = "lint"
 surface = "PR checks"
 red = "echo red"
+
+[[gate]]
+id = "workflow-zizmor"
+surface = "Infra and CI config"
+red = "echo red"
 """
 WORKFLOW = """name: ci
 on: [pull_request]
@@ -68,6 +73,29 @@ jobs:
     steps:
       - run: echo hi
 """
+QUOTED_KEY = WORKFLOW.replace(
+    "    runs-on: ubuntu-latest\n",
+    '    runs-on: ubuntu-latest\n    "permissions": write-all\n',
+)
+ANCHORED = """name: ci
+on: [pull_request]
+env:
+  GRANT: &grant
+    contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions: *grant
+"""
+FLOW_JOB = """name: ci
+on: [pull_request]
+permissions:
+  contents: read
+jobs:
+  build: {runs-on: ubuntu-latest, steps: [{run: echo hi}]}
+"""
+COMMAND = "---\ndescription: Ship it\nallowed-tools: Bash(git status:*)\n---\nShip the branch.\n"
+AGENT = "---\nname: critic\ndescription: Reads.\ntools: Read, Grep\n---\nYou read.\n"
 BASE = {
     "README.md": "A fixture.\n",
     ".claude/settings.json": SETTINGS,
@@ -78,6 +106,11 @@ BASE = {
     ".github/gates.toml": GATES_TOML,
     ".ci/gate-registry.toml": PROOF_REGISTRY,
     ".github/workflows/ci.yml": WORKFLOW,
+    ".github/workflows/anchored.yml": ANCHORED,
+    ".github/workflows/flow.yml": FLOW_JOB,
+    ".claude/commands/ship.md": COMMAND,
+    ".claude/agents/critic.md": AGENT,
+    "internal/sandbox/toolchain_test.go": "package sandbox\n",
 }
 
 workdir = Path(tempfile.mkdtemp())
@@ -234,6 +267,75 @@ CASES = [
         1,
         ".github/workflows/release.yml changes a workflow token's permissions",
     ),
+    # A workflow is read by lines, so a form the block reader does not parse is named.
+    (
+        "a quoted job-level permissions key added",
+        {".github/workflows/ci.yml": QUOTED_KEY},
+        1,
+        "permissions-diff: .github/workflows/ci.yml changes a workflow token's permissions: line 8 holds `permissions` outside a plain permissions: key",
+    ),
+    (
+        "a quoted job-level permissions key removed, a narrowing, is still named",
+        {".github/workflows/ci.yml": WORKFLOW},
+        1,
+        "base line 8 holds `permissions` outside a plain permissions: key",
+        "base",
+        {**BASE, ".github/workflows/ci.yml": QUOTED_KEY},
+    ),
+    (
+        "an escaped job-level key added",
+        {
+            ".github/workflows/ci.yml": WORKFLOW.replace(
+                "    runs-on: ubuntu-latest\n",
+                '    runs-on: ubuntu-latest\n    "permi\\u0073sions": write-all\n',
+            )
+        },
+        1,
+        "line 8 spells an escaped key, which the block reader does not parse",
+    ),
+    (
+        "an explicit job-level key",
+        {
+            ".github/workflows/ci.yml": WORKFLOW.replace(
+                "    runs-on: ubuntu-latest\n", "    ? runs-on\n    : ubuntu-latest\n"
+            )
+        },
+        1,
+        "line 7 spells an explicit key, which the block reader does not parse",
+    ),
+    (
+        "the mapping an anchor names edited",
+        {
+            ".github/workflows/anchored.yml": ANCHORED.replace(
+                "contents: read", "contents: write"
+            )
+        },
+        1,
+        ".github/workflows/anchored.yml changes a workflow token's permissions: the file uses a YAML anchor or alias (base line 4), so any edit may change a token's permissions",
+    ),
+    (
+        "a flow-style job mapping gains permissions",
+        {
+            ".github/workflows/flow.yml": FLOW_JOB.replace(
+                "runs-on: ubuntu-latest,",
+                "runs-on: ubuntu-latest, permissions: write-all,",
+            )
+        },
+        1,
+        ".github/workflows/flow.yml changes a workflow token's permissions: base line 6 opens a flow mapping, which the block reader does not parse; line 6 holds `permissions` outside a plain permissions: key",
+    ),
+    (
+        "a flow-style job mapping edited",
+        {".github/workflows/flow.yml": FLOW_JOB.replace("echo hi", "echo bye")},
+        1,
+        ".github/workflows/flow.yml changes a workflow token's permissions: base line 6 opens a flow mapping, which the block reader does not parse; line 6 opens a flow mapping",
+    ),
+    (
+        "a quoted step that holds a hash and no key",
+        {".github/workflows/ci.yml": WORKFLOW.replace("echo hi", 'echo "a # b"')},
+        0,
+        "none on the protected surface",
+    ),
     (
         "a ruleset",
         {".github/ruleset-main.json": '{"enforcement": "disabled"}\n'},
@@ -269,7 +371,7 @@ CASES = [
             )
         },
         1,
-        ".ci/gate-registry.toml changes the gate proof's Security rows: row 'secret-scan' changed (red)",
+        ".ci/gate-registry.toml changes the gate proof's security rows: row 'secret-scan' changed (red)",
     ),
     (
         "a Security row moved off the Security surface",
@@ -284,6 +386,128 @@ CASES = [
                 '"PR checks"\nred = "echo red"', '"PR checks"\nred = "true"'
             )
         },
+        0,
+        "none on the protected surface",
+    ),
+    (
+        "a security row registered under another surface deleted",
+        {".ci/gate-registry.toml": PROOF_REGISTRY.rsplit("\n\n", 1)[0] + "\n"},
+        1,
+        ".ci/gate-registry.toml changes the gate proof's security rows: row 'workflow-zizmor' deleted",
+    ),
+    (
+        "the tool rows' pins",
+        {"run/tool-gates.py": "PINS = {}\n"},
+        1,
+        "permissions-diff: run/tool-gates.py changes the tool rows' pins and flags",
+    ),
+    (
+        "the pull request text pattern set",
+        {"run/pr-text.py": "RULES = []\n"},
+        1,
+        "permissions-diff: run/pr-text.py changes the pull request text pattern set",
+    ),
+    (
+        "the licence row",
+        {"run/licence.py": "ALLOWED = None\n"},
+        1,
+        "permissions-diff: run/licence.py changes the licence row",
+    ),
+    (
+        "the licence policy",
+        {".github/licence-policy.toml": '[allowed]\nids = ["GPL-3.0-only"]\n'},
+        1,
+        "permissions-diff: .github/licence-policy.toml changes the licence policy and its declarations",
+    ),
+    (
+        "a zizmor configuration in the tree",
+        {".github/zizmor.yml": "rules: {}\n"},
+        1,
+        "permissions-diff: .github/zizmor.yml changes a tool's in-tree configuration",
+    ),
+    (
+        "an actionlint configuration in the tree",
+        {".github/actionlint.yaml": "paths: {}\n"},
+        1,
+        "permissions-diff: .github/actionlint.yaml changes a tool's in-tree configuration",
+    ),
+    (
+        "an osv-scanner configuration beside a lockfile",
+        {"web/osv-scanner.toml": "[[IgnoredVulns]]\n"},
+        1,
+        "permissions-diff: web/osv-scanner.toml changes a tool's in-tree configuration",
+    ),
+    (
+        "an MCP server configuration",
+        {".mcp.json": '{"mcpServers": {}}\n'},
+        1,
+        "permissions-diff: .mcp.json changes an agent's MCP servers",
+    ),
+    (
+        "a command's allowed tools widened",
+        {".claude/commands/ship.md": COMMAND.replace("Bash(git status:*)", "Bash(*)")},
+        1,
+        "permissions-diff: .claude/commands/ship.md changes a command's tool grants: a front matter key that can grant authority changed",
+    ),
+    (
+        "a command's description and body edited",
+        {
+            ".claude/commands/ship.md": COMMAND.replace(
+                "Ship it", "Ship the branch"
+            ).replace("Ship the branch.", "Push it.")
+        },
+        0,
+        "none on the protected surface",
+    ),
+    (
+        "an agent's tools widened",
+        {".claude/agents/critic.md": AGENT.replace("Read, Grep", "Read, Grep, Bash")},
+        1,
+        "permissions-diff: .claude/agents/critic.md changes an agent's tool grants",
+    ),
+    (
+        "an agent given a permission mode",
+        {
+            ".claude/agents/critic.md": AGENT.replace(
+                "---\nYou", "permissionMode: bypassPermissions\n---\nYou"
+            )
+        },
+        1,
+        ".claude/agents/critic.md changes an agent's tool grants",
+    ),
+    (
+        "an agent's front matter left unclosed",
+        {".claude/agents/critic.md": AGENT.replace("---\nYou", "You")},
+        1,
+        ".claude/agents/critic.md changes an agent's tool grants: .claude/agents/critic.md: its front matter is not closed by a --- line",
+    ),
+    (
+        "a new skill granting tools",
+        {
+            ".claude/skills/deploy/SKILL.md": "---\nname: deploy\nallowed-tools: Bash\n---\nDeploy.\n"
+        },
+        1,
+        ".claude/skills/deploy/SKILL.md changes a skill's tool grants",
+    ),
+    (
+        "a deployed agent copy's tools widened",
+        {
+            "system-maintenance/claude-code/config/agents/critic.md": AGENT.replace(
+                "Grep", "Bash"
+            )
+        },
+        1,
+        "system-maintenance/claude-code/config/agents/critic.md changes an agent's tool grants",
+    ),
+    (
+        "the worker sandbox's toolchain reads",
+        {"internal/sandbox/toolchain.go": "package sandbox\n"},
+        1,
+        "permissions-diff: internal/sandbox/toolchain.go changes what the worker sandbox grants: the source changed",
+    ),
+    (
+        "a worker sandbox test",
+        {"internal/sandbox/toolchain_test.go": "package sandbox\n\nfunc init() {}\n"},
         0,
         "none on the protected surface",
     ),
