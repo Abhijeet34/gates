@@ -1,0 +1,13 @@
+defect = "A GPL-3.0-only crate comes into the Apache-2.0 project's desktop build (report R3: Cargo.lock was the lockfile the row did not read)."
+[[seed]]
+path = "src-tauri/Cargo.toml"
+lines = [9, 9]
+[[seed]]
+path = "src-tauri/Cargo.lock"
+lines = [5, 8]
+[[seed]]
+path = "src-tauri/vendor/diff3-sync/Cargo.toml"
+lines = [6, 6]
+[[seed]]
+path = "src-tauri/src/main.rs"
+lines = [1, 1]

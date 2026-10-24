@@ -1,0 +1,10 @@
+defect = "A GPL-3.0-or-later package comes into the Apache-2.0 project through a pnpm workspace (report R3: pnpm-lock.yaml was the lockfile the row did not read)."
+[[seed]]
+path = "scripts/release-notes/package.json"
+lines = [9, 9]
+[[seed]]
+path = "scripts/release-notes/pnpm-lock.yaml"
+lines = [23, 24]
+[[seed]]
+path = "scripts/release-notes/index.js"
+lines = [2, 2]
