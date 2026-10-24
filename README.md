@@ -10,9 +10,10 @@ Licensed under the Apache License 2.0; see `LICENSE` and `NOTICE`.
 | --- | --- |
 | `.githooks/pre-push`, `.gitleaks.toml` | The repository-local secret gate and the canonical rules. Callers also receive `system-maintenance/git-hooks/commit-msg` as `.githooks/commit-msg`. Callers carry byte copies, distributed by `.ci/gitleaks/sync.sh`, and extend the gate through a tracked, executable `.githooks/pre-push.local`, which it runs last. |
 | `system-maintenance/git-hooks/` | The machine-wide hooks deployed to `~/.git-hooks` by `install.sh`, including the watermark, exposure and signature gates, which its pre-push runs concurrently. Its `README.md` owns the design and the measurements. |
-| `.github/workflows/shared-*.yml` | Reusable workflows: `secret-scan`, `watermark-scan`, `dependency-advisories`, `guard-generated-files`, `no-mistakes-required`, `instruction-truth`, `fakes-smoke`. Each is a bootstrap; see "Pinning". |
+| `.github/workflows/shared-*.yml` | Reusable workflows: `secret-scan`, `watermark-scan`, `dependency-advisories`, `guard-generated-files`, `no-mistakes-required`, `instruction-truth`, `fakes-smoke`, `gate-shadow`. Each is a bootstrap; see "Pinning". |
 | `run/` | What each bootstrap runs from the locked gates commit: `lock.sh`, which decides that commit, and one script per gate. |
-| `run/gate.py` | The gate runner: selects a repository's gates from its `.github/gates.toml` (absent here) and the diff, keys each verdict by the gate's inputs, records verdicts and folds them with review and docs verdicts, and keeps a shadow row from blocking until it earns promotion; its docstring owns the contract. No workflow calls it yet. |
+| `run/gate.py` | The gate runner: selects a repository's gates from its `.github/gates.toml` and the diff, keys each verdict by the gate's inputs, records verdicts and folds them with review and docs verdicts, and keeps a shadow row from blocking until it earns promotion; its docstring owns the contract. `gate-shadow.yml` runs it in shadow on this repository; see "The shadow job". |
+| `run/gate-shadow.sh` | The shadow job's script: runs the runner and its fold on the caller's checkout, writes `shadow-verdict.txt`, and exits 0 whatever the gates decided; see "The shadow job". |
 | `run/permissions-diff.py` | The permissions-diff gate over the protected surface; see "The permissions-diff gate". |
 | `run/docs-truth.py`, `.github/docs.toml` | The four document rules (owner and reader, commands, byte budget, em dash) and this repository's own owner and reader list; see "The documentation rows". |
 | `run/tool-gates.py`, `policy/` | The pinned-tool gates (zizmor, actionlint, offline OSV-Scanner) and the gates-owned configuration they read instead of the tree's; see "The tool rows". |
@@ -1440,6 +1441,30 @@ On quoth's tree (2026-10-24) the row reads all 612 crates of `apps/desktop/src-t
 `.ci/test-licence.py` runs each rule with its control removed, folds the row above to `shadow` under `run/gate.py` and shows an unrelated change leaves it unselected, and runs the corpus check.
 The gates-proof rows are `licence-refused`, `licence-review` and `licence-vendored`.
 No workflow calls `run/licence.py` or `run/corpus.py`: a step is the maintainer's weekly batch.
+
+## The shadow job
+
+`shared-gate-shadow.yml` runs a caller's `.github/gates.toml` through `run/gate.py` beside the caller's own check jobs and records what the runner decides, so the 14-day comparison of plan row P3a-M6 can be read later.
+It gates nothing, in three places:
+
+- `run/gate-shadow.sh` exits 0 whatever `run` and `fold` returned, and writes the outcome as `verdict=` in `shadow-verdict.txt`: `clear`, `shadow-red` (a shadow row failed), `refused` (a blocking row failed) or `undecided` (no registry, a bad one, a base that is not in the checkout).
+- The runner step is `continue-on-error`.
+- A caller keeps its shadow job out of the `needs` of its required status: `needs` reaches only jobs of the same file, so a caller puts the call in its own workflow file, as `gate-shadow.yml` does here.
+
+Each run uploads `$RUNNER_TEMP/gate-shadow` as the artifact `gate-shadow-<run id>-<attempt>`: `records.jsonl`, the logs, `fold.txt` and `shadow-verdict.txt`, which names the head.
+The comparison is a head-by-head read of those artifacts against the caller's check runs on the same head; agreement on 99% of heads, and no head where the shadow was `clear` and an existing job failed as a defect, are the acceptance lines of study g1's M6.
+
+The rows run on a stock `ubuntu-24.04` runner with `bash`, `git` and `python3` and nothing installed.
+A row that needs another tool declares it under `tools`, and the runner records an `error` for it where the tool is absent; the bootstrap installs none, so a caller's tool-heavy jobs wait for an install step that this window does not add.
+This repository's rows are the slice of ci.yml's `shell` job that needs only those three.
+
+**Planted failure.**
+`.ci/test-gate-shadow.py` plants a row that exits 1 in a fixture caller and runs the script under `bash -e`.
+The script exits 0 and the record is `fail`; against a copy that propagates the runner's status, the same case fails.
+A required check cannot go red from this job in any case, because the ruleset requires `checks` alone and `checks` needs only the jobs of `ci.yml`.
+
+**Workflow files** (for the weekly batch): `.github/workflows/shared-gate-shadow.yml` and `.github/workflows/gate-shadow.yml`.
+The other seven repositories each add one caller workflow file and a `.github/gates.toml` as a follow-up; none is changed here.
 
 ## Using the hooks on a machine
 
