@@ -15,6 +15,7 @@ it exists for removed, so a case that would pass without its control is refused.
 import json
 import os
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -76,8 +77,8 @@ class Fixture:
             raise RuntimeError(f"{argv}: {proc.stdout}{proc.stderr}")
         return proc.stdout
 
-    def review(self, author="claude-opus-5-5", gate="code-review", size=None):
-        env = {**ENV, "PATH": f"{self.stub}:{ENV['PATH']}"}
+    def review(self, author="claude-opus-5-5", gate="code-review", size=None, **over):
+        env = {**ENV, "PATH": f"{self.stub}:{ENV['PATH']}", **over}
         which = ["--class", size] if size else ["--gate", gate]
         proc = subprocess.run(
             [sys.executable, str(self.script), *which, "--base", "base",
@@ -86,8 +87,8 @@ class Fixture:
         )  # fmt: skip
         return proc.returncode, proc.stdout + proc.stderr
 
-    def route(self, size="medium", author="claude-opus-5-5"):
-        return self.review(author=author, size=size)
+    def route(self, size="medium", author="claude-opus-5-5", **over):
+        return self.review(author=author, size=size, **over)
 
     def fold(self):
         proc = subprocess.run(
@@ -321,6 +322,60 @@ def reproduction_gets_allowlisted_env(script):
     return why
 
 
+def probed(script, probe, **over):
+    """(fixture, review result, what the reproducing `probe(fixture)` printed to the verifier)."""
+    f = Fixture(script)
+    f.reply("finder", {"findings": [finding(reproduce=probe(f))]})
+    f.reply(
+        "verifier-F1", {"reproduced": False, "reason": "no"}, model="claude-opus-5-5"
+    )
+    result = f.review(**over)
+    calls = f.calls()
+    return f, result, calls[-1]["prompt"] if calls else ""
+
+
+def reproduction_reads_no_home(script):
+    home = Path(tempfile.mkdtemp(dir=workdir))
+    (home / "secret").write_text(PLANTED)
+    probe = f'cat "{home}/secret" && echo read=open || echo "read=""denied"; exit 1'
+    _, result, seen = probed(script, lambda f: probe, HOME=str(home))
+    why = expect("a probe of the user's home", result, 0, "downgraded")
+    if not why and (PLANTED in seen or "read=denied" not in seen):
+        why = f"the reproducing command read the user's home: {seen[-300:]}"
+    return why
+
+
+def reproduction_cannot_write_store(script):
+    def probe(f):
+        store = f.store / "records.jsonl"
+        return f'echo forged >> "{store}" && echo write=open || echo "write=""denied"; exit 1'
+
+    f, result, seen = probed(script, probe)
+    why = expect("a probe of the verdict store", result, 0, "downgraded")
+    if why:
+        return why
+    # The record quotes the probe, so only a line the probe wrote whole is a forgery.
+    if "forged" in (f.store / "records.jsonl").read_text().splitlines() or (
+        "write=denied" not in seen
+    ):
+        return f"the reproducing command wrote to the verdict store: {seen[-300:]}"
+    return None
+
+
+def reproduction_has_no_network(script):
+    with socket.create_server(("127.0.0.1", 0)) as server:
+        port = server.getsockname()[1]
+        connect = f"import socket; socket.create_connection(('127.0.0.1', {port}), 5)"
+        probe = (
+            f'python3 -c "{connect}" && echo net=open || echo "net=""denied"; exit 1'
+        )
+        _, result, seen = probed(script, lambda f: probe)
+    why = expect("a probe of the network", result, 0, "downgraded")
+    if not why and "net=denied" not in seen:
+        why = f"the reproducing command reached the network: {seen[-300:]}"
+    return why
+
+
 def seats_sit_fresh_and_bare(script):
     f = Fixture(script)
     f.reply("finder", {"notes": "SENTINEL-REASONING", "findings": [
@@ -355,7 +410,7 @@ def seats_sit_fresh_and_bare(script):
     return None
 
 
-def independence_labels(script):
+def independence_labels(script, family_cases=False):
     def seats(author, reviewers=None, finder_model="claude-sonnet-5-5"):
         f = Fixture(script)
         if reviewers:
@@ -374,12 +429,35 @@ def independence_labels(script):
         ("unknown", None, "claude-sonnet-5-5", {"author": "context-only"}),
         ("claude-opus-5-5", ["claude-opus-5-5"], "claude-opus-5-5", {"author": "context-only"}),
     ]  # fmt: skip
+    # A dated or provider-prefixed id is the same family as the bare one.
+    family = [
+        ("claude-opus-5-5-20261001", ["claude-opus-5-5", "claude-sonnet-5-5"], "claude-sonnet-5-5", {"author": "cross-model"}),
+        ("us.anthropic.claude-opus-5-5-v1:0", ["claude-opus-5-5"], "claude-opus-5-5", {"author": "context-only"}),
+    ]  # fmt: skip
+    cases += family if family_cases else []
     for author, reviewers, model, label in cases:
         rc, out, sat = seats(author, reviewers, model)
         got = [(s["model"], s["independence"]) for s in sat]
         if rc != 0 or got != [(model, label)]:
             return f"author {author}, reviewers {reviewers}: wanted {[(model, label)]}, got {got} (exit {rc}):\n{out}"
     return None
+
+
+def independence_by_family(script):
+    return independence_labels(script, family_cases=True)
+
+
+def unnamed_model_errors(script):
+    f = Fixture(script)
+    f.reply("finder", {"findings": []})
+    path = f.stub / "replies/finder.json"
+    env = json.loads(path.read_text())
+    del env["modelUsage"]
+    path.write_text(json.dumps(env))
+    return expect(
+        "a finder reply naming no model", f.review(), 2,
+        "asked claude-sonnet-5-5 but was answered by no named model",
+    )  # fmt: skip
 
 
 def fallback_model_errors(script):
@@ -672,6 +750,25 @@ def trivial_runs_no_review(script):
     return None
 
 
+def trivial_claim_without_router_errors(script):
+    f = Fixture(script)
+    found = [
+        d for d in ENV["PATH"].split(os.pathsep) if d and shutil.which("claude", path=d)
+    ]
+    path = os.pathsep.join(d for d in ENV["PATH"].split(os.pathsep) if d not in found)
+    why = expect(
+        "a trivial claim with no claude on PATH", f.route(size="trivial", PATH=path), 2,
+        "review: route: the router gave no usable route: claude is not on PATH",
+        "review: code-review: error: not convened: the change is declared trivial"
+        " and no router answer confirmed it",
+    )  # fmt: skip
+    if not why and f.latest()["verdict"] != "error":
+        why = f"an unconfirmed trivial claim was recorded as {f.latest()}"
+    if not why and f.calls():
+        why = f"a seat sat with no claude on PATH: {f.calls()}"
+    return why
+
+
 def held_verdict_not_covered(script):
     f = Fixture(script)
     if f.review()[0] != 1:
@@ -935,8 +1032,14 @@ CASES = [
     (seats_get_no_credentials, "the credential scrub", "if k.startswith(keep) or not any(w in k.upper() for w in SECRET_WORDS)", "if True"),
     (reproduction_gets_allowlisted_env, "the reproduction's environment allowlist", "if k in REPRODUCE_ENV or k.startswith(\"LC_\")", "if True"),
     (seats_sit_fresh_and_bare, "a toolless seat", '"--tools", "", ', ""),
-    (independence_labels, "the context-only label", 'return "cross-model" if other != "unknown" and model != other', 'return "cross-model" if model != other'),
-    (fallback_model_errors, "the served-model check", "    if served and served != [model]:\n", "    if False:\n"),
+    (independence_labels, "the context-only label", 'if other != "unknown" and family(model) != family(other)', 'if family(model) != family(other)'),
+    (fallback_model_errors, "the served-model check", "    if served != [model]:\n", "    if False:\n"),
+    (unnamed_model_errors, "a reply that names no model", "    if served != [model]:\n", "    if served and served != [model]:\n"),
+    (independence_by_family, "comparing models by family", "    return next((word for word in RANK if word in low), low)\n", "    return model\n"),
+    (reproduction_reads_no_home, "the user's home hidden from a reproduction", "    hidden = sorted(\n", "    hidden = [] and sorted(\n"),
+    (reproduction_cannot_write_store, "a reproduction writing only its own directories", "for p in (tree, home, tmp)]", 'for p in (tree, home, tmp, "/")]'),
+    (reproduction_has_no_network, "a reproduction with no network", "    network = False\n", "    network = True\n"),
+    (trivial_claim_without_router_errors, "an unconfirmed trivial claim recorded as error", 'verdict = "error" if entry.get("unconfirmed") else "pass"', 'verdict = "pass"'),
     (unreadable_finding_errors, "a finding's severity is checked", 'and f.get("severity") in SEVERITIES', ""),
     (bad_row_errors, "the row's budget is checked", "and all(type(v) is int and v > 0 for v in extra.values())", ""),
     (check_row_never_reviewed, "only a review row is reviewed", ' or row["kind"] != "review"', ""),

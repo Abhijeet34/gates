@@ -1006,7 +1006,8 @@ shadow_since = 2026-10-19
 `lens`, `reviewers` and `budget` are accepted on a review row only; `run/gate.py` refuses them on any other row as unknown keys.
 
 **Independence.**
-The finder is the first of `reviewers` that differs from `--author`, and the verifier the first that differs from the finder, preferring one that differs from the author too.
+The finder is the first of `reviewers` of another family than `--author`, and the verifier the first of another family than the finder, preferring one of another family than the author too.
+A family is the `haiku`, `sonnet`, `opus` or `fable` an id names, so a dated or provider-prefixed Opus id is Opus.
 The list above gives the plan's pairing: Sonnet reviews Opus and Fable work, Opus reviews Sonnet work, and the verifier sits on "the other model" (r5, "The council").
 
 - Context is enforced, not graded. Each seat is a fresh `claude -p` with `--no-session-persistence`, `--tools ""`, `--strict-mcp-config`, `--setting-sources ""` and the review's own `--system-prompt`, run in an empty directory, so no instruction file, hook or saved session reaches it.
@@ -1014,9 +1015,9 @@ The list above gives the plan's pairing: Sonnet reviews Opus and Fable work, Opu
 - The finder reads the change and the check records of the head; the change is the paths the row's inputs match plus the paths no row claims, as selection reads them.
   The verifier reads the change, the check records, one finding and the output of its reproducing command (r4 7.3: "given only the diff, the finding and the check results").
   Neither sees a transcript, and the verifier never sees the finder's reply or its other findings.
-- Model is a label recorded per seat: `cross-model` when the model ids differ, `context-only` when they match or the author is `unknown`, never silently as if independent (r5, "Who reviews whom").
+- Model is a label recorded per seat: `cross-model` when the families differ, `context-only` when they match or the author is `unknown`, never silently as if independent (r5, "Who reviews whom").
   With one vendor, `cross-model` is still one family, whose judges share errors (r4 7.1: judge scores correlate with error similarity at about r 0.84), so no label claims family independence; a second vendor's seat would add one.
-- A seat answered by a model other than the one it asked, per the reply's `modelUsage`, is an `error`, because a fallback model would make its label false.
+- A seat answered by a model other than the one it asked, per the reply's `modelUsage`, is an `error`, because a fallback model would make its label false; a reply whose `modelUsage` names no model is one too.
 
 **Budgets.**
 Per seat: 60,000 input and 4,000 output tokens, read from the CLI's reported usage with cache reads and writes counted as input (r4 7.1 and 7.3 price a review at "60k-in, 4k-out").
@@ -1029,13 +1030,15 @@ Output tokens include thinking, so the 4,000 is the figure to watch once a large
 Only an `error` finding can block (report 3.1: a review blocks only on an error-class finding), and it blocks only when all three steps hold:
 
 1. its `quote` equals line `line` of `path` at the head, both trimmed;
-2. its `reproduce` command, run as `bash -e` at the root of a fresh `git archive` of the head, with every credential-named variable removed and an empty `HOME`, exits non-zero and not 126 or 127;
+2. its `reproduce` command, run as `bash -e` at the root of a fresh `git archive` of the head, with an allowlisted environment, an empty `HOME` and its own `TMPDIR`, inside a sandbox, exits non-zero and not 126 or 127;
 3. a verifier session answers `"reproduced": true` to the finding and that output.
 
 A finding that fails a step stays in the record with `blocks: false` and a `downgraded` reason naming the step, and is printed; it is never dropped.
 A step that cannot decide within the pass's budget makes the review an `error`.
 Running the command at the base too was rejected: a defect in a new file fails there as well, so the rule would downgrade every real finding in new code.
-The command runs the change's code with the runner's privileges, as the change's own tests do; the scrubbed environment and the empty `HOME` keep it off the machine's GitHub and model logins.
+The command runs the change's code, so it runs sandboxed: no network, no read of anything under the user's home but its own directories, and writes only to the export, its `HOME` and its `TMPDIR`, so it can neither reach a login nor append a record to the store.
+The sandbox is macOS's `sandbox-exec`, or bubblewrap (`bwrap`) elsewhere; a host with neither, or one where it cannot start (inside another `sandbox-exec`, or on Ubuntu 24.04 with its default AppArmor limit on user namespaces), makes the review an `error`, never an unconfined run, since a sandbox that fails to start exits non-zero as a reproduction would.
+A tool installed under the user's home is therefore out of a reproduction's reach. `ci.yml` installs bubblewrap and lifts that AppArmor limit on its throwaway runners for the suites that reproduce.
 
 **The harness.**
 Models are called only through `claude -p`, and only after `claude auth status` reports `claude.ai` or `oauth_token` on `firstParty`, so an API key login is refused before any seat sits.
@@ -1058,6 +1061,7 @@ A rule sets the floor the router cannot go under, so a router that skips a requi
 
 A floor row the router left out sits anyway and prints as `route: ID sits: the router skipped it; convened by the rule: WHY`, and its record's route says `router_skipped`.
 When the router is unavailable (the login is refused, it times out at 60 s, breaks the token budget, is answered by another model, or answers with no class, no list or a row the registry does not have), the floor alone routes and the record names why.
+A `trivial` class is the caller's word, and its floor seats nothing, so with no usable router answer to confirm it every selected review row is recorded `error`: `not convened: the change is declared trivial and no router answer confirmed it`.
 A row the router adds whose inputs the change misses reads the whole change.
 A review row `run/gate.py` selects that does not sit is recorded as a `pass` naming why, `not convened: a trivial change runs no review` say, unless it already holds a record for the head, so a route never covers an earlier fail.
 `gate.py fold` folds every review row with a record for the head, selected or not, so a block on a row only the router convened is never dropped.
@@ -1095,7 +1099,7 @@ No case calls a model.
 `replies/unreproduced` is the real envelope from the guard fixture, where the real finder found nothing, with a false alarm written into `result`, because a model's false alarm cannot be captured on demand; its router reply is real.
 `replies/escalated` holds a real Opus finder and a real Opus adjudicator on the floor fixture, around a Sonnet verifier's dissent written into a real envelope; the adjudicator, shown that dissent, answered that the zero guard "fires only when whole == 0 and whole is 2 here".
 `replies/router-skips.json` and `replies/adjudicator-clears.json` write a skip and a clearing answer into those real envelopes.
-The gates-proof rows are `review-verifier` (reproduced and refused, against unreproduced and downgraded), `review-budget`, `review-harness`, `review-router` (a router skipping the required row on the floor change, caught and refused, against the real route of the guard change) and `review-veto` (an adjudicator upholding over the verifier's dissent, against one clearing it).
+The gates-proof rows are `review-verifier` (reproduced and refused, against unreproduced and downgraded), `review-budget`, `review-harness`, `review-router` (a router skipping the required row on the floor change, caught and refused, against the real route of the guard change), `review-trivial` (a trivial claim no router confirms, refused, against one the router confirms) and `review-veto` (an adjudicator upholding over the verifier's dissent, against one clearing it).
 No workflow calls `run/review.py`; wiring it beside the runner waits for the maintainer's weekly batch.
 
 ## The seeded corpus

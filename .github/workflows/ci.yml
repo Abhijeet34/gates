@@ -43,6 +43,12 @@ jobs:
       - name: Install the watermark gate's inspector
         run: sudo apt-get update && sudo apt-get install -y libimage-exiftool-perl
 
+      # run/review.py's reproduction sandbox (bwrap) needs the user namespaces Ubuntu 24.04 restricts.
+      - name: Install the review verifier's sandbox
+        run: |
+          sudo apt-get install -y bubblewrap
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
       # `.ci/test-mutation.py --real` puts run/mutation.py to the pinned tools
       # on its fixtures only. Stryker 10 needs Node 22, and the runner's cargo
       # is its Rust toolchain. A full run over a real code base is the caller's
@@ -142,6 +148,12 @@ jobs:
 
       - name: Install the watermark gate's inspector
         run: sudo apt-get update && sudo apt-get install -y libimage-exiftool-perl
+
+      # run/review.py's reproduction sandbox (bwrap) needs the user namespaces Ubuntu 24.04 restricts.
+      - name: Install the review verifier's sandbox
+        run: |
+          sudo apt-get install -y bubblewrap
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
       - run: .ci/check.sh gates-proof
 
