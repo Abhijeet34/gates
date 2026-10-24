@@ -1470,6 +1470,26 @@ clean = '''mkdir repo && (cd repo && bash "$ROOT/.ci/fixtures/review/build.sh" -
 run = 'cd repo && PATH="$PWD/.stub:$PATH" python3 "$GATE" --class medium --base base --author claude-opus-5-5 --store ../store'
 finding = "review: route: code-review sits: the router skipped it; convened by the rule: calc.py is under its inputs"
 
+# A caller's trivial class seats no review, so it stands only once a router
+# confirms it: red, the router has no reply; clean, it answers trivial.
+[[gate]]
+id = "review-trivial"
+surface = "Code review"
+gates = ["run/review.py"]
+test = ".ci/test-review.py"
+suite = "shell"
+command = "run/review.py"
+red = '''
+mkdir repo && (cd repo && bash "$ROOT/.ci/fixtures/review/build.sh" --replies reproduced floor)
+rm repo/.stub/replies/router.json
+'''
+clean = '''
+mkdir repo && (cd repo && bash "$ROOT/.ci/fixtures/review/build.sh" --replies reproduced floor)
+cp "$ROOT/.ci/fixtures/review/replies/router-skips.json" repo/.stub/replies/router.json
+'''
+run = 'cd repo && PATH="$PWD/.stub:$PATH" python3 "$GATE" --class trivial --base base --author claude-opus-5-5 --store ../store'
+finding = "review: code-review: error: not convened: the change is declared trivial and no router answer confirmed it"
+
 # The veto: a Sonnet verifier's dissent escalates to Opus, whose real reply upholds
 # the finding; clean, the same seat clears it, written into that envelope.
 [[gate]]
