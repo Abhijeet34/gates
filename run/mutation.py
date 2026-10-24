@@ -33,6 +33,9 @@ dirty-tree        tracked files under D differ from HEAD, so the tree the tool
                   mutates is not the change being judged.
 baseline-failed   the tests fail with no mutant applied, so no survivor means anything.
 tool-error        git or the tool failed, timed out, or wrote no report.
+nothing-mutated   the change adds code the tool mutates (a line that is not blank, not a
+                  comment and, in Rust, not inside the `#[cfg(test)]` module) and it tested no
+                  mutant, so no survivor means nothing.
 
 The pins live in PINS and nowhere else; a TypeScript package carries the same
 versions as exact devDependencies, because Stryker loads its runner and vitest
@@ -41,6 +44,7 @@ from the package it runs in.
 
 import argparse
 import collections
+import importlib.util
 import io
 import json
 import re
@@ -50,6 +54,10 @@ import sys
 import tarfile
 import tempfile
 from pathlib import Path
+
+# Loading slop-rules.py would leave run/__pycache__ in the gates checkout, where
+# the gate proof reads every file under run/ as a gate.
+sys.dont_write_bytecode = True
 
 PINS = {
     "cargo-mutants": "27.1.0",
@@ -64,6 +72,8 @@ TEST_NAME = re.compile(
     r"(?:^|/)(?:test[_-][^/]*|[^/]*[_.-](?:test|spec)\.\w+)$|(?:^|/)(?:tests?|__tests__)/"
 )
 FIXTURE_DIR = re.compile(r"(?:^|/)(?:fixtures?|testdata|snapshots?)/")
+CFG_TEST = re.compile(r"^\s*#\[cfg\(test\)\]")
+COMMENT = ("//", "/*", "*")
 TS_SOURCE = (".ts", ".tsx", ".mts", ".cts")
 TS_TESTS = (*TS_SOURCE, ".js", ".jsx", ".mjs", ".cjs")
 
@@ -260,26 +270,49 @@ def weakened(lang, root, base, d):
     return found
 
 
-HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
+def slop_rules():
+    """run/slop-rules.py, which owns reading a change's added lines."""
+    try:
+        spec = importlib.util.spec_from_file_location(
+            "slop_rules", Path(__file__).resolve().parent / "slop-rules.py"
+        )
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module.added_lines
+    except (ImportError, OSError, SyntaxError, AttributeError) as e:
+        raise Refused("tool-error", f"cannot load slop-rules.py: {e}") from e
 
 
 def added_lines(root, base, d):
     """{path under d: set of line numbers the change adds or rewrites}."""
-    found, path = {}, None
-    diff = git(
-        root, "diff", "-U0", "--no-renames", "--no-color", "--no-ext-diff", base, "HEAD"
-    ).decode(errors="replace")
-    for line in diff.splitlines():
-        if line.startswith("+++ "):
-            path = line[6:] if line.startswith("+++ b/") else None
-            if path is not None and not under(path, d):
-                path = None
-            elif path is not None:
-                found[path] = set()
-        elif path is not None and (hunk := HUNK.match(line)):
-            start, count = int(hunk[1]), int(hunk[2] or 1)
-            found[path].update(range(start, start + count))
-    return {p: lines for p, lines in found.items() if lines}
+    flags = ["--no-renames", "--no-color", "--no-ext-diff", base, "HEAD"]
+    names = git(root, "diff", "--raw", "-z", *flags).decode(errors="replace")
+    patch = git(root, "diff", "-U0", *flags).decode(errors="replace")
+    try:
+        found = slop_rules()(names, patch)
+    except ValueError as e:
+        raise Refused("tool-error", str(e)) from e
+    return {p: lines for p, lines in found.items() if lines and under(p, d)}
+
+
+def code_lines(root, lines):
+    """`lines` without a blank or comment-only line and, in a Rust file, any from its first `#[cfg(test)]` on."""
+    kept = {}
+    for rel, numbers in lines.items():
+        text = git(root, "show", f"HEAD:{rel}").decode(errors="replace").splitlines()
+        end = len(text) + 1
+        if rel.endswith(".rs"):
+            end = next((i for i, t in enumerate(text, 1) if CFG_TEST.match(t)), end)
+        code = {
+            n
+            for n in numbers
+            if n < end
+            and text[n - 1].strip()
+            and not text[n - 1].lstrip().startswith(COMMENT)
+        }
+        if code:
+            kept[rel] = code
+    return kept
 
 
 def ranges(lines):
@@ -442,8 +475,12 @@ def run_typescript(pkg, scratch, mutate, keep):
 def diff_run(lang, root, pkg, d, base, scratch, in_place):
     lines = added_lines(root, base, d)
     if lang == "rust":
-        lines = {p: n for p, n in lines.items() if p.endswith(".rs") and not skipped(p)}
-        if not lines:
+        lines = {
+            p: n
+            for p, n in lines.items()
+            if p.endswith(".rs") and not skipped(p) and not TEST_NAME.search(p)
+        }
+        if not code_lines(root, lines):
             return None
         diff = git(
             pkg,
@@ -458,9 +495,10 @@ def diff_run(lang, root, pkg, d, base, scratch, in_place):
             ".",
         ).decode(errors="replace")
         return run_rust(pkg, scratch, diff, in_place)
-    lines = {local(p, d): n for p, n in lines.items() if ts_source(p)}
-    if not lines:
+    lines = {p: n for p, n in lines.items() if ts_source(p)}
+    if not code_lines(root, lines):
         return None
+    lines = {local(p, d): n for p, n in lines.items()}
     mutate = [
         f"{rel}:{a}-{b}" for rel, n in sorted(lines.items()) for a, b in ranges(n)
     ]
@@ -499,6 +537,14 @@ def export(root, rev, into, d, pkg):
     return into
 
 
+def nothing_mutated(lang, tested, d):
+    if tested == 0:
+        raise Refused(
+            "nothing-mutated",
+            f"the {lang} tool tested no mutant of the code under {d} this change touches",
+        )
+
+
 def judge(lang, root, d, base_arg, in_place):
     pkg = (root / d).resolve()
     if not pkg.is_dir() or not (pkg == root or root in pkg.parents):
@@ -528,6 +574,7 @@ def judge(lang, root, d, base_arg, in_place):
                 )
                 return []
             tested, survivors = result
+            nothing_mutated(lang, tested, d)
             found = [label for label, _ in survivors]
             print(
                 f"mutation: {lang}: {tested} mutant(s) of the changed lines under {d}, {len(found)} survived"
@@ -540,6 +587,7 @@ def judge(lang, root, d, base_arg, in_place):
         tested, survivors = full_run(
             lang, root, root, d, scratch / "head", "HEAD", in_place
         )
+        nothing_mutated(lang, tested, d)
         print(
             f"mutation: {lang}: {tested} mutant(s) under {d} at HEAD, {len(survivors)} survived"
         )

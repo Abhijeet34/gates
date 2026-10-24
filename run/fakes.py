@@ -2,8 +2,8 @@
 """Shadow rows over the test doubles a repository uses and what it declares about them.
 
 Usage: fakes.py undeclared [--base B] [root]
-       fakes.py counterpart [root]
-       fakes.py stale [--today YYYY-MM-DD] [root]        (default root: the current directory)
+       fakes.py counterpart [--base B] [root]
+       fakes.py stale [--base B] [--today YYYY-MM-DD] [root]    (default root: the current directory)
        fakes.py compare [--id ID] [--api URL] [--out DIR] [--write] [--today YYYY-MM-DD] [root]
 
 A repository declares every fake, stub, mock or recorded replay its tests use as
@@ -22,6 +22,10 @@ counterpart  A [[fake]] whose `real` file is gone, whose `real` no longer names 
 stale        A [[fake]] whose `recorded` date is more than `max_age_days` (default
              7) before today, or after it, or that carries a `drift` its last
              compare wrote. `--today` fixes today; the default is today in UTC.
+             With `--base`, `counterpart` and `stale` judge the fakes as the base
+             declares them, so a change cannot rewrite what judges it (a base with
+             no `.github/fakes.toml` declares none, and a base of forty zeros reads
+             the working tree).
 compare      Each `[[fake.github]]` replay of a [[fake]] whose recorded reply no
              longer has the shape of a fresh real reply to the same GET request:
              a field added, removed or retyped, or another status. Values are not
@@ -134,13 +138,23 @@ def text(decl, key):
     return value
 
 
-def declarations(root):
+def declaration_text(root, base):
+    """CONFIG at the commit `base`, or in the working tree when there is none; None when absent."""
+    if base in (None, NO_BASE):
+        path = Path(root) / CONFIG
+        return path.read_text() if path.is_file() else None
+    if not LINT.git(root, "ls-tree", "--name-only", base, "--", CONFIG).strip():
+        return None
+    return LINT.git(root, "show", f"{base}:{CONFIG}")
+
+
+def declarations(root, base=None):
     """Each [[fake]], checked; [] when the repository declares none."""
-    path = Path(root) / CONFIG
-    if not path.is_file():
+    body = declaration_text(root, base)
+    if body is None:
         return []
     try:
-        found = tomllib.loads(path.read_text()).get("fake", [])
+        found = tomllib.loads(body).get("fake", [])
     except (tomllib.TOMLDecodeError, UnicodeDecodeError) as e:
         raise Refused("bad-declaration", f"{CONFIG}: {e}") from e
     if not isinstance(found, list) or not all(isinstance(d, dict) for d in found):
@@ -846,10 +860,8 @@ def main():
     ap.add_argument("root", nargs="?", default=".")
     # Plain parse_args consumes the optional root early on Python before 3.12.7 and rejects it after --base.
     args = ap.parse_intermixed_args()
-    if args.base and args.row != "undeclared":
-        ap.error(
-            "--base applies to undeclared only; the other rows read every declaration"
-        )
+    if args.base and args.row not in ("undeclared", "counterpart", "stale"):
+        ap.error("--base applies to undeclared, counterpart and stale only")
     if args.today and args.row not in ("stale", "compare"):
         ap.error("--today applies to stale and compare only")
     own = args.id or args.out or args.write or args.api != API
@@ -872,7 +884,10 @@ def main():
                     base = LINT.git(
                         root, "rev-parse", "--verify", f"{base}^{{commit}}"
                     ).strip()
-            found, clean = ROWS[args.row](root, base, declarations(root), today)
+            # undeclared sweeps every test file when the change edits the declaration,
+            # so it reads the working tree's; the others read the base's.
+            at = None if args.row == "undeclared" else base
+            found, clean = ROWS[args.row](root, base, declarations(root, at), today)
         except LINT.Refused as e:
             raise Refused(e.kind, str(e)) from e
     except Refused as e:

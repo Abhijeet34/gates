@@ -5,6 +5,9 @@ Usage: change-gates.py contracts|migrations|facts [--base B] [root]    (default 
 
 A repository declares what each row judges in `.github/changes.toml` at its
 root; README.md, "The change rows", owns the shape and why it is this shape.
+With a `--base`, `contracts` and `migrations` read the declarations as the base
+has them, so a change cannot rewrite what judges it; `facts` reads the working
+tree's, because the declaration is where a change records its decision.
 `--base` is the commit the change is measured from (`git diff B...HEAD`, and a
 base of forty zeros is the empty tree); `contracts` with a `sources` list and
 `migrations` need it, `facts` uses it to sweep only what the change just
@@ -30,11 +33,14 @@ facts        A `[[fact]]` names an `id`, what is `now` true, the superseded `was
 Exit status: 0 nothing to name, 1 a finding, 2 could not decide. Every exit 2
 prints `change-gates: refused (TYPE): ...`, and TYPE is one of:
 
-undeclared        no `.github/changes.toml`, or none of the table the row judges.
+undeclared        no `.github/changes.toml`, or none of the table the row judges (at the
+                  base, when the row reads the base's).
 bad-declaration   the file does not parse or a table is malformed.
 no-base           a row that compares with a base was given none.
 missing-tool      a declared dry-run command is not on the machine (exit 127).
 tool-error        a declared command timed out, or git failed.
+outside-tree      a snapshot, migration directory or migration is, or sits behind, a
+                  symlink that leaves the tree.
 """
 
 import argparse
@@ -56,6 +62,9 @@ from gate import glob_re  # noqa: E402
 CONFIG = ".github/changes.toml"
 NO_BASE = "0" * 40
 TIMEOUT = 120
+# A declared command is repository code: it gets the program path and locale, and
+# an empty HOME, not the runner's credentials.
+COMMAND_ENV = ("PATH", "LANG", "TERM", "TMPDIR")
 MAX_FILE = 1_000_000
 SQLITE_ATTACH = 24
 
@@ -115,11 +124,23 @@ def read_config(root, table, rev=None):
     return None if text is None else declarations(text, table)
 
 
-def need(root, table):
-    found = read_config(root, table)
+def need(root, table, base=None):
+    """The declarations of `table` at `base`, or in the working tree when there is no commit to read."""
+    rev = None if base in (None, NO_BASE) else base
+    found = read_config(root, table, rev)
     if not found:
-        raise Refused("undeclared", f"{CONFIG} declares no [[{table}]]")
+        where = "" if rev is None else " at the base"
+        raise Refused("undeclared", f"{CONFIG} declares no [[{table}]]{where}")
     return found
+
+
+def inside(root, rel):
+    """`rel` under root, refused when a symlink on its way leaves the tree."""
+    path = Path(root) / rel
+    real = path.resolve()
+    if real != Path(root) and Path(root) not in real.parents:
+        raise Refused("outside-tree", f"{rel} resolves outside the tree, to {real}")
+    return path
 
 
 def strings(decl, key, table, required=True):
@@ -148,15 +169,17 @@ def text_key(decl, key, table, required=True):
 
 
 def run_command(root, command, env=None):
+    kept = {k: v for k, v in os.environ.items() if k in COMMAND_ENV or k[:3] == "LC_"}
     try:
-        proc = subprocess.run(
-            ["bash", "-e", "-c", command],
-            cwd=root,
-            env={**os.environ, **(env or {})},
-            stdin=subprocess.DEVNULL,
-            capture_output=True,
-            timeout=TIMEOUT,
-        )
+        with tempfile.TemporaryDirectory(prefix="change-gates.") as home:
+            proc = subprocess.run(
+                ["bash", "-e", "-c", command],
+                cwd=root,
+                env={**kept, "HOME": home, **(env or {})},
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                timeout=TIMEOUT,
+            )
     except subprocess.TimeoutExpired as e:
         raise Refused("tool-error", f"{command!r} timed out after {TIMEOUT}s") from e
     if proc.returncode == 127:
@@ -169,7 +192,7 @@ def run_command(root, command, env=None):
 
 def contracts(root, base):
     found = []
-    for decl in need(root, "contract"):
+    for decl in need(root, "contract", base):
         cid = text_key(decl, "id", "contract")
         snapshot = text_key(decl, "snapshot", "contract")
         sources, command = decl.get("sources"), decl.get("command")
@@ -178,7 +201,7 @@ def contracts(root, base):
                 "bad-declaration",
                 f"{CONFIG}: [[contract]] {cid!r}: name exactly one of sources and command",
             )
-        shot = Path(root) / snapshot
+        shot = inside(root, snapshot)
         if not shot.is_file():
             found.append(f"contracts: {cid}: the snapshot {snapshot} does not exist")
             continue
@@ -229,7 +252,7 @@ def sqlite_dry_run(root, files):
         try:
             for name in files:
                 try:
-                    db.executescript((Path(root) / name).read_text())
+                    db.executescript(inside(root, name).read_text())
                 except (sqlite3.Error, UnicodeDecodeError) as e:
                     return name, str(e)
         finally:
@@ -245,7 +268,7 @@ def in_folder(path, folder, pattern):
 def migrations(root, base):
     found, ran = [], 0
     changed = changes(root, base)
-    for decl in need(root, "migrations"):
+    for decl in need(root, "migrations", base):
         mid = text_key(decl, "id", "migrations")
         folder = text_key(decl, "dir", "migrations").strip("/")
         pattern = text_key(decl, "pattern", "migrations", required=False) or "*.sql"
@@ -264,10 +287,12 @@ def migrations(root, base):
         if not added or dry_run is None:
             continue
         ran += 1
+        for path in added:
+            inside(root, path)
         if dry_run == "sqlite":
             every = sorted(
                 f"{folder}/{p.name}"
-                for p in (Path(root) / folder).iterdir()
+                for p in inside(root, folder).iterdir()
                 if p.is_file() and fnmatch.fnmatchcase(p.name, pattern)
             )
             name, err = sqlite_dry_run(root, every)
