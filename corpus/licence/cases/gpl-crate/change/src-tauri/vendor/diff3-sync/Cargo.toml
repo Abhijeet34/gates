@@ -1,0 +1,6 @@
+[package]
+name = "diff3-sync"
+version = "0.9.1"
+edition = "2021"
+description = "Three-way text merge"
+license = "GPL-3.0-only"

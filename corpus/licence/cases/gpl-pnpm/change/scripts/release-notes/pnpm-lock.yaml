@@ -1,0 +1,30 @@
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .:
+    dependencies:
+      '@notes/format':
+        specifier: ^2.0.0
+        version: 2.0.0
+      changelog-render:
+        specifier: ^3.0.2
+        version: 3.0.2
+
+packages:
+
+  '@notes/format@2.0.0':
+    resolution: {integrity: sha512-4f1kQm0bV2cJ3wq8XnYt7pR9sL6dHe5uZaG0oKcB1iN2vTxWjM3yPfE8rD7hUqS5lA9gC4zO6bVnYe2tKwXjRg==}
+
+  changelog-render@3.0.2:
+    resolution: {integrity: sha512-9pLr2Vb6tKc0Wq1xYm4dNf8sHj3ZeA7uGo5iCyT2vRkX1lMbP0nEqS6wDhJ4zUaF8gI3oK5cV7tBeY9rLmWxNg==}
+
+snapshots:
+
+  '@notes/format@2.0.0': {}
+
+  changelog-render@3.0.2: {}

@@ -3,12 +3,14 @@
 
 Usage: licence.py [--policy FILE] [root]   (defaults: .github/licence-policy.toml, the current directory)
 
-Every tracked `package-lock.json` and `uv.lock` (none under node_modules) lists
-dependencies, and every tracked file under a `vendored` glob of the policy is
-copied code. Each gets a licence expression: an npm lockfile entry's `license`;
-for a uv.lock package, which records none, the policy's `[declared]` entry; for
-a vendored file, its own `SPDX-License-Identifier` in its first 30 lines, else a
-`[declared]` path entry. README.md, "The licence row", owns the policy's shape.
+Every tracked `package-lock.json`, `uv.lock`, `pnpm-lock.yaml` and `Cargo.lock`
+(none under node_modules) lists dependencies, and every tracked file under a
+`vendored` glob of the policy is copied code. Each gets a licence expression: an
+npm lockfile entry's `license`; a pnpm package's from its installed package.json;
+a crate's from `cargo metadata --offline`; for a uv.lock package, which records
+none, the policy's `[declared]` entry; for a vendored file, its own
+`SPDX-License-Identifier` in its first 30 lines, else a `[declared]` path entry.
+README.md, "The licence row", owns the policy's shape.
 
 The expression is read as SPDX: `OR` takes its best alternative, `AND` its worst
 part, and an id is `allowed`, `review` or `refused` by the list that names it.
@@ -22,7 +24,7 @@ decide. Every exit 2 prints `licence: undecided (TYPE): ...`, and TYPE is one of
 
 bad-policy   the policy is missing, does not parse, or breaks its shape.
 bad-lock     a lockfile does not parse.
-tool-error   git failed, or root is not a git checkout.
+tool-error   git failed, root is not a git checkout, or cargo metadata failed.
 """
 
 import argparse
@@ -41,13 +43,15 @@ import gate  # noqa: E402
 POLICY = ".github/licence-policy.toml"
 LISTS = ("allowed", "review", "refused")
 TABLES = ("declared", "reviewed")
-LOCKS = ("package-lock.json", "uv.lock")
 # A vendored tree carries its licence text in these files; they are the notice, not code.
 NOTICES = re.compile(r"(LICEN[CS]E|COPYING|NOTICE|README)([.-][^/]*)?\Z", re.I)
 HEADER_LINES = 30
 SPDX = re.compile(r"SPDX-License-Identifier:\s*(.+?)\s*(?:\*/|-->|#\}|$)")
 TOKEN = re.compile(r"\(|\)|[^\s()]+")
-KEY = re.compile(r"(npm|uv):[^@\s]+(@\S+)?|path:\S+")
+KEY = re.compile(r"(npm|uv|cargo):[^@\s]+(@\S+)?|path:\S+")
+# A pnpm-lock.yaml `packages:` key: two spaces, then name@version, quoted or not.
+PNPM_KEY = re.compile(r"  ['\"]?/?(@?[^@\s'\"]+)@([^(\s'\":]+)")
+NOT_RECORDED = "no licence recorded; name it under [declared]"
 RANK = {"allowed": 0, "review": 1, "refused": 2}
 
 
@@ -88,7 +92,7 @@ def policy_of(path):
         for key, val in v.items():
             if not KEY.fullmatch(key):
                 problems.append(
-                    f"[{k}] key {key!r} is not npm:NAME, uv:NAME or path:GLOB"
+                    f"[{k}] key {key!r} is not npm:NAME, uv:NAME, cargo:NAME or path:GLOB"
                 )
             if not isinstance(val, str) or not val.strip():
                 problems.append(f"[{k}] {key!r} must name a licence or a reason")
@@ -173,8 +177,8 @@ def licence_field(value):
     return None
 
 
-def npm(path, text):
-    """[(key, version, licence or None)] of an npm lockfile."""
+def npm(root, path, text):
+    """[(key, version, licence or None, why none)] of an npm lockfile."""
     try:
         data = json.loads(text)
         if not isinstance(data, dict):
@@ -198,6 +202,7 @@ def npm(path, text):
                     f"npm:{name}",
                     item.get("version", "?"),
                     licence_field(item.get("license")),
+                    NOT_RECORDED,
                 )
             )
         return out
@@ -206,13 +211,13 @@ def npm(path, text):
     while pending:
         name, item = pending.pop(0)
         if isinstance(item, dict):
-            out.append((f"npm:{name}", item.get("version", "?"), None))
+            out.append((f"npm:{name}", item.get("version", "?"), None, NOT_RECORDED))
             pending.extend((item.get("dependencies") or {}).items())
     return out
 
 
-def uv(path, text):
-    """[(key, version, None)] of a uv lockfile, which records no licence."""
+def uv(root, path, text):
+    """[(key, version, None, why none)] of a uv lockfile, which records no licence."""
     try:
         packages = tomllib.loads(text).get("package", [])
     except tomllib.TOMLDecodeError as e:
@@ -225,8 +230,109 @@ def uv(path, text):
             isinstance(source, dict) and {"editable", "virtual"} & set(source)
         ):
             continue
-        out.append((f"uv:{p.get('name')}", p.get("version", "?"), None))
+        out.append((f"uv:{p.get('name')}", p.get("version", "?"), None, NOT_RECORDED))
     return out
+
+
+def pnpm(root, path, text):
+    """[(key, version, licence or None, why none)] of a pnpm lockfile, read from the installed tree.
+
+    The lockfile records no licence, but `pnpm install` leaves each package's own
+    package.json under node_modules/.pnpm, or under node_modules when hoisted.
+    """
+    version = re.search(r"^lockfileVersion: ['\"]?(\d+)", text, re.M)
+    if not version or version.group(1) not in ("6", "9"):
+        raise Undecided("bad-lock", f"{path}: not a lockfileVersion 6 or 9")
+    section = re.search(r"^packages:[ \t]*\n(.*?)(?=^\S|\Z)", text, re.M | re.S)
+    keys = PNPM_KEY.findall(section.group(1) if section else "")
+    modules = (root / path).parent / "node_modules"
+    installed = {}
+    for manifest in [
+        *modules.glob(".pnpm/*/node_modules/*/package.json"),
+        *modules.glob(".pnpm/*/node_modules/@*/*/package.json"),
+        *modules.glob("*/package.json"),
+        *modules.glob("@*/*/package.json"),
+    ]:
+        # A symlinked directory is a dependency's link to a package listed in its own right.
+        if manifest.parent.is_symlink():
+            continue
+        try:
+            data = json.loads(manifest.read_text())
+        except (OSError, ValueError):
+            continue
+        if isinstance(data, dict):
+            got = (data.get("name"), data.get("version"))
+            installed[got] = licence_field(data.get("license"))
+    out = []
+    for name, ver in dict.fromkeys(keys):
+        if ver == "link":
+            continue
+        if (name, ver) in installed:
+            expr, why = installed[name, ver], "its package.json names no licence"
+        else:
+            expr, why = None, "not installed, so no package.json to read"
+        out.append((f"npm:{name}", ver, expr, f"{why}; name it under [declared]"))
+    return out
+
+
+def cargo(root, path, text):
+    """[(key, version, licence or None, why none)] of a Cargo.lock, read through cargo metadata.
+
+    --offline reads the crates a `cargo fetch --locked` left, so the row makes no
+    network call; --all-features resolves every crate the lockfile lists.
+    """
+    try:
+        locked = tomllib.loads(text).get("package", [])
+    except tomllib.TOMLDecodeError as e:
+        raise Undecided("bad-lock", f"{path}: {e}") from e
+    argv = [
+        "cargo",
+        "metadata",
+        "--offline",
+        "--locked",
+        "--all-features",
+        "--format-version",
+        "1",
+    ]
+    try:
+        proc = subprocess.run(
+            argv, cwd=(root / path).parent, capture_output=True, text=True
+        )
+    except FileNotFoundError as e:
+        raise Undecided("tool-error", f"{path}: cargo metadata: {e}") from e
+    if proc.returncode:
+        last = (proc.stderr.strip().splitlines() or ["no output"])[-1]
+        raise Undecided(
+            "tool-error", f"{path}: cargo metadata exited {proc.returncode}: {last}"
+        )
+    try:
+        crates = {
+            (c["name"], c["version"]): c for c in json.loads(proc.stdout)["packages"]
+        }
+    except (ValueError, KeyError, TypeError) as e:
+        raise Undecided("tool-error", f"{path}: cargo metadata: {e}") from e
+    out = []
+    for p in locked if isinstance(locked, list) else []:
+        # No source is a workspace member or a path dependency: the project's own code.
+        if not isinstance(p, dict) or not p.get("source"):
+            continue
+        crate = crates.get((p.get("name"), p.get("version")))
+        if crate is None:
+            expr, why = None, "not in cargo metadata; name it under [declared]"
+        else:
+            # The legacy `MIT/Apache-2.0` form, which crates.io still serves, means OR.
+            expr = re.sub(r"\s*/\s*", " OR ", crate.get("license") or "") or None
+            why = "its Cargo.toml names no SPDX licence; name it under [declared]"
+        out.append((f"cargo:{p.get('name')}", p.get("version", "?"), expr, why))
+    return out
+
+
+READERS = {
+    "package-lock.json": npm,
+    "uv.lock": uv,
+    "pnpm-lock.yaml": pnpm,
+    "Cargo.lock": cargo,
+}
 
 
 def entry(table, key, version):
@@ -289,17 +395,15 @@ def check(root, policy):
     paths = tracked(root)
     for rel in paths:
         name = rel.rsplit("/", 1)[-1]
-        if name not in LOCKS or "node_modules/" in f"/{rel}":
+        if name not in READERS or "node_modules/" in f"/{rel}":
             continue
         text = (root / rel).read_text(errors="replace")
-        deps = npm(rel, text) if name == "package-lock.json" else uv(rel, text)
-        for key, version, expr in deps:
+        for key, version, expr, missing in READERS[name](root, rel, text):
             judged += 1
             expr = expr or entry(declared, key, version)
             ok = entry(reviewed, key, version)
             line = judge(
-                f"{rel}: {key} {version}", expr, ok, lists,
-                "no licence recorded; name it under [declared]",
+                f"{rel}: {key} {version}", expr, ok, lists, missing
             )  # fmt: skip
             accepted += line is None and ok is not None
             if line:

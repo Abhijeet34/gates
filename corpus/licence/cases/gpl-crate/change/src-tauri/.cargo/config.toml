@@ -1,0 +1,6 @@
+# Built offline from the vendored crates, as `cargo vendor` prints.
+[source.crates-io]
+replace-with = "vendored-sources"
+
+[source.vendored-sources]
+directory = "vendor"

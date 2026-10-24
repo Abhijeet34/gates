@@ -1105,17 +1105,17 @@ Licence and release are `blocks` because their findings refuse or hold the chang
 A `nit` never counts either way: style "never blocks" (r5, the code row), and counting it only on seeds would reward noise.
 A review that could not decide is `undecided`, never a catch and never a clean pass.
 
-**The cases**, one planted defect each, 14 seeded and 14 clean:
+**The cases**, one planted defect each, 16 seeded and 14 clean:
 
 | Lens | Seeded (source) | Clean near misses |
 | --- | --- | --- |
 | design | report 3.2's six: a 1px off-scale `.hw-btn` padding, a removed `aria-label` on an icon-only button, a badge fill at 1.96:1 (white on `#b9b9b9`), a `.hw-row` that stops wrapping and needs 352px so it overlaps at 300px, a literal `#fff`, a "Submit" label | the same files changed rightly: padding moved along the scale, a Cancel button beside a kept label, a badge at 10.25:1, a row that still wraps, a hover colour from a new token, a label naming its outcome |
-| licence | report 3.2's GPL-3.0-only dependency into an Apache-2.0 project, an AGPL-3.0-or-later one, a vendored GPL-2.0-only file, copied MIT code without its notice | an MIT and an Apache-2.0 dependency, an `MIT OR GPL-3.0-only` one, a vendored MIT file with its header |
+| licence | report 3.2's GPL-3.0-only dependency into an Apache-2.0 project, an AGPL-3.0-or-later one, a vendored GPL-2.0-only file, copied MIT code without its notice; review R3's GPL-3.0-only crate in a `Cargo.lock` and GPL-3.0-or-later package in a `pnpm-lock.yaml`, added after this run | an MIT and an Apache-2.0 dependency, an `MIT OR GPL-3.0-only` one, a vendored MIT file with its header |
 | release | report 3.2's signing of an artefact no approved release built (an environment bypass), an entitlement widening (`disable-library-validation`), a publish whose failing dry run no longer stops it (`\|\| true`), and a bill of materials made opt-in | a verify step after signing, a version bump, a tag check before the dry run, a second bill-of-materials format |
 
 The design cases are text: the plan's design lens reads screenshots (r5, "The nine reviews"), which no row takes yet, so these measure the lens on the change alone.
 
-**Measured** 2026-10-19 with CLI 2.1.302 through the subscription login, author `claude-opus-5-5`, finder `claude-sonnet-5-5`, verifier `claude-opus-5-5`, every case of the three corpora:
+**Measured** 2026-10-19 with CLI 2.1.302 through the subscription login, author `claude-opus-5-5`, finder `claude-sonnet-5-5`, verifier `claude-opus-5-5`, every case the three corpora then held:
 
 | Lens | Seeds caught | Clean cases flagged | Undecided |
 | --- | --- | --- | --- |
@@ -1340,7 +1340,7 @@ No workflow and no firstmate step calls `run/critic.py` yet; a critic seat insid
 ## The licence row
 
 `run/licence.py [--policy FILE] [root]` judges the licence of every dependency and vendored file a repository tracks against its `.github/licence-policy.toml`.
-It is report 3.2's "licence allowlist row for npm and uv (new, P3a-RP)", accepted when "a GPL-only dependency into an Apache-2.0 repository is refused".
+It is report 3.2's "licence allowlist row for npm and uv (new, P3a-RP)", accepted when "a GPL-only dependency into an Apache-2.0 repository is refused", extended to Cargo and pnpm lockfiles by review R3 (P3a-LIC).
 Its docstring owns the exit statuses (0 every licence allowed or reviewed, 1 a finding, 2 could not decide, with a typed `undecided (TYPE)` line); a finding is `licence: refused: WHERE: WHY` or `licence: review: WHERE: WHY`.
 
 ```toml
@@ -1350,7 +1350,7 @@ refused = ["GPL-2.0-only", "GPL-3.0-only", "GPL-3.0-or-later", "AGPL-3.0-only", 
 vendored = ["vendor/**"]                     # files whose own licence is judged
 
 [declared]                                   # a licence the lockfile does not record
-"uv:requests" = "Apache-2.0"                 # npm:NAME, uv:NAME, either @VERSION, or path:GLOB
+"uv:requests" = "Apache-2.0"                 # npm:NAME, uv:NAME, cargo:NAME, any @VERSION, or path:GLOB
 "path:vendor/leftpad/**" = "MIT"
 
 [reviewed]                                   # why a licence needing review was accepted
@@ -1361,6 +1361,8 @@ vendored = ["vendor/**"]                     # files whose own licence is judged
 | --- | --- |
 | a tracked `package-lock.json` (none under `node_modules`) | each entry's `license`, the legacy object and list forms included; the project's own entry and workspace links are its code and are skipped; a lockfileVersion 1 records none |
 | a tracked `uv.lock` | none is recorded, so a `[declared]` entry; the editable or virtual project is skipped |
+| a tracked `pnpm-lock.yaml` (lockfileVersion 6 or 9) | none is recorded, so each package's own `package.json` in the installed tree beside it (`node_modules/.pnpm`, or `node_modules` when hoisted), keyed `npm:NAME`; a package not installed needs review |
+| a tracked `Cargo.lock` | each crate's `license` from `cargo metadata --offline --locked --all-features`, run beside it, with the legacy `MIT/Apache-2.0` read as `OR`; a crate with no `source` is a workspace member or path dependency and is skipped |
 | a tracked file under a `vendored` glob | its own `SPDX-License-Identifier` in its first 30 lines, else a `[declared]` path entry; a vendored tree's `LICENSE`, `COPYING`, `NOTICE` and `README` files are its notices and are skipped |
 
 A dependency's exact `@VERSION` entry wins over its name, because a licence can change between releases.
@@ -1369,7 +1371,11 @@ An id no list names, an expression that does not parse, and a dependency or file
 Needing review refuses until `[reviewed]` records why it was accepted, and no entry accepts a refused licence; the policy is the one place a reviewed decision lives, so the next change reads it.
 An id in two lists, an unknown key or a malformed table is `bad-policy`.
 
-Left out: `Cargo.lock`, whose licences `cargo deny` already judges (report 3.2); recognising a licence from its text, which a header or a `[declared]` entry states instead; and any registry lookup, which would make the row neither offline nor deterministic.
+Both new readers need the caller's tree installed first: `pnpm install` for the package.json files, and `cargo fetch --locked` (or a `cargo vendor` directory source) for the crates, since `--offline` makes no network call.
+A crate cargo cannot resolve offline, or a `Cargo.lock` behind its `Cargo.toml`, is `undecided (tool-error)`, because `--locked` refuses rather than rewriting the caller's lockfile; `--all-features` resolves the crates only an optional feature pulls in, without which 7 of quoth's 612 locked crates went unread (measured 2026-10-24).
+`cargo deny` was rejected for this: its advisories half duplicates OSV and `cargo audit`, and only its licence half was new.
+
+Left out: recognising a licence from its text, which a header or a `[declared]` entry states instead; and any registry lookup, which would make the row neither offline nor deterministic.
 The whole tracked tree is judged, not only the change, so a lockfile change also reports an older dependency no policy covers; a caller's first run is where those become `[declared]` or `[reviewed]` entries.
 
 **The row**, in a caller's `.github/gates.toml`, in shadow until the promotion rule in `run/gate.py` lets it block, and scoped to the files it reads:
@@ -1377,13 +1383,14 @@ The whole tracked tree is judged, not only the change, so a lockfile change also
 ```toml
 [[gate]]
 id = "licence"
-inputs = ["**/package-lock.json", "**/uv.lock", "vendor/**", ".github/licence-policy.toml"]
+inputs = ["**/package-lock.json", "**/uv.lock", "**/pnpm-lock.yaml", "**/Cargo.lock", "vendor/**", ".github/licence-policy.toml"]
 scoped = true
 run = 'python3 "$GATES_DIR/run/licence.py"'
 shadow_since = 2026-10-19
 ```
 
-Measured on the licence corpus above: the row refuses 4 of 4 seeded head trees (three refused licences, and the copied file with no licence needing review) and passes 4 of 4 clean ones, where the model review caught 3 of 4.
+Measured on the licence corpus above: the row refuses 6 of 6 seeded head trees (five refused licences, among them the `gpl-crate` and `gpl-pnpm` cases, and the copied file with no licence needing review) and passes 4 of 4 clean ones, where the model review caught 3 of the 4 seeded cases it was run on; the two newer cases have no recorded model run.
+On quoth's tree (2026-10-24) the row reads all 612 crates of `apps/desktop/src-tauri/Cargo.lock`: none refused, and 5 MPL-2.0 crates (`cssparser`, `cssparser-macros`, `dtoa-short`, `option-ext`, `selectors`) need a `[reviewed]` entry in quoth's policy under a proprietary-project policy.
 `.ci/test-licence.py` runs each rule with its control removed, folds the row above to `shadow` under `run/gate.py` and shows an unrelated change leaves it unselected, and runs the corpus check.
 The gates-proof rows are `licence-refused`, `licence-review` and `licence-vendored`.
 No workflow calls `run/licence.py` or `run/corpus.py`: a step is the maintainer's weekly batch.

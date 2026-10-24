@@ -1,0 +1,10 @@
+[package]
+name = "notes-sync-desktop"
+version = "1.4.0"
+edition = "2021"
+license = "Apache-2.0"
+publish = false
+
+[dependencies]
+diff3-sync = "0.9"
+tinyhash = "1.2"
