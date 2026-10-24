@@ -241,6 +241,12 @@ CASES = [
         "permissions-diff: .github/ruleset-main.json changes a branch ruleset",
     ),
     (
+        "an ignore added to the advisory row's config",
+        {"policy/osv-scanner.toml": '[[IgnoredVulns]]\nid = "GHSA-35jh-r3h4-6jhm"\n'},
+        1,
+        "permissions-diff: policy/osv-scanner.toml changes the tool rows' ignore lists",
+    ),
+    (
         "a gate row deleted",
         {".github/gates.toml": GATES_TOML.split("\n\n")[1]},
         1,

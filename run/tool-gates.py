@@ -3,10 +3,18 @@
 
 Usage: tool-gates.py zizmor|actionlint|osv|osv-stamp [root]    (default root: the current directory)
 
-zizmor      zizmor, offline, over .github/workflows (default persona).
+zizmor      zizmor, offline, over .github/workflows (default persona), with no
+            configuration file and no inline ignore read.
 actionlint  actionlint over the same files, with shellcheck and pyflakes switched
             off so the verdict does not depend on what else the machine has.
 osv         OSV-Scanner over the tree against a local database, no network.
+            An npm lockfile entry under node_modules/ with a version, no resolved
+            URL and no link is refused as undecided: 2.7.0 skips it as local.
+
+None of the three reads configuration from the tree under review, which a change
+could otherwise add to silence the finding that gates it. osv and actionlint are
+handed a file under policy/ of this repository, and zizmor is handed none. Any
+ignore belongs in that file, which security design 7.2's surface protects.
 osv-stamp   Print today's UTC date and the size and mtime of each database file, as
             the runner's cache-key probe: a verdict is reused only within a day
             and only against the database it was judged on, so a pass cannot
@@ -20,6 +28,8 @@ wrong-version     the tool's version is not the one pinned in PINS.
 missing-database  osv: the database directory is unset, holds no all.zip, or lacks
                   the ecosystem of a lockfile in the tree.
 stale-database    osv: the oldest all.zip is older than MAX_DB_AGE_DAYS.
+undecided         osv: a lockfile the tool would read as clean without judging all
+                  of it (see above), or one that cannot be parsed.
 tool-error        the tool crashed, timed out or exited with a status that means
                   neither pass nor finding.
 
@@ -28,6 +38,7 @@ and database-refresh steps. Fetching the database is not this script's job: it
 runs with no network, so a database it cannot find is a refusal.
 """
 
+import json
 import os
 import re
 import shutil
@@ -41,8 +52,10 @@ DB_ENV = "OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY"
 MAX_DB_AGE_DAYS = 7
 TIMEOUT = 120
 WORKFLOWS = ".github/workflows"
+POLICY = Path(__file__).resolve().parent.parent / "policy"
 # zizmor exits 10 to 14 by the highest severity it found; 1 and 2 are its own errors.
 ZIZMOR_FINDINGS = range(10, 15)
+NPM_LOCKS = ("package-lock.json", "npm-shrinkwrap.json")
 OSV_FINDINGS, OSV_NO_PACKAGES, OSV_ERROR = 1, 128, 127
 
 
@@ -124,7 +137,13 @@ def lint_workflows(name, argv, found_rc, root):
 def zizmor(root):
     return lint_workflows(
         "zizmor",
-        lambda files: ["--offline", "--no-progress", WORKFLOWS],
+        lambda files: [
+            "--offline",
+            "--no-progress",
+            "--no-config",
+            "--no-ignores",
+            WORKFLOWS,
+        ],
         ZIZMOR_FINDINGS,
         root,
     )
@@ -133,7 +152,14 @@ def zizmor(root):
 def actionlint(root):
     return lint_workflows(
         "actionlint",
-        lambda files: ["-shellcheck=", "-pyflakes=", "-no-color", *files],
+        lambda files: [
+            "-shellcheck=",
+            "-pyflakes=",
+            "-no-color",
+            "-config-file",
+            str(POLICY / "actionlint.yaml"),
+            *files,
+        ],
         (1,),
         root,
     )
@@ -165,12 +191,58 @@ def database():
     return len(zips)
 
 
+def undecided_npm_entries(root):
+    """Each `lockfile: entry` osv-scanner 2.7.0 would skip as local, or could not be read."""
+    found = []
+    for folder, dirs, files in os.walk(root):
+        dirs[:] = [d for d in dirs if d != ".git"]
+        for name in NPM_LOCKS:
+            if name not in files:
+                continue
+            path = Path(folder) / name
+            rel = path.relative_to(root)
+            try:
+                entries = list(json.loads(path.read_text()).get("packages", {}).items())
+            except (OSError, ValueError, AttributeError) as e:
+                # A lockfile this cannot read is one the tool may skip, so it is not a pass.
+                found.append(f"{rel}: not readable as an npm lockfile ({e})")
+                continue
+            found += [
+                f"{rel}: {key} has a version and no resolved URL"
+                for key, entry in entries
+                if "node_modules/" in key
+                and isinstance(entry, dict)
+                and "version" in entry
+                and not entry.get("resolved")
+                and not entry.get("link")
+            ]
+    return found
+
+
 def osv(root):
     exe = tool("osv-scanner")
     count = database()
-    # --offline forbids the network; the second flag names the source of the verdict.
+    undecided = undecided_npm_entries(root)
+    if undecided:
+        raise Refused(
+            "undecided",
+            f"osv-scanner {PINS['osv-scanner']} would not judge these, so the tree"
+            f" would read clean unjudged: {'; '.join(undecided)}",
+        )
+    # --offline forbids the network; the second flag names the source of the verdict;
+    # --config stops the tree under review from supplying the tool's configuration.
     rc, out = run(
-        [exe, "scan", "source", "--offline", "--offline-vulnerabilities", "-r", "."],
+        [
+            exe,
+            "scan",
+            "source",
+            "--config",
+            str(POLICY / "osv-scanner.toml"),
+            "--offline",
+            "--offline-vulnerabilities",
+            "-r",
+            ".",
+        ],
         root,
     )
     if rc == 0:

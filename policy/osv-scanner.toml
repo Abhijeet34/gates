@@ -1,0 +1,4 @@
+# The only osv-scanner configuration the advisory row reads. run/tool-gates.py names it
+# with --config, so a file of this name in the tree under review is never read.
+# An ignore is a [[IgnoredVulns]] entry with an id, an ignoreUntil date and a reason;
+# none is granted today. permissions-diff refuses any change to this file.

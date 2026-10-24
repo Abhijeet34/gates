@@ -576,7 +576,8 @@ clean = '''head -c 8000 /dev/zero | tr '\0' x > AGENTS.md'''
 run = 'python3 "$GATE" budget .'
 finding = "AGENTS.md: 8001 bytes, over the 8000-byte budget"
 
-# External tools pinned and run offline; README.md, "The tool rows". The inputs build
+# External tools pinned and run offline; README.md, "The tool rows". Each stub exits 99
+# unless it is called with the flags that keep the tree's own configuration out. The inputs build
 # stub tools on a PATH of their own, because the proof runs where none of the real
 # ones is installed (README.md names the CI step that would install them); the real
 # binaries answer the same questions in `.ci/test-tool-gates.py --real`.
@@ -589,11 +590,11 @@ suite = "shell"
 command = "run/tool-gates.py"
 red = '''
 mkdir -p bin .github/workflows && echo 'on: push' > .github/workflows/ci.yml
-printf '#!/bin/sh\n[ "$1" = --version ] && { echo "zizmor 1.29.0"; exit 0; }\nexit 13\n' > bin/zizmor && chmod +x bin/zizmor
+printf '#!/bin/sh\n[ "$1" = --version ] && { echo "zizmor 1.29.0"; exit 0; }\nok=1; for f in --no-config --no-ignores; do case " $* " in *" $f "*) ;; *) ok=0 ;; esac; done\n[ $ok = 1 ] && exit 13\nexit 99\n' > bin/zizmor && chmod +x bin/zizmor
 '''
 clean = '''
 mkdir -p bin .github/workflows && echo 'on: push' > .github/workflows/ci.yml
-printf '#!/bin/sh\n[ "$1" = --version ] && { echo "zizmor 1.29.0"; exit 0; }\nexit 0\n' > bin/zizmor && chmod +x bin/zizmor
+printf '#!/bin/sh\n[ "$1" = --version ] && { echo "zizmor 1.29.0"; exit 0; }\nok=1; for f in --no-config --no-ignores; do case " $* " in *" $f "*) ;; *) ok=0 ;; esac; done\n[ $ok = 1 ] && exit 0\nexit 99\n' > bin/zizmor && chmod +x bin/zizmor
 '''
 run = 'py=$(command -v python3); PATH="$PWD/bin" "$py" "$GATE" zizmor .'
 finding = "tool-gates: zizmor refused the workflows (exit 13)"
@@ -607,16 +608,16 @@ suite = "shell"
 command = "run/tool-gates.py"
 red = '''
 mkdir -p bin .github/workflows && echo 'on: push' > .github/workflows/ci.yml
-printf '#!/bin/sh\n[ "$1" = --version ] && { echo 1.7.12; exit 0; }\nexit 1\n' > bin/actionlint && chmod +x bin/actionlint
+printf '#!/bin/sh\n[ "$1" = --version ] && { echo 1.7.12; exit 0; }\ncase " $* " in *" -config-file "*) exit 1 ;; esac\nexit 99\n' > bin/actionlint && chmod +x bin/actionlint
 '''
 clean = '''
 mkdir -p bin .github/workflows && echo 'on: push' > .github/workflows/ci.yml
-printf '#!/bin/sh\n[ "$1" = --version ] && { echo 1.7.12; exit 0; }\nexit 0\n' > bin/actionlint && chmod +x bin/actionlint
+printf '#!/bin/sh\n[ "$1" = --version ] && { echo 1.7.12; exit 0; }\ncase " $* " in *" -config-file "*) exit 0 ;; esac\nexit 99\n' > bin/actionlint && chmod +x bin/actionlint
 '''
 run = 'py=$(command -v python3); PATH="$PWD/bin" "$py" "$GATE" actionlint .'
 finding = "tool-gates: actionlint refused the workflows (exit 1)"
 
-# The stub exits 99 unless called with --offline, so a call that could reach the network fails.
+# The stub exits 99 unless called with --offline and --config, so a call that could reach the network, or read the tree's own configuration, fails.
 [[gate]]
 id = "advisories-osv"
 surface = "Dependencies"
@@ -626,16 +627,40 @@ suite = "shell"
 command = "run/tool-gates.py"
 red = '''
 mkdir -p bin db/npm && : > db/npm/all.zip && echo '{}' > package-lock.json
-printf '#!/bin/sh\n[ "$1" = --version ] && { echo "osv-scanner version: 2.7.0"; exit 0; }\ncase " $* " in *" --offline "*) exit 1 ;; esac\nexit 99\n' > bin/osv-scanner
+printf '#!/bin/sh\n[ "$1" = --version ] && { echo "osv-scanner version: 2.7.0"; exit 0; }\nok=1; for f in --offline --config; do case " $* " in *" $f "*) ;; *) ok=0 ;; esac; done\n[ $ok = 1 ] && exit 1\nexit 99\n' > bin/osv-scanner
 chmod +x bin/osv-scanner
 '''
 clean = '''
 mkdir -p bin db/npm && : > db/npm/all.zip && echo '{}' > package-lock.json
-printf '#!/bin/sh\n[ "$1" = --version ] && { echo "osv-scanner version: 2.7.0"; exit 0; }\ncase " $* " in *" --offline "*) exit 0 ;; esac\nexit 99\n' > bin/osv-scanner
+printf '#!/bin/sh\n[ "$1" = --version ] && { echo "osv-scanner version: 2.7.0"; exit 0; }\nok=1; for f in --offline --config; do case " $* " in *" $f "*) ;; *) ok=0 ;; esac; done\n[ $ok = 1 ] && exit 0\nexit 99\n' > bin/osv-scanner
 chmod +x bin/osv-scanner
 '''
 run = 'py=$(command -v python3); PATH="$PWD/bin" OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY="$PWD/db" "$py" "$GATE" osv .'
 finding = "tool-gates: osv-scanner refused the tree: known vulnerabilities"
+
+# An npm lockfile entry osv-scanner 2.7.0 skips as local is a refusal, not a clean tree. The
+# stub answers clean either way, so the verdict is the script's own.
+[[gate]]
+id = "advisories-osv-undecided"
+surface = "Dependencies"
+gates = ["run/tool-gates.py"]
+test = ".ci/test-tool-gates.py"
+suite = "shell"
+command = "run/tool-gates.py"
+red = '''
+mkdir -p bin db/npm && : > db/npm/all.zip
+echo '{"packages": {"node_modules/lodash": {"version": "4.17.15"}}}' > package-lock.json
+printf '#!/bin/sh\n[ "$1" = --version ] && { echo "osv-scanner version: 2.7.0"; exit 0; }\nexit 0\n' > bin/osv-scanner
+chmod +x bin/osv-scanner
+'''
+clean = '''
+mkdir -p bin db/npm && : > db/npm/all.zip
+echo '{"packages": {"node_modules/lodash": {"version": "4.17.15", "resolved": "https://registry.npmjs.org/lodash/-/lodash-4.17.15.tgz"}}}' > package-lock.json
+printf '#!/bin/sh\n[ "$1" = --version ] && { echo "osv-scanner version: 2.7.0"; exit 0; }\nexit 0\n' > bin/osv-scanner
+chmod +x bin/osv-scanner
+'''
+run = 'py=$(command -v python3); PATH="$PWD/bin" OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY="$PWD/db" "$py" "$GATE" osv .'
+finding = "tool-gates: refused (undecided)"
 
 # A database older than the limit is a refusal of its own type, not a pass over old advisories.
 [[gate]]

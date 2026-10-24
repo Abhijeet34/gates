@@ -15,7 +15,7 @@ Licensed under the Apache License 2.0; see `LICENSE` and `NOTICE`.
 | `run/gate.py` | The gate runner: selects a repository's gates from its `.github/gates.toml` (absent here) and the diff, keys each verdict by the gate's inputs, records verdicts and folds them with review and docs verdicts, and keeps a shadow row from blocking until it earns promotion; its docstring owns the contract. No workflow calls it yet. |
 | `run/permissions-diff.py` | The permissions-diff gate over the protected surface; see "The permissions-diff gate". |
 | `run/docs-truth.py`, `.github/docs.toml` | The four document rules (owner and reader, commands, byte budget, em dash) and this repository's own owner and reader list; see "The documentation rows". |
-| `run/tool-gates.py` | The pinned-tool gates (zizmor, actionlint, offline OSV-Scanner); see "The tool rows". |
+| `run/tool-gates.py`, `policy/` | The pinned-tool gates (zizmor, actionlint, offline OSV-Scanner) and the gates-owned configuration they read instead of the tree's; see "The tool rows". |
 | `run/ui-gates.py`, `run/ui-gates.mjs` | The UI rows: axe accessibility and Linux pixel baselines in a pinned Chromium; see "The UI rows". |
 | `run/pr-text.py` | The pull request text scan over a title and body read as JSON on stdin; see "The text rows". |
 | `run/scratch-guard.py` | The scratch guard, which runs a gate or suite and refuses a file it left behind outside its own `TMPDIR`; see "The scratch rows". |
@@ -134,6 +134,7 @@ The surface is security design 7.2's list, mapped onto the paths that exist toda
 | App manifests and the minter's permission subsets | `**/github-apps/roles.json`, `**/github-apps/app-token.sh`, `**/github-apps/register-app.py` | any |
 | workflow `permissions:`, rulesets, Actions settings | `.github/workflows/*.yml` and `*.yaml`; `.github/ruleset*.json`, `.github/rulesets/**` | a workflow's `permissions:` blocks differ, comments aside; a ruleset, any |
 | gate registry rows with `phase = "security"` | `.github/gates.toml`, every row; `.ci/gate-registry.toml`, rows with `surface = "Security"` | an existing row deleted or any of its fields changed; a new row passes |
+| (added) the tool rows' ignore lists | `policy/**` | any |
 | the outbound pattern set and channel allowlists | `outbound/outbound.go` | any |
 | memory guards and `captain.md` | `**/memory-write-guard.sh`, `**/captain.md` | any |
 | (added) the gate's own surface | `run/permissions-diff.py` | any |
@@ -242,7 +243,7 @@ No workflow runs it: a scheduled run is the maintainer's to add in the weekly ba
 
 `run/tool-gates.py zizmor|actionlint|osv [root]` runs a pinned tool as a gate; its docstring owns the exit statuses.
 It stands in for custom workflow rules and for an online advisory lookup (factory plan r5, "P3a-ROWS"); it never fetches anything.
-A refusal that is not a finding exits 2 and prints `tool-gates: refused (TYPE)`, with TYPE one of `missing-tool`, `wrong-version`, `missing-database`, `stale-database` or `tool-error`, so a runner without the tool, or with an old database, cannot fold its row to a pass.
+A refusal that is not a finding exits 2 and prints `tool-gates: refused (TYPE)`, with TYPE one of `missing-tool`, `wrong-version`, `missing-database`, `stale-database`, `undecided` or `tool-error`, so a runner without the tool, or with an old database, cannot fold its row to a pass.
 
 | Tool | Pin | Where the pin lives | Checked by |
 | --- | --- | --- | --- |
@@ -261,8 +262,20 @@ curl -fsSLO https://github.com/google/osv-scanner/releases/download/v2.7.0/osv-s
 ```
 
 - `osv-scanner_linux_amd64` has sha256 `160c6253e2922e9e0a6a9771c5c4c40a4b3c6090b34a3cdd5e80c96cc2e4218b` and `osv-scanner_darwin_arm64` has `d4926ef8da134332543be276dff157e4c170f99ad91fc48e89448a8816bdf70b`, from the release's `osv-scanner_SHA256SUMS` (read 2026-10-24). Verify before `chmod +x`.
-- From 2.7.0 a lockfile package entry with no `resolved` URL is treated as local and skipped, so a hand-written npm fixture needs `resolved` or it scans clean.
+- From 2.7.0 a lockfile package entry with no `resolved` URL is treated as local and skipped, so it scans clean. The row refuses such an entry as `undecided` (see "What the rows do not read"), and a hand-written npm fixture that wants a finding needs `resolved`.
 - actionlint 1.7.12 is the release tarball `actionlint_1.7.12_linux_amd64.tar.gz` (sha256 `8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8`) or `brew install actionlint` on the Mac.
+
+**What the rows do not read.**
+A change must not be able to silence the finding that gates it, so no row reads configuration from the tree under review:
+zizmor runs with `--no-config --no-ignores`, which drops `zizmor.yml`, `.github/zizmor.yml` and inline `# zizmor: ignore` comments;
+osv-scanner and actionlint run with `--config` and `-config-file` naming `policy/osv-scanner.toml` and `policy/actionlint.yaml` of this repository, which stops `osv-scanner.toml` (at the root or beside a lockfile) and `.github/actionlint.yaml` from being read.
+Both files hold a comment and no ignore.
+An ignore, when one is justified, is an entry in one of them with a reason, and `policy/**` is on the permissions-diff surface, so adding one is a class-2 decision.
+actionlint reads a project's config only inside a git repository, so a fixture tree needs a `.git` to show the bypass; `.ci/test-tool-gates.py --real` plants one.
+
+A `package-lock.json` or `npm-shrinkwrap.json` entry whose key holds `node_modules/` and that has a `version`, no `resolved` and no `link` is refused `undecided`, naming the file and the key, before osv-scanner runs.
+A lockfile that cannot be read as JSON is refused the same way.
+Whether npm ever writes a registry package without `resolved` was not measured; if it does, that entry is refused until it is judged some other way.
 
 **The offline database** is OSV's per-ecosystem `all.zip` under the directory `OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY` names.
 The gate requires that variable, requires at least one `all.zip` in it, and refuses `stale-database` when the oldest is over 7 days old (`MAX_DB_AGE_DAYS`), which is the refresh cadence this assumes.
