@@ -7,13 +7,16 @@
 
 The default run drives the script against stub tools that report a version and
 an exit status, so it proves the script's own decisions: which pin it accepts,
-which status is a finding, which is a typed refusal. The stub osv-scanner exits
-99 unless it is called with --offline, so a call that could reach the network
-fails here. `--real` is the same questions put to the real binaries; it is not
-part of .ci/check.sh until the CI jobs install them (README.md, "The tool rows").
+which status is a finding, which is a typed refusal. Each stub exits 99 unless it
+is called with the flags in GUARDS, so a call that could reach the network, or
+read configuration from the tree under review, fails here. `--real` is the same
+questions put to the real binaries, including a tree that plants each
+configuration the tool would read; .ci/check.sh runs it only under CI, where
+ci.yml installs them (README.md, "The tool rows").
 """
 
 import datetime
+import json
 import os
 import shutil
 import subprocess
@@ -42,6 +45,23 @@ ENV = {
 workdir = Path(tempfile.mkdtemp())
 WORKFLOW = "on: push\npermissions: {}\njobs:\n  a:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: echo hi\n"
 LOCKFILE = '{"lockfileVersion": 3, "packages": {}}\n'
+
+
+def npm_lock(entry, version="4.17.15"):
+    """An npm lockfile whose one installed package is `entry`; the root entry has a version too."""
+    root = {"name": "fx", "version": "1.0.0", "dependencies": {"lodash": version}}
+    packages = {"": root, "node_modules/lodash": entry}
+    return json.dumps({"name": "fx", "lockfileVersion": 3, "packages": packages}) + "\n"
+
+
+def lodash(version, resolved=True):
+    """The entry npm writes, or with `resolved=False` the shape osv-scanner 2.7.0 skips as local."""
+    entry = {"version": version}
+    if resolved:
+        entry["resolved"] = f"https://registry.npmjs.org/lodash/-/lodash-{version}.tgz"
+    return entry
+
+
 DAY = 86400
 
 
@@ -65,6 +85,15 @@ def tree(files):
     return root
 
 
+# The flags a call must carry: --offline keeps the network out, the rest keep the tree
+# under review from supplying the tool's configuration.
+GUARDS = {
+    "zizmor": ("--offline", "--no-config", "--no-ignores"),
+    "actionlint": ("-config-file",),
+    "osv-scanner": ("--offline", "--config"),
+}
+
+
 def stub(bin_dir, name, version, rc, banner="stub output"):
     """A tool that reports `version`, and otherwise prints `banner` and exits `rc`."""
     shown = {
@@ -72,9 +101,10 @@ def stub(bin_dir, name, version, rc, banner="stub output"):
         "actionlint": f"{version}\ninstalled by stub",
         "osv-scanner": f"osv-scanner version: {version}\nosv-scalibr version: 0",
     }[name]
-    guard = ""
-    if name == "osv-scanner":
-        guard = 'case " $* " in *" --offline "*) ;; *) echo "stub: no --offline" >&2; exit 99 ;; esac\n'
+    guard = "".join(
+        f'case " $* " in *" {flag} "*) ;; *) echo "stub: no {flag}" >&2; exit 99 ;; esac\n'
+        for flag in GUARDS[name]
+    )
     path = bin_dir / name
     path.write_text(
         f"#!/bin/sh\ncase \"$1\" in --version) cat <<'EOF'\n{shown}\nEOF\nexit 0 ;; esac\n"
@@ -313,6 +343,76 @@ STUB_CASES = [
         2,
         refused("tool-error"),
     ),
+    (
+        "osv refuses a version-only npm entry as undecided",
+        "osv",
+        {"package-lock.json": npm_lock(lodash("4.17.15", resolved=False))},
+        stubbed({"osv-scanner": ("2.7.0", 0)}, database()),
+        2,
+        refused("undecided"),
+    ),
+    (
+        "osv names the lockfile and the entry it cannot decide",
+        "osv",
+        {"web/package-lock.json": npm_lock(lodash("4.17.15", resolved=False))},
+        stubbed({"osv-scanner": ("2.7.0", 0)}, database()),
+        2,
+        "web/package-lock.json: node_modules/lodash has a version and no resolved URL",
+    ),
+    (
+        "osv refuses a version-only entry in npm-shrinkwrap.json, which it also reads",
+        "osv",
+        {"npm-shrinkwrap.json": npm_lock(lodash("4.17.15", resolved=False))},
+        stubbed({"osv-scanner": ("2.7.0", 0)}, database()),
+        2,
+        refused("undecided"),
+    ),
+    (
+        "osv refuses a nested package with no resolved URL",
+        "osv",
+        {
+            "package-lock.json": json.dumps(
+                {"packages": {"node_modules/a/node_modules/b": {"version": "1.0.0"}}}
+            )
+        },
+        stubbed({"osv-scanner": ("2.7.0", 0)}, database()),
+        2,
+        refused("undecided"),
+    ),
+    (
+        "osv refuses a lockfile it cannot parse as undecided",
+        "osv",
+        {"package-lock.json": "{"},
+        stubbed({"osv-scanner": ("2.7.0", 0)}, database()),
+        2,
+        refused("undecided"),
+    ),
+    (
+        "osv passes an npm entry with its resolved URL",
+        "osv",
+        {"package-lock.json": npm_lock(lodash("4.18.1"), "4.18.1")},
+        stubbed({"osv-scanner": ("2.7.0", 0)}, database()),
+        0,
+        "no known vulnerabilities",
+    ),
+    (
+        "osv passes a workspace link, which has no version to judge",
+        "osv",
+        {
+            "package-lock.json": json.dumps(
+                {
+                    "packages": {
+                        "": {"name": "fx", "version": "1.0.0"},
+                        "node_modules/a": {"resolved": "packages/a", "link": True},
+                        "packages/a": {"version": "1.0.0"},
+                    }
+                }
+            )
+        },
+        stubbed({"osv-scanner": ("2.7.0", 0)}, database()),
+        0,
+        "no known vulnerabilities",
+    ),
     ("an unknown check is a usage error", "nope", {}, {}, 2, "Usage: tool-gates.py"),
 ]
 
@@ -417,12 +517,15 @@ def established_blocks():
 # --real: the same questions put to the pinned binaries on PATH.
 BAD_WORKFLOW = "on:\n  pull_request_target:\npermissions: {}\njobs:\n  a:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: echo hi\n"
 BAD_EXPRESSION = WORKFLOW.replace("echo hi", "echo ${{ github.nope }}")
-NPM_LOCK = (
-    '{"name": "fx", "lockfileVersion": 3, "requires": true, "packages": {'
-    '"": {"name": "fx", "version": "1.0.0", "dependencies": {"lodash": "%s"}},'
-    '"node_modules/lodash": {"version": "%s",'
-    ' "resolved": "https://registry.npmjs.org/lodash/-/lodash-%s.tgz"}}}\n'
+ZIZMOR_IGNORE = "rules:\n  dangerous-triggers:\n    ignore:\n      - ci.yml\n"
+INLINE_IGNORE = BAD_WORKFLOW.replace(
+    "pull_request_target:", "pull_request_target: # zizmor: ignore[dangerous-triggers]"
 )
+OSV_IGNORE = '[[PackageOverrides]]\nname = "lodash"\necosystem = "npm"\nignore = true\n'
+ACTIONLINT_IGNORE = (
+    'paths:\n  .github/workflows/*.yml:\n    ignore:\n      - "is not defined"\n'
+)
+LODASH_RED = npm_lock(lodash("4.17.15"))
 CARGO_LOCK = (
     '[[package]]\nname = "time"\nversion = "0.1.45"\n'
     'source = "registry+https://github.com/rust-lang/crates.io-index"\n'
@@ -474,15 +577,79 @@ def real_cases(seen):
         (
             "osv refuses lodash 4.17.15",
             "osv",
-            {"package-lock.json": NPM_LOCK % (("4.17.15",) * 3)},
+            {"package-lock.json": LODASH_RED},
             env,
             1,
             "GHSA-35jh-r3h4-6jhm",
         ),
         (
+            "osv refuses a version-only entry as undecided, where 2.7.0 scans it clean",
+            "osv",
+            {"package-lock.json": npm_lock(lodash("4.17.15", resolved=False))},
+            env,
+            2,
+            refused("undecided"),
+        ),
+        (
+            "osv refuses lodash 4.17.15 with a config file at the root",
+            "osv",
+            {"package-lock.json": LODASH_RED, "osv-scanner.toml": OSV_IGNORE},
+            env,
+            1,
+            "GHSA-35jh-r3h4-6jhm",
+        ),
+        (
+            "osv refuses lodash 4.17.15 with a config file beside a nested lockfile",
+            "osv",
+            {
+                "web/package-lock.json": LODASH_RED,
+                "web/osv-scanner.toml": OSV_IGNORE,
+            },
+            env,
+            1,
+            "GHSA-35jh-r3h4-6jhm",
+        ),
+        (
+            "zizmor refuses pull_request_target with a config file at the root",
+            "zizmor",
+            {wf: BAD_WORKFLOW, "zizmor.yml": ZIZMOR_IGNORE},
+            {},
+            1,
+            "dangerous-triggers",
+        ),
+        (
+            "zizmor refuses pull_request_target with a config file under .github",
+            "zizmor",
+            {wf: BAD_WORKFLOW, ".github/zizmor.yml": ZIZMOR_IGNORE},
+            {},
+            1,
+            "dangerous-triggers",
+        ),
+        (
+            "zizmor refuses pull_request_target with an inline ignore comment",
+            "zizmor",
+            {wf: INLINE_IGNORE},
+            {},
+            1,
+            "dangerous-triggers",
+        ),
+        (
+            "actionlint refuses an unknown context property with an ignore config file",
+            "actionlint",
+            {
+                wf: BAD_EXPRESSION,
+                ".github/actionlint.yaml": ACTIONLINT_IGNORE,
+                # actionlint reads a project's config only where it finds a git repository.
+                ".git/HEAD": "ref: refs/heads/main\n",
+            },
+            {},
+            1,
+            'property "nope" is not defined',
+        ),
+        (
             "osv passes lodash 4.18.1",
             "osv",
-            {"package-lock.json": NPM_LOCK % (("4.18.1",) * 3)},
+            {"package-lock.json": npm_lock(lodash("4.18.1"), "4.18.1")},
             env,
             0,
             "no known vulnerabilities",

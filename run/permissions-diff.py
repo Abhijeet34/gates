@@ -152,6 +152,7 @@ SURFACE = [
         "the gate proof's Security rows",
         rows(lambda row: row.get("surface") == "Security"),
     ),
+    ("policy/**", "the tool rows' ignore lists", None),
     ("outbound/outbound.go", "the outbound text pattern set", None),
     ("**/memory-write-guard.sh", "the memory write guard", None),
     ("**/captain.md", "the captain's standing instructions", None),

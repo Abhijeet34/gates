@@ -1,0 +1,3 @@
+# The only actionlint configuration the workflow row reads. run/tool-gates.py names it
+# with -config-file, so .github/actionlint.yaml in the tree under review is never read.
+# permissions-diff refuses any change to this file.
