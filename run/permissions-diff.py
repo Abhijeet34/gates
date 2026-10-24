@@ -8,8 +8,15 @@ on SURFACE, the protected surface of security design 7.2 as it exists today
 (README.md, "The permissions-diff gate", owns the mapping and what it leaves
 out). Most entries are read whole; a workflow is read only for its
 `permissions:` blocks, the routing table only for the tables that say which
-vendor may see which repository, and a gate registry only for its existing
-rows, so an edit beside them is not refused. A new registry row is not either.
+vendor may see which repository, a gate registry only for its existing
+rows, and a command, agent or skill only for the front matter keys that can
+grant it authority, so an edit beside them is not refused. A new registry row
+is not either.
+
+A workflow is read by lines, not parsed as YAML, so it fails closed: a changed
+line that spells `permissions` in any other form, opens a flow mapping or
+spells a key the block reader does not parse is named, and so is any edit to
+a file that uses an anchor or alias, since either can carry a token's grant.
 
 Every change it names is refused, a narrowing included: telling one from a
 widening is the review's job, and the refusal is what sizes the change L and
@@ -19,6 +26,7 @@ Exit status: 0 nothing protected changed, 1 refused, 2 could not decide.
 """
 
 import argparse
+import difflib
 import re
 import subprocess
 import sys
@@ -104,14 +112,39 @@ def rows(pick):
 
 
 PERMISSIONS = re.compile(r"(\s*)permissions\s*:")
+# A node starts a line, follows `- `, `: ` or `? `, or follows `[`, `{` or `,`.
+NODE = r"(?:^\s*|[-:?]\s+|[\[{,]\s*)"
+ANCHOR = re.compile(NODE + r"[&*][^\s\[\]{},&*>]")
+FLOW = re.compile(NODE + r"\{")
+UNREAD_KEY = [
+    (
+        re.compile(r"\bpermissions\b"),
+        "holds `permissions` outside a plain permissions: key",
+    ),
+    (FLOW, "opens a flow mapping, which the block reader does not parse"),
+    (
+        re.compile(r"^\s*\?(\s|$)"),
+        "spells an explicit key, which the block reader does not parse",
+    ),
+    (
+        re.compile(r'"[^"]*\\[^"]*"\s*:'),
+        "spells an escaped key, which the block reader does not parse",
+    ),
+]
 
 
-def permission_blocks(text):
-    """Each `permissions:` key with its nested lines, comments and blank lines dropped."""
-    lines = [re.sub(r"(^|\s)#.*", "", line).rstrip() for line in text.splitlines()]
+def uncomment(line):
+    """The line without a trailing comment; a line with a quote is kept whole, so a `#` in a string hides nothing."""
+    if '"' not in line and "'" not in line:
+        line = re.sub(r"(^|\s)#.*", "", line)
+    return line.rstrip()
+
+
+def key_blocks(lines, key):
+    """Each line matching `key`, with its more-indented lines after it."""
     blocks = []
     for i, line in enumerate(lines):
-        m = PERMISSIONS.match(line)
+        m = key.match(line)
         if not m:
             continue
         indent, block = len(m.group(1)), [line.strip()]
@@ -126,8 +159,85 @@ def permission_blocks(text):
 
 
 def workflow(path, old, new):
-    a, b = permission_blocks(old or ""), permission_blocks(new or "")
-    return [] if a == b else ["a permissions: block changed"]
+    a = [uncomment(line) for line in (old or "").splitlines()]
+    b = [uncomment(line) for line in (new or "").splitlines()]
+    out = []
+    if key_blocks(a, PERMISSIONS) != key_blocks(b, PERMISSIONS):
+        out.append("a permissions: block changed")
+    # Line numbers are kept through dropping blank lines, so a finding names the line.
+    a = [(n, line) for n, line in enumerate(a, 1) if line]
+    b = [(n, line) for n, line in enumerate(b, 1) if line]
+    ops = difflib.SequenceMatcher(
+        None, [x for _, x in a], [x for _, x in b], autojunk=False
+    )
+    changed = []
+    for tag, i1, i2, j1, j2 in ops.get_opcodes():
+        if tag != "equal":
+            changed += [("base line", n, x) for n, x in a[i1:i2]]
+            changed += [("line", n, x) for n, x in b[j1:j2]]
+    for side, n, line in changed:
+        if PERMISSIONS.match(line):
+            continue
+        out += [f"{side} {n} {why}" for rule, why in UNREAD_KEY if rule.search(line)]
+    if changed:
+        anchored = [("base line", n) for n, x in a if ANCHOR.search(x)]
+        anchored += [("line", n) for n, x in b if ANCHOR.search(x)]
+        if anchored:
+            side, n = anchored[0]
+            out.append(
+                f"the file uses a YAML anchor or alias ({side} {n}), so any edit"
+                " may change a token's permissions"
+            )
+    return out
+
+
+FRONT_MATTER = re.compile(r"---\n(.*?\n)---(?:\n|\Z)", re.S)
+# Front matter keys that only describe a command, agent or skill; every other key,
+# a quoted spelling of these included, may grant it tools, hooks or a mode.
+DESCRIPTIVE = {"name", "description", "argument-hint", "when_to_use", "color", "model"}
+TOP_KEY = re.compile(r"()(?=\S)")
+
+
+def front_matter(text):
+    if not (text or "").startswith("---"):
+        return []
+    m = FRONT_MATTER.match(text)
+    if not m:
+        return None
+    blocks = key_blocks([uncomment(line) for line in m.group(1).splitlines()], TOP_KEY)
+    return [b for b in blocks if b[0].split(":", 1)[0] not in DESCRIPTIVE]
+
+
+def grants(path, old, new):
+    a, b = front_matter(old), front_matter(new)
+    if None in (a, b):
+        raise Unreadable(f"{path}: its front matter is not closed by a --- line")
+    return [] if a == b else ["a front matter key that can grant authority changed"]
+
+
+def source(path, old, new):
+    """Sandbox source, read whole; its tests are not what the sandbox grants."""
+    return [] if path.endswith("_test.go") else ["the source changed"]
+
+
+# Rows proved in .ci/gate-registry.toml whose control is a security control, though
+# their surface names what they read; a row on the Security surface is protected too.
+SECURITY_ROWS = {
+    "workflow-zizmor",
+    "workflow-actionlint",
+    "advisories-osv",
+    "advisories-osv-undecided",
+    "advisories-osv-stale",
+    "tool-missing",
+    "pr-text-slop",
+    "pr-text-em-dash",
+    "pr-text-attribution",
+    "pr-text-home-path",
+    "pr-text-security-marker",
+    "licence-refused",
+    "licence-review",
+    "licence-vendored",
+}
 
 
 # (glob, what the matching file grants, how its change is read: None names any change).
@@ -137,6 +247,7 @@ SURFACE = [
     ("**/managed-settings.d/**", "Claude Code managed settings", None),
     ("**/claude-code/config/settings*.json", "the deployed Claude Code settings", None),
     ("internal/sandbox/profile.go", "the worker sandbox profile", None),
+    ("internal/sandbox/*.go", "what the worker sandbox grants", source),
     ("internal/permit/permit.go", "the fac permit deny overlay", None),
     ("route.toml", "the routing table", tables("tiers", "repos", "vendors")),
     ("**/github-apps/roles.json", "the GitHub App roles the minter subsets", None),
@@ -149,10 +260,30 @@ SURFACE = [
     (".github/gates.toml", "the gate registry", rows(lambda row: True)),
     (
         ".ci/gate-registry.toml",
-        "the gate proof's Security rows",
-        rows(lambda row: row.get("surface") == "Security"),
+        "the gate proof's security rows",
+        rows(
+            lambda row: (
+                row.get("surface") == "Security" or row.get("id") in SECURITY_ROWS
+            )
+        ),
     ),
     ("policy/**", "the tool rows' ignore lists", None),
+    ("run/tool-gates.py", "the tool rows' pins and flags", None),
+    ("run/pr-text.py", "the pull request text pattern set", None),
+    ("run/licence.py", "the licence row", None),
+    (".github/licence-policy.toml", "the licence policy and its declarations", None),
+    ("**/zizmor.yml", "a tool's in-tree configuration", None),
+    ("**/zizmor.yaml", "a tool's in-tree configuration", None),
+    ("**/.github/actionlint.yml", "a tool's in-tree configuration", None),
+    ("**/.github/actionlint.yaml", "a tool's in-tree configuration", None),
+    ("**/osv-scanner.toml", "a tool's in-tree configuration", None),
+    ("**/.mcp.json", "an agent's MCP servers", None),
+    ("**/.claude/commands/**.md", "a command's tool grants", grants),
+    ("**/.claude/agents/**.md", "an agent's tool grants", grants),
+    ("**/.claude/skills/**/SKILL.md", "a skill's tool grants", grants),
+    ("**/claude-code/config/commands/**.md", "a command's tool grants", grants),
+    ("**/claude-code/config/agents/**.md", "an agent's tool grants", grants),
+    ("**/claude-code/config/skills/**/SKILL.md", "a skill's tool grants", grants),
     ("outbound/outbound.go", "the outbound text pattern set", None),
     ("**/memory-write-guard.sh", "the memory write guard", None),
     ("**/captain.md", "the captain's standing instructions", None),
