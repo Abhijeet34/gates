@@ -1,0 +1,82 @@
+name: gate shadow (shared)
+
+# Runs the CALLING repository's gate registry (.github/gates.toml) through
+# run/gate.py beside its own check jobs and records the verdict, without
+# gating: run/gate-shadow.sh exits 0 whatever the gates decided, the runner
+# step is continue-on-error, and a caller keeps this job out of its required
+# status's `needs`. The comparison with the caller's own jobs is read later
+# from the uploaded records; README.md, "The shadow job", owns the design.
+#
+# This file is a BOOTSTRAP: the trigger, the token's permissions, the runner
+# and the checkouts, which must live in a workflow file. The gate itself runs
+# from the gates commit the caller's .github/gates.lock names, or from this
+# file's own commit when there is no lock; README.md, "Pinning", owns the design.
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  shadow:
+    name: gate runner (shadow)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The base of the change must be present for the selector's diff.
+          fetch-depth: 0
+
+      # gates itself, at this workflow's own commit, beside the caller's
+      # checkout. Nothing from it runs until the step below has named its
+      # source, so an empty context that falls back to the caller's repository
+      # is refused before the caller could supply the judge.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .gates
+          # The whole of main, so run/lock.sh can decide ancestry on it.
+          fetch-depth: 0
+          persist-credentials: false
+
+      # Out of the caller's tree, which the gate reads, then checked out at the
+      # commit the caller's .github/gates.lock names once run/lock.sh has
+      # proved it may run; README.md, "Pinning", owns the controls.
+      # `job` is not an allowed context in job-level `env`, only in a step's.
+      - name: Resolve the locked gates commit
+        env:
+          GATES_REPOSITORY: ${{ job.workflow_repository }}
+          BOOTSTRAP_SHA: ${{ job.workflow_sha }}
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR_AUTHOR_ID: ${{ github.event.pull_request.user.id }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          [ -n "$GATES_REPOSITORY" ] && [ -n "$BOOTSTRAP_SHA" ] || {
+            echo "::error::job.workflow_repository or job.workflow_sha is empty, so the gates source cannot be named." >&2
+            exit 1
+          }
+          mv .gates "$RUNNER_TEMP/gates"
+          echo "GATES_DIR=$RUNNER_TEMP/gates" >>"$GITHUB_ENV"
+          GATES_DIR="$RUNNER_TEMP/gates" bash -e "$RUNNER_TEMP/gates/run/lock.sh"
+
+      # Non-gating twice over: the script exits 0, and a crash of the runner
+      # itself still leaves this step, and so the job, green.
+      - name: Run the gate runner in shadow
+        continue-on-error: true
+        env:
+          SHADOW_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          SHADOW_STORE: ${{ runner.temp }}/gate-shadow
+        run: bash -e "$GATES_DIR/run/gate-shadow.sh"
+
+      # 90 days of retention outlasts the 14-day comparison window.
+      - name: Keep the records
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: gate-shadow-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/gate-shadow
+          if-no-files-found: warn
