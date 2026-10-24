@@ -36,7 +36,7 @@ import sys
 import time
 from pathlib import Path
 
-PINS = {"zizmor": "1.29.0", "actionlint": "1.7.12", "osv-scanner": "2.6.0"}
+PINS = {"zizmor": "1.29.0", "actionlint": "1.7.12", "osv-scanner": "2.7.0"}
 DB_ENV = "OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY"
 MAX_DB_AGE_DAYS = 7
 TIMEOUT = 120

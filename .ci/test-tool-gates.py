@@ -162,9 +162,9 @@ STUB_CASES = [
         "osv-scanner of another version",
         "osv",
         LOCK,
-        stubbed({"osv-scanner": ("2.7.0", 0)}, database()),
+        stubbed({"osv-scanner": ("2.6.0", 0)}, database()),
         2,
-        "osv-scanner reports 2.7.0, the pin is 2.6.0",
+        "osv-scanner reports 2.6.0, the pin is 2.7.0",
     ),
     (
         "zizmor with no findings passes",
@@ -234,7 +234,7 @@ STUB_CASES = [
         "osv with the variable unset",
         "osv",
         LOCK,
-        stubbed({"osv-scanner": ("2.6.0", 0)}),
+        stubbed({"osv-scanner": ("2.7.0", 0)}),
         2,
         refused("missing-database"),
     ),
@@ -242,7 +242,7 @@ STUB_CASES = [
         "osv with an empty database directory",
         "osv",
         LOCK,
-        stubbed({"osv-scanner": ("2.6.0", 0)}, fresh_dir()),
+        stubbed({"osv-scanner": ("2.7.0", 0)}, fresh_dir()),
         2,
         "holds no all.zip",
     ),
@@ -250,7 +250,7 @@ STUB_CASES = [
         "osv with a database 8 days old",
         "osv",
         LOCK,
-        stubbed({"osv-scanner": ("2.6.0", 0)}, database({"npm": 8})),
+        stubbed({"osv-scanner": ("2.7.0", 0)}, database({"npm": 8})),
         2,
         refused("stale-database"),
     ),
@@ -258,7 +258,7 @@ STUB_CASES = [
         "osv with one of two databases 8 days old",
         "osv",
         LOCK,
-        stubbed({"osv-scanner": ("2.6.0", 0)}, database({"npm": 0, "crates.io": 8})),
+        stubbed({"osv-scanner": ("2.7.0", 0)}, database({"npm": 0, "crates.io": 8})),
         2,
         "crates.io/all.zip is 8.0 days old, the limit is 7",
     ),
@@ -266,7 +266,7 @@ STUB_CASES = [
         "osv with two fresh databases counts both",
         "osv",
         LOCK,
-        stubbed({"osv-scanner": ("2.6.0", 0)}, database({"npm": 0, "crates.io": 1})),
+        stubbed({"osv-scanner": ("2.7.0", 0)}, database({"npm": 0, "crates.io": 1})),
         0,
         "no known vulnerabilities (2 database file(s))",
     ),
@@ -274,7 +274,7 @@ STUB_CASES = [
         "osv with a database 6 days old passes",
         "osv",
         LOCK,
-        stubbed({"osv-scanner": ("2.6.0", 0)}, database({"npm": 6})),
+        stubbed({"osv-scanner": ("2.7.0", 0)}, database({"npm": 6})),
         0,
         "no known vulnerabilities",
     ),
@@ -282,7 +282,7 @@ STUB_CASES = [
         "osv exit 1 is a finding",
         "osv",
         LOCK,
-        stubbed({"osv-scanner": ("2.6.0", 1, "GHSA-xxxx")}, database()),
+        stubbed({"osv-scanner": ("2.7.0", 1, "GHSA-xxxx")}, database()),
         1,
         "tool-gates: osv-scanner refused the tree: known vulnerabilities",
     ),
@@ -290,7 +290,7 @@ STUB_CASES = [
         "osv exit 128 says nothing was scanned",
         "osv",
         {"README.md": "x"},
-        stubbed({"osv-scanner": ("2.6.0", 128)}, database()),
+        stubbed({"osv-scanner": ("2.7.0", 128)}, database()),
         0,
         "no package source in the tree, nothing to check",
     ),
@@ -299,7 +299,7 @@ STUB_CASES = [
         "osv",
         LOCK,
         stubbed(
-            {"osv-scanner": ("2.6.0", 127, "no offline version of the OSV database")},
+            {"osv-scanner": ("2.7.0", 127, "no offline version of the OSV database")},
             database(),
         ),
         2,
@@ -309,7 +309,7 @@ STUB_CASES = [
         "osv exit 127 of another cause",
         "osv",
         LOCK,
-        stubbed({"osv-scanner": ("2.6.0", 127, "panic")}, database()),
+        stubbed({"osv-scanner": ("2.7.0", 127, "panic")}, database()),
         2,
         refused("tool-error"),
     ),
@@ -375,7 +375,7 @@ def shadow(since):
             {
                 "zizmor": ("1.29.0", 13),
                 "actionlint": ("1.7.12", 1),
-                "osv-scanner": ("2.6.0", 1),
+                "osv-scanner": ("2.7.0", 1),
             },
             database(),
         ),
@@ -420,7 +420,8 @@ BAD_EXPRESSION = WORKFLOW.replace("echo hi", "echo ${{ github.nope }}")
 NPM_LOCK = (
     '{"name": "fx", "lockfileVersion": 3, "requires": true, "packages": {'
     '"": {"name": "fx", "version": "1.0.0", "dependencies": {"lodash": "%s"}},'
-    '"node_modules/lodash": {"version": "%s"}}}\n'
+    '"node_modules/lodash": {"version": "%s",'
+    ' "resolved": "https://registry.npmjs.org/lodash/-/lodash-%s.tgz"}}}\n'
 )
 CARGO_LOCK = (
     '[[package]]\nname = "time"\nversion = "0.1.45"\n'
@@ -473,7 +474,7 @@ def real_cases(seen):
         (
             "osv refuses lodash 4.17.15",
             "osv",
-            {"package-lock.json": NPM_LOCK % ("4.17.15", "4.17.15")},
+            {"package-lock.json": NPM_LOCK % (("4.17.15",) * 3)},
             env,
             1,
             "GHSA-35jh-r3h4-6jhm",
@@ -481,7 +482,7 @@ def real_cases(seen):
         (
             "osv passes lodash 4.18.1",
             "osv",
-            {"package-lock.json": NPM_LOCK % ("4.18.1", "4.18.1")},
+            {"package-lock.json": NPM_LOCK % (("4.18.1",) * 3)},
             env,
             0,
             "no known vulnerabilities",

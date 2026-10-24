@@ -248,7 +248,7 @@ A refusal that is not a finding exits 2 and prints `tool-gates: refused (TYPE)`,
 | --- | --- | --- | --- |
 | zizmor | 1.29.0 | `PINS` in `run/tool-gates.py` | `zizmor --version` before every run |
 | actionlint | 1.7.12 (the latest release, 2026-03-30) | the same | `actionlint --version` |
-| OSV-Scanner | 2.6.0 (35 days old on 2026-10-19; 2.7.0 is 7) | the same | `osv-scanner --version` |
+| OSV-Scanner | 2.7.0 (12 days old on 2026-10-24) | the same | `osv-scanner --version` |
 
 A runner row also lists the version probe under `tools`, so the runner's cache key moves with the pin.
 
@@ -257,10 +257,11 @@ Nothing here installs them, and the CI jobs do not either (see "Not in CI" below
 
 ```bash
 uv tool install zizmor==1.29.0
-curl -fsSLO https://github.com/google/osv-scanner/releases/download/v2.6.0/osv-scanner_linux_amd64
+curl -fsSLO https://github.com/google/osv-scanner/releases/download/v2.7.0/osv-scanner_linux_amd64
 ```
 
-- `osv-scanner_linux_amd64` has sha256 `ca69b3d3cd08f889a49dc0a383122f71cc528b83803671df5fd874d97485b108` and `osv-scanner_darwin_arm64` has `98c460dcd37de25819babd757d04542045b6243113e209edcd4d89fedb0256b4`, from the release's `osv-scanner_SHA256SUMS` (read 2026-10-19). Verify before `chmod +x`.
+- `osv-scanner_linux_amd64` has sha256 `160c6253e2922e9e0a6a9771c5c4c40a4b3c6090b34a3cdd5e80c96cc2e4218b` and `osv-scanner_darwin_arm64` has `d4926ef8da134332543be276dff157e4c170f99ad91fc48e89448a8816bdf70b`, from the release's `osv-scanner_SHA256SUMS` (read 2026-10-24). Verify before `chmod +x`.
+- From 2.7.0 a lockfile package entry with no `resolved` URL is treated as local and skipped, so a hand-written npm fixture needs `resolved` or it scans clean.
 - actionlint 1.7.12 is the release tarball `actionlint_1.7.12_linux_amd64.tar.gz` (sha256 `8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8`) or `brew install actionlint` on the Mac.
 
 **The offline database** is OSV's per-ecosystem `all.zip` under the directory `OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY` names.
