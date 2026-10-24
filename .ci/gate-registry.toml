@@ -626,12 +626,12 @@ suite = "shell"
 command = "run/tool-gates.py"
 red = '''
 mkdir -p bin db/npm && : > db/npm/all.zip && echo '{}' > package-lock.json
-printf '#!/bin/sh\n[ "$1" = --version ] && { echo "osv-scanner version: 2.6.0"; exit 0; }\ncase " $* " in *" --offline "*) exit 1 ;; esac\nexit 99\n' > bin/osv-scanner
+printf '#!/bin/sh\n[ "$1" = --version ] && { echo "osv-scanner version: 2.7.0"; exit 0; }\ncase " $* " in *" --offline "*) exit 1 ;; esac\nexit 99\n' > bin/osv-scanner
 chmod +x bin/osv-scanner
 '''
 clean = '''
 mkdir -p bin db/npm && : > db/npm/all.zip && echo '{}' > package-lock.json
-printf '#!/bin/sh\n[ "$1" = --version ] && { echo "osv-scanner version: 2.6.0"; exit 0; }\ncase " $* " in *" --offline "*) exit 0 ;; esac\nexit 99\n' > bin/osv-scanner
+printf '#!/bin/sh\n[ "$1" = --version ] && { echo "osv-scanner version: 2.7.0"; exit 0; }\ncase " $* " in *" --offline "*) exit 0 ;; esac\nexit 99\n' > bin/osv-scanner
 chmod +x bin/osv-scanner
 '''
 run = 'py=$(command -v python3); PATH="$PWD/bin" OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY="$PWD/db" "$py" "$GATE" osv .'
@@ -648,12 +648,12 @@ command = "run/tool-gates.py"
 red = '''
 mkdir -p bin db/npm && : > db/npm/all.zip && echo '{}' > package-lock.json
 python3 -c "import os,time; t=time.time()-8*86400; os.utime('db/npm/all.zip',(t,t))"
-printf '#!/bin/sh\n[ "$1" = --version ] && { echo "osv-scanner version: 2.6.0"; exit 0; }\nexit 0\n' > bin/osv-scanner
+printf '#!/bin/sh\n[ "$1" = --version ] && { echo "osv-scanner version: 2.7.0"; exit 0; }\nexit 0\n' > bin/osv-scanner
 chmod +x bin/osv-scanner
 '''
 clean = '''
 mkdir -p bin db/npm && : > db/npm/all.zip && echo '{}' > package-lock.json
-printf '#!/bin/sh\n[ "$1" = --version ] && { echo "osv-scanner version: 2.6.0"; exit 0; }\nexit 0\n' > bin/osv-scanner
+printf '#!/bin/sh\n[ "$1" = --version ] && { echo "osv-scanner version: 2.7.0"; exit 0; }\nexit 0\n' > bin/osv-scanner
 chmod +x bin/osv-scanner
 '''
 run = 'py=$(command -v python3); PATH="$PWD/bin" OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY="$PWD/db" "$py" "$GATE" osv .'
