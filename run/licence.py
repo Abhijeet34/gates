@@ -6,18 +6,20 @@ Usage: licence.py [--policy FILE] [root]   (defaults: .github/licence-policy.tom
 Every tracked `package-lock.json`, `uv.lock`, `pnpm-lock.yaml` and `Cargo.lock`
 (none under node_modules) lists dependencies, and every tracked file under a
 `vendored` glob of the policy is copied code. Each gets a licence expression: an
-npm lockfile entry's `license`; a pnpm package's from its installed package.json;
-a crate's from `cargo metadata --offline`; for a uv.lock package, which records
+npm lockfile entry's `license`; a pnpm package's from its installed package.json, read only at the path its
+lock entry derives; a crate's from `cargo metadata --offline`, run from outside
+the tree so that none of the tree's cargo or toolchain configuration applies; for a uv.lock package, which records
 none, the policy's `[declared]` entry; for a vendored file, its own
 `SPDX-License-Identifier` in its first 30 lines, else a `[declared]` path entry.
 README.md, "The licence row", owns the policy's shape.
 
 The expression is read as SPDX: `OR` takes its best alternative, `AND` its worst
-part, and an id is `allowed`, `review` or `refused` by the list that names it.
-An id no list names, an expression that does not parse, and a dependency or file
-with no licence all need review. A refused licence refuses; one that needs review
-refuses until `[reviewed]` records why it was accepted, which no entry can do for
-a refused one.
+part, and an id is `allowed`, `review` or `refused` by the list that names it,
+whatever its case. An id no list names, an expression that does not parse, and a
+dependency or file with no licence all need review. A refused licence refuses; one
+that needs review refuses until `[reviewed]` records the expression it accepts and
+why, which no entry can do for a refused one, and an entry accepts only that
+expression, so a dependency whose licence has since changed needs review again.
 
 Exit status: 0 every licence allowed or reviewed, 1 a finding, 2 could not
 decide. Every exit 2 prints `licence: undecided (TYPE): ...`, and TYPE is one of:
@@ -29,9 +31,11 @@ tool-error   git failed, root is not a git checkout, or cargo metadata failed.
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
+import tempfile
 import tomllib
 from pathlib import Path
 
@@ -53,6 +57,13 @@ KEY = re.compile(r"(npm|uv|cargo):[^@\s]+(@\S+)?|path:\S+")
 PNPM_KEY = re.compile(r"  ['\"]?/?(@?[^@\s'\"]+)@([^(\s'\":]+)")
 NOT_RECORDED = "no licence recorded; name it under [declared]"
 RANK = {"allowed": 0, "review": 1, "refused": 2}
+# Environment variables that name a program cargo runs. The tree cannot set them, a caller's shell can.
+CARGO_WRAPPERS = ("RUSTC_WRAPPER", "RUSTC_WORKSPACE_WRAPPER")
+
+
+def fold(expr):
+    """An SPDX expression compared as the standard does: case-insensitive, spaces collapsed."""
+    return " ".join(expr.split()).casefold()
 
 
 class Undecided(Exception):
@@ -81,9 +92,9 @@ def policy_of(path):
     named = {}
     for k in LISTS:
         for lid in data.get(k, []) if isinstance(data.get(k), list) else []:
-            if lid in named and named[lid] != k:
-                problems.append(f"{lid!r} is in both {named[lid]} and {k}")
-            named[lid] = k
+            if fold(lid) in named and named[fold(lid)] != k:
+                problems.append(f"{lid!r} is in both {named[fold(lid)]} and {k}")
+            named[fold(lid)] = k
     for k in TABLES:
         v = data.get(k, {})
         if not isinstance(v, dict):
@@ -94,8 +105,17 @@ def policy_of(path):
                 problems.append(
                     f"[{k}] key {key!r} is not npm:NAME, uv:NAME, cargo:NAME or path:GLOB"
                 )
-            if not isinstance(val, str) or not val.strip():
-                problems.append(f"[{k}] {key!r} must name a licence or a reason")
+            if k == "reviewed":
+                if not (
+                    isinstance(val, dict)
+                    and set(val) == {"accepts", "reason"}
+                    and all(isinstance(v, str) and v.strip() for v in val.values())
+                ):
+                    problems.append(
+                        f"[{k}] {key!r} must be a table of accepts and reason"
+                    )
+            elif not isinstance(val, str) or not val.strip():
+                problems.append(f"[{k}] {key!r} must name a licence")
     if problems:
         raise Undecided("bad-policy", f"{path.name}: {'; '.join(problems)}")
     return {
@@ -134,7 +154,7 @@ def verdict(expr, lists):
                 raise ValueError("WITH and no exception")
             # An exception changes the terms, so the pair is judged only as listed.
             tok = f"{tok} WITH {exc}"
-        state = lists.get(tok)
+        state = lists.get(fold(tok))
         if state is None:
             return "review", f"{tok} is in no list of the policy"
         if state == "review":
@@ -234,6 +254,42 @@ def uv(root, path, text):
     return out
 
 
+def installed_manifest(modules, name, ver):
+    """The package.json `pnpm install` left for name@ver, or None.
+
+    Only the paths the lock entry derives are read: the virtual-store directory
+    (with the `_` suffix pnpm adds for peers), or `node_modules/NAME` when hoisted.
+    A package.json elsewhere is never taken for it, and neither is one reached
+    through a symlink, which could lead out of the tree.
+    """
+    store = modules / ".pnpm"
+    stem = f"{name.replace('/', '+')}@{ver}"
+    dirs = []
+    if store.is_dir():
+        dirs = sorted(
+            d.name
+            for d in store.iterdir()
+            if d.name == stem or d.name.startswith(f"{stem}_")
+        )
+    derived = [
+        *(store / d / "node_modules" / name / "package.json" for d in dirs),
+        modules / name / "package.json",
+    ]
+    for manifest in derived:
+        if not manifest.is_file() or manifest.resolve() != manifest:
+            continue
+        try:
+            data = json.loads(manifest.read_text())
+        except (OSError, ValueError):
+            continue
+        found = (
+            (data.get("name"), data.get("version")) if isinstance(data, dict) else None
+        )
+        if found == (name, ver):
+            return data
+    return None
+
+
 def pnpm(root, path, text):
     """[(key, version, licence or None, why none)] of a pnpm lockfile, read from the installed tree.
 
@@ -246,29 +302,16 @@ def pnpm(root, path, text):
     section = re.search(r"^packages:[ \t]*\n(.*?)(?=^\S|\Z)", text, re.M | re.S)
     keys = PNPM_KEY.findall(section.group(1) if section else "")
     modules = (root / path).parent / "node_modules"
-    installed = {}
-    for manifest in [
-        *modules.glob(".pnpm/*/node_modules/*/package.json"),
-        *modules.glob(".pnpm/*/node_modules/@*/*/package.json"),
-        *modules.glob("*/package.json"),
-        *modules.glob("@*/*/package.json"),
-    ]:
-        # A symlinked directory is a dependency's link to a package listed in its own right.
-        if manifest.parent.is_symlink():
-            continue
-        try:
-            data = json.loads(manifest.read_text())
-        except (OSError, ValueError):
-            continue
-        if isinstance(data, dict):
-            got = (data.get("name"), data.get("version"))
-            installed[got] = licence_field(data.get("license"))
     out = []
     for name, ver in dict.fromkeys(keys):
         if ver == "link":
             continue
-        if (name, ver) in installed:
-            expr, why = installed[name, ver], "its package.json names no licence"
+        data = installed_manifest(modules, name, ver)
+        if data is not None:
+            expr, why = (
+                licence_field(data.get("license")),
+                "its package.json names no licence",
+            )
         else:
             expr, why = None, "not installed, so no package.json to read"
         out.append((f"npm:{name}", ver, expr, f"{why}; name it under [declared]"))
@@ -280,6 +323,11 @@ def cargo(root, path, text):
 
     --offline reads the crates a `cargo fetch --locked` left, so the row makes no
     network call; --all-features resolves every crate the lockfile lists.
+
+    cargo runs in an empty directory beside nothing of the tree's: it takes its
+    configuration (a `rustc-wrapper` names a program it then runs) and rustup its
+    toolchain override from the working directory, so --manifest-path names the
+    crates and the tree configures neither. The toolchain is the runner's own.
     """
     try:
         locked = tomllib.loads(text).get("package", [])
@@ -288,16 +336,22 @@ def cargo(root, path, text):
     argv = [
         "cargo",
         "metadata",
+        "--manifest-path",
+        str((root / path).with_name("Cargo.toml")),
         "--offline",
         "--locked",
         "--all-features",
         "--format-version",
         "1",
     ]
+    # An empty wrapper, unlike an absent one, overrides a wrapper that cargo configuration names.
+    env = {k: v for k, v in os.environ.items() if k != "RUSTC"}
+    env.update({k: "" for k in CARGO_WRAPPERS})
     try:
-        proc = subprocess.run(
-            argv, cwd=(root / path).parent, capture_output=True, text=True
-        )
+        with tempfile.TemporaryDirectory() as outside:
+            proc = subprocess.run(
+                argv, cwd=outside, env=env, capture_output=True, text=True
+            )
     except FileNotFoundError as e:
         raise Undecided("tool-error", f"{path}: cargo metadata: {e}") from e
     if proc.returncode:
@@ -352,17 +406,25 @@ def path_entry(table, path):
 
 
 def judge(subject, expr, reviewed, lists, missing):
-    """The finding for one dependency or file, or None when its licence is accepted."""
+    """(the finding for one dependency or file or None, whether a [reviewed] entry accepted it)."""
     if expr is None:
         state, why = "review", missing
     else:
         state, why = verdict(expr, lists)
     if state == "refused":
-        return f"refused: {subject}: {why}"
-    if state == "review" and reviewed is None:
-        hint = "" if expr is None else "; record why it is accepted under [reviewed]"
-        return f"review: {subject}: {why}{hint}"
-    return None
+        return f"refused: {subject}: {why}", False
+    if state != "review":
+        return None, False
+    # An entry accepts the expression it records and no other, so a changed licence is reviewed again.
+    recorded = reviewed["accepts"] if reviewed and expr is not None else None
+    if recorded is not None and fold(recorded) == fold(expr):
+        return None, True
+    hint = ""
+    if expr is not None:
+        hint = "; record why it is accepted under [reviewed]"
+        if reviewed is not None:
+            hint = f"; [reviewed] accepts {reviewed['accepts']}, not {expr}"
+    return f"review: {subject}: {why}{hint}", False
 
 
 def tracked(root):
@@ -401,11 +463,10 @@ def check(root, policy):
         for key, version, expr, missing in READERS[name](root, rel, text):
             judged += 1
             expr = expr or entry(declared, key, version)
-            ok = entry(reviewed, key, version)
-            line = judge(
-                f"{rel}: {key} {version}", expr, ok, lists, missing
+            line, by_entry = judge(
+                f"{rel}: {key} {version}", expr, entry(reviewed, key, version), lists, missing
             )  # fmt: skip
-            accepted += line is None and ok is not None
+            accepted += by_entry
             if line:
                 found.append(line)
     for rel in paths:
@@ -415,12 +476,11 @@ def check(root, policy):
             continue
         judged += 1
         expr = header(root / rel) or path_entry(declared, rel)
-        ok = path_entry(reviewed, rel)
-        line = judge(
-            f"{rel}: vendored", expr, ok, lists,
+        line, by_entry = judge(
+            f"{rel}: vendored", expr, path_entry(reviewed, rel), lists,
             f"no SPDX-License-Identifier in its first {HEADER_LINES} lines and no [declared] path",
         )  # fmt: skip
-        accepted += line is None and ok is not None
+        accepted += by_entry
         if line:
             found.append(line)
     return found, judged, accepted
