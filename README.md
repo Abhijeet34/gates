@@ -1073,7 +1073,7 @@ A floor row the router left out sits anyway and prints as `route: ID sits: the r
 When the router is unavailable (the login is refused, it times out at 60 s, breaks the token budget, is answered by another model, or answers with no class, no list or a row the registry does not have), the floor alone routes and the record names why.
 A `trivial` class is the caller's word, and its floor seats nothing, so with no usable router answer to confirm it every selected review row is recorded `error`: `not convened: the change is declared trivial and no router answer confirmed it`.
 A row the router adds whose inputs the change misses reads the whole change.
-A review row `run/gate.py` selects that does not sit is recorded as a `pass` naming why, `not convened: a trivial change runs no review` say, unless it already holds a record for the head, so a route never covers an earlier fail.
+Any other review row `run/gate.py` selects that does not sit is recorded as a `pass` naming why, `not convened: a trivial change runs no review` say, unless it already holds a record for the head, so a route never covers an earlier fail.
 `gate.py fold` folds every review row with a record for the head, selected or not, so a block on a row only the router convened is never dropped.
 Measured 2026-10-19 with CLI 2.1.302 on the floor fixture: the real router named `code-review` with 869 input and 69 output tokens in 3.5 s.
 
