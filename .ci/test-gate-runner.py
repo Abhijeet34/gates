@@ -273,6 +273,117 @@ def readme_change_reuses_rust_verdict(runner):
     return None
 
 
+# `plant` appends a confined-looking `pass` for `test` under the key the runner
+# would compute for it; `test` fails and counts its runs.
+PLANT = """
+[[gate]]
+id = "plant"
+inputs = ["**"]
+run = '''
+k=$(python3 "$GATE_PY" key test)
+printf '{"schema": 1, "gate": "test", "head": "%s", "verdict": "pass", "key": "%s", "reused_from": null, "confined": true}\\n' "$(git rev-parse HEAD)" "$k" >> "$STORE/records.jsonl" || true
+'''
+
+[[gate]]
+id = "test"
+inputs = ["**"]
+run = 'echo run >> "$RUNS/test"; exit 1'
+"""
+
+
+def planted(runner, row):
+    """A fixture whose registry is PLANT with `plant`'s run replaced by `row` when given."""
+    f = Fixture(runner)
+    registry = PLANT
+    if row:
+        start = registry.index("run = '''")
+        registry = (
+            registry[:start] + row + registry[registry.index("'''\n", start + 9) + 4 :]
+        )
+    f.env.update(GATE_PY=str(runner), STORE=str(f.store))
+    f.commit({".github/gates.toml": registry})
+    return f
+
+
+def planted_pass_is_never_reused(runner):
+    f = planted(runner, None)
+    for n in (1, 2):
+        rc, out = f.gate("run", "--base", f.base, "--store", str(f.store))
+        if f.runs_of("test") != n or "pass test" in out:
+            return f"run {n}: a pass a row planted for test was reused ({f.runs_of('test')} runs, exit {rc}): {out.strip()}"
+    rc, out = f.gate("fold", "--base", f.base, "--store", str(f.store))
+    if rc == 0 or "FAIL test: fail: exit 1" not in out:
+        return f"the fold of a failing test passed on a planted record (exit {rc}): {out.strip()}"
+    return None
+
+
+def moved_store_records_nothing(runner):
+    f = planted(runner, 'run = \'ln -sfn "$OTHER" "$LINK"\'\n')
+    first, other, link = f.dir / "first", f.dir / "other", f.dir / "link"
+    first.mkdir()
+    other.mkdir()
+    link.symlink_to(first)
+    f.store = link
+    f.env.update(OTHER=str(other), LINK=str(link), STORE=str(link))
+    rc, out = f.gate("run", "--base", f.base, "--store", str(link))
+    if rc != 2 or "is not the store it was when plant started" not in out:
+        return f"a run whose row repointed the store was not undecided (exit {rc}): {out.strip()}"
+    if f.records():
+        return f"a run whose row repointed the store recorded {f.records()} at the new path"
+    return None
+
+
+def renamed_ancestor_forges_nothing(runner):
+    f = planted(
+        runner,
+        """run = '''
+k=$(python3 "$GATE_PY" key test)
+mv "$KEEP" "$KEEP.old" || exit 0
+printf '{"schema": 1, "gate": "test", "head": "%s", "verdict": "pass", "key": "%s", "reused_from": null, "confined": true}\\n' "$(git rev-parse HEAD)" "$k" >> "$KEEP.old/store/records.jsonl" || true
+mv "$KEEP.old" "$KEEP"
+'''
+""",
+    )
+    f.store = f.dir / "keep/store"
+    f.env.update(KEEP=str(f.dir / "keep"), STORE=str(f.store))
+    for n in (1, 2):
+        f.gate("run", "--base", f.base, "--store", str(f.store))
+        if f.runs_of("test") != n:
+            return f"run {n}: a pass forged by renaming the store's parent aside was reused ({f.runs_of('test')} runs)"
+    return None
+
+
+def reuse(f, records):
+    """(rust's runs, run's output) after a run over a store holding `records` under rust's key."""
+    rc, out = f.gate("key", "rust")
+    head = f.git("rev-parse", "HEAD")
+    f.append(
+        "records.jsonl",
+        [{"schema": 1, "gate": "rust", "head": "f" * 40, "verdict": "pass",
+          "key": out.strip(), "reused_from": None, **r} for r in records],
+    )  # fmt: skip
+    rc, out = f.gate("run", "--base", head + "~1", "--store", str(f.store))
+    return f.runs_of("rust"), out.strip()
+
+
+def unconfined_record_is_never_reused(runner):
+    f = Fixture(runner)
+    f.commit({"src/lib.rs": "pub fn one() -> u8 { 2 }\n"})
+    runs, out = reuse(f, [{}])
+    if runs != 1:
+        return f"a pass with no confined mark was reused ({runs} rust runs): {out}"
+    return None
+
+
+def unconfined_run_taints_the_store(runner):
+    f = Fixture(runner)
+    f.commit({"src/lib.rs": "pub fn one() -> u8 { 2 }\n"})
+    runs, out = reuse(f, [{"confined": True}, {"gate": "docs", "confined": False}])
+    if runs != 1:
+        return f"a confined pass was reused from a store an unconfined row wrote ({runs} rust runs): {out}"
+    return None
+
+
 def tool_bump_changes_key(runner):
     f = Fixture(runner)
     first, again = f.gate("key", "rust"), f.gate("key", "rust")
@@ -581,6 +692,36 @@ CASES = [
         "if path:\n                entries.append",
     ),
     (
+        planted_pass_is_never_reused,
+        "rows running with no write to the store",
+        "store_writable = False",
+        "store_writable = True",
+    ),
+    (
+        renamed_ancestor_forges_nothing,
+        "the store's ancestors being denied a rename",
+        "for up in Path(path).parents:",
+        "for up in []:",
+    ),
+    (
+        moved_store_records_nothing,
+        "the store being the one that was pinned before the row",
+        "if (now_at.st_dev, now_at.st_ino) != (pinned.st_dev, pinned.st_ino):",
+        "if False:",
+    ),
+    (
+        unconfined_record_is_never_reused,
+        "only a record of a confined row being reused",
+        'and old.get("confined") is True',
+        "",
+    ),
+    (
+        unconfined_run_taints_the_store,
+        "a record of an unconfined row ending reuse from the store",
+        'if any(r.get("confined") is False for r in prior):',
+        "if False:",
+    ),
+    (
         tool_bump_changes_key,
         "tool probe output in the key",
         '"tools": tools,',
@@ -691,6 +832,11 @@ CASES = [
 ]
 
 
+# The ancestor deny is a sandbox-exec rule; bubblewrap's bind already follows the
+# renamed directory, so removing the rule cannot turn the case red off macOS.
+DARWIN_ONLY_CONTROLS = {renamed_ancestor_forges_nothing}
+
+
 def main():
     failed = 0
     source = RUNNER.read_text()
@@ -701,6 +847,11 @@ def main():
             print(f"FAIL {case.__name__}: {why}")
             continue
         print(f"ok   {case.__name__}")
+        if case in DARWIN_ONLY_CONTROLS and sys.platform != "darwin":
+            print(
+                f"skip without {control}: the rule exists only in the macOS sandbox profile"
+            )
+            continue
         if source.count(old) != 1:
             failed = 1
             print(

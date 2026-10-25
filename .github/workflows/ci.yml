@@ -43,7 +43,7 @@ jobs:
       - name: Install the watermark gate's inspector
         run: sudo apt-get update && sudo apt-get install -y libimage-exiftool-perl
 
-      # run/review.py's reproduction sandbox (bwrap) needs the user namespaces Ubuntu 24.04 restricts.
+      # run/review.py's reproduction sandbox and run/gate.py's row sandbox (bwrap) need the user namespaces Ubuntu 24.04 restricts.
       - name: Install the review verifier's sandbox
         run: |
           sudo apt-get install -y bubblewrap
