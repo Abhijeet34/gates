@@ -116,6 +116,10 @@ PERMISSIONS = re.compile(r"(\s*)permissions\s*:")
 NODE = r"(?:^\s*|[-:?]\s+|[\[{,]\s*)"
 ANCHOR = re.compile(NODE + r"[&*][^\s\[\]{},&*>]")
 FLOW = re.compile(NODE + r"\{")
+# `key: |`, `- >-`, `key: |2+`: the line that opens a block scalar.
+BLOCK_SCALAR = re.compile(
+    r"^(\s*)((?:-\s+)*)([^\s#'\"-][^:]*:\s+)?[|>](?:[+-]?[1-9]?|[1-9][+-])\s*$"
+)
 UNREAD_KEY = [
     (
         re.compile(r"\bpermissions\b"),
@@ -138,6 +142,22 @@ def uncomment(line):
     if '"' not in line and "'" not in line:
         line = re.sub(r"(^|\s)#.*", "", line)
     return line.rstrip()
+
+
+def scalar_bodies(lines):
+    """Indexes of the lines inside a block scalar, whose text is data and not YAML nodes."""
+    inside, parent = set(), None
+    for i, line in enumerate(lines):
+        if parent is not None:
+            if not line.strip() or len(line) - len(line.lstrip()) > parent:
+                inside.add(i)
+                continue
+            parent = None
+        m = BLOCK_SCALAR.match(line)
+        if m:
+            # A block scalar's body sits deeper than its key's column, or than its dash.
+            parent = len(m.group(1) + m.group(2)) if m.group(3) else len(m.group(1))
+    return inside
 
 
 def key_blocks(lines, key):
@@ -164,6 +184,7 @@ def workflow(path, old, new):
     out = []
     if key_blocks(a, PERMISSIONS) != key_blocks(b, PERMISSIONS):
         out.append("a permissions: block changed")
+    skip_a, skip_b = scalar_bodies(a), scalar_bodies(b)
     # Line numbers are kept through dropping blank lines, so a finding names the line.
     a = [(n, line) for n, line in enumerate(a, 1) if line]
     b = [(n, line) for n, line in enumerate(b, 1) if line]
@@ -180,8 +201,12 @@ def workflow(path, old, new):
             continue
         out += [f"{side} {n} {why}" for rule, why in UNREAD_KEY if rule.search(line)]
     if changed:
-        anchored = [("base line", n) for n, x in a if ANCHOR.search(x)]
-        anchored += [("line", n) for n, x in b if ANCHOR.search(x)]
+        anchored = [
+            ("base line", n) for n, x in a if n - 1 not in skip_a and ANCHOR.search(x)
+        ]
+        anchored += [
+            ("line", n) for n, x in b if n - 1 not in skip_b and ANCHOR.search(x)
+        ]
         if anchored:
             side, n = anchored[0]
             out.append(
