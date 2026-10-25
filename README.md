@@ -175,7 +175,7 @@ Where 7.2 no longer matches what exists:
 - No channel allowlist, Actions permission setting as code or App manifest file exists; the App's permissions are written by `register-app.py` and subset by `roles.json` and `app-token.sh`.
 - `route.toml` marks `[repos]` captain-owned beside `[tiers]`, and moving a repository to a wider tier widens which vendors receive its source, so `[repos]` is added.
 - `settings*.json` misses `managed-settings.json`, which outranks every other scope, and catches an editor's `.vscode/settings.json`, so the globs name Claude Code's files.
-- A workflow is read by lines, not parsed, because the gates are standard-library Python, which has no YAML parser; it therefore fails closed, and an edit to a workflow that uses an anchor or a flow mapping is refused even when no token changes.
+- A workflow is read by lines, not parsed, because the gates are standard-library Python, which has no YAML parser; it therefore fails closed, and an edit to a workflow that uses an anchor or a flow mapping is refused even when no token changes; the bodies of `|` and `>` block scalars are skipped when looking for an anchor or alias, so a shell `*)` in a `run:` block is not one.
 - 7.1 says the PR text scan shares the outbound pattern set with `fac`; it is a separate set in `run/pr-text.py`, so that file is protected beside `outbound/outbound.go`.
 - Not protected, and candidates for the list: `.github/CODEOWNERS`, `.github/secret_scanning.yml`, `.githooks/**`, and a new workflow with no `permissions:` key, which takes the repository's default token.
 
