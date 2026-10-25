@@ -848,7 +848,9 @@ def main():
             continue
         print(f"ok   {case.__name__}")
         if case in DARWIN_ONLY_CONTROLS and sys.platform != "darwin":
-            print(f"skip without {control}: the rule exists only in the macOS sandbox profile")
+            print(
+                f"skip without {control}: the rule exists only in the macOS sandbox profile"
+            )
             continue
         if source.count(old) != 1:
             failed = 1
