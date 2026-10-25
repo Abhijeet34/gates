@@ -87,6 +87,22 @@ jobs:
     runs-on: ubuntu-latest
     permissions: *grant
 """
+SHELL_STAR = """name: ci
+on: [pull_request]
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: pick
+        run: |
+          case "$1" in
+            a) echo a ;;
+            *) echo other ;;
+          esac
+      - run: echo hi
+"""
 FLOW_JOB = """name: ci
 on: [pull_request]
 permissions:
@@ -151,6 +167,7 @@ BASE = {
     ".ci/gate-registry.toml": PROOF_REGISTRY,
     ".github/workflows/ci.yml": WORKFLOW,
     ".github/workflows/anchored.yml": ANCHORED,
+    ".github/workflows/star.yml": SHELL_STAR,
     ".github/workflows/flow.yml": FLOW_JOB,
     ".claude/commands/ship.md": COMMAND,
     ".claude/agents/critic.md": AGENT,
@@ -359,6 +376,48 @@ CASES = [
         },
         1,
         ".github/workflows/anchored.yml changes a workflow token's permissions: the file uses a YAML anchor or alias (base line 4), so any edit may change a token's permissions",
+    ),
+    (
+        "a shell *) in a run block, comment edited",
+        {
+            ".github/workflows/star.yml": SHELL_STAR.replace(
+                "name: ci", "name: ci # edited"
+            )
+        },
+        0,
+        "",
+    ),
+    (
+        "a shell *) in a run block, step added",
+        {
+            ".github/workflows/star.yml": SHELL_STAR.replace(
+                "      - run: echo hi\n",
+                "      - run: echo hi\n      - run: echo bye\n",
+            )
+        },
+        0,
+        "",
+    ),
+    (
+        "a real anchor beside a run block",
+        {
+            ".github/workflows/star.yml": SHELL_STAR.replace(
+                "      - run: echo hi\n",
+                "      - run: echo hi\n        env: &e\n          A: b\n",
+            )
+        },
+        1,
+        "the file uses a YAML anchor or alias (line 16)",
+    ),
+    (
+        "an alias right after a run block ends",
+        {
+            ".github/workflows/star.yml": SHELL_STAR.replace(
+                "          esac\n", "          esac\n        env: *e\n"
+            )
+        },
+        1,
+        "the file uses a YAML anchor or alias (line 15)",
     ),
     (
         "a flow-style job mapping gains permissions",
