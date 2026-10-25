@@ -121,6 +121,24 @@ The release's `sync.sh` runs on the machine that bumps, as `install.sh deploy` d
 Dependabot was the alternative for the lock and does not fit it: its `github-actions` updater reads only workflow files, so it cannot move `.github/gates.lock`, and it cannot run `sync.sh`, so even a bump of the workflow pin would arrive with drifted copies.
 It stays the writer for the rare bootstrap pin bump, which needs `workflows` write.
 
+## The verdict cache
+
+`run/gate.py run --store DIR` reuses a `pass` recorded under a check's cache key instead of running the check, so a record is trusted only when the runner itself wrote it.
+Each row and each of its tool probes runs in a sandbox that cannot write `DIR`: macOS's `sandbox-exec` with a write denial on the store's real path, or bubblewrap (`bwrap`) elsewhere with the store bound read-only and the rest of the host as it was.
+The runner writes a row's record after the row has exited, under the key it computed, and marks it `confined`.
+It reads the store once, before any row or probe runs, and reuses a `pass` only from a record marked `confined: true`.
+A store holding any record marked `confined: false` reuses nothing, because that row could have written any other line in it.
+A row that leaves another directory at the store's path, by moving one of its ancestors, makes the run undecided (exit 2) with nothing recorded, since the store's device and inode are compared after every row.
+
+A host whose sandbox will not start (inside another `sandbox-exec`, on Ubuntu 24.04 with its default AppArmor limit on user namespaces, or with neither tool) runs every row unconfined, prints `gate: no sandbox keeps the rows from the store`, reuses nothing and marks its records `confined: false`.
+That costs the cache, never a verdict: every selected row runs, and the fold is unchanged.
+`ci.yml` installs bubblewrap and lifts the AppArmor limit for the `shell` job, which runs `.ci/test-gate-runner.py`.
+
+A store written before this rule holds no `confined` mark, so its records still fold but are never reused; the first run after the upgrade runs every row once.
+The sandbox keeps a row from the store and nothing else: a process outside the runner, under the same account, can still write it, so a store shared with unconfined tools carries no provenance.
+`run_one` and `probe` take the prior records and the sandbox's argv prefix as arguments, and default to no reuse and no sandbox, so a caller that drives them inside a box of its own never reuses a record that box's rows could have written.
+`.ci/test-gate-runner.py` holds each control to a case that goes red without it.
+
 ## The permissions-diff gate
 
 `run/permissions-diff.py --base B` reads `git diff B...HEAD` and refuses every change to the files that grant an agent authority, naming each path, in 0.12 s on this repository (measured 2026-10-19).
