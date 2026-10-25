@@ -1,0 +1,22 @@
+# gates' own registry for the gate runner, run in shadow by gate-shadow.yml.
+# These rows are the slice of ci.yml's `shell` job that needs only what a stock
+# runner holds (bash, git, python3); the rest waits for a way to install tools.
+# A row stays in shadow until run/gate.py's promotion rule lets it block.
+
+[[gate]]
+id = "workflow-policy"
+inputs = [".github/workflows/**", ".ci/test-workflow-policy.sh"]
+run = "bash .ci/test-workflow-policy.sh"
+shadow_since = 2026-10-24
+
+[[gate]]
+id = "checks-verdict"
+inputs = [".ci/checks-verdict.sh", ".ci/test-checks-verdict.sh"]
+run = "bash .ci/test-checks-verdict.sh"
+shadow_since = 2026-10-24
+
+[[gate]]
+id = "gate-runner"
+inputs = ["run/gate.py", ".ci/test-gate-runner.py"]
+run = "python3 .ci/test-gate-runner.py"
+shadow_since = 2026-10-24
