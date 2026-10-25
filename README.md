@@ -352,6 +352,10 @@ osv-scanner and actionlint run with `--config` and `-config-file` naming `policy
 osv-scanner also runs with `--no-ignore`, so a `.gitignore` that names a lockfile or its folder does not hide it from the scan.
 Both files hold a comment and no ignore.
 An ignore, when one is justified, is an entry in one of them with a reason, and `policy/**` is on the permissions-diff surface, so adding one is a class-2 decision.
+The one relaxation zizmor honours is a `moving-ref` record of `policy/relaxations.toml` (see "The weakening guard"): the row reads zizmor's `json-v1` output and drops an `unpinned-uses` finding only when a record covers that `uses:` value for `GITHUB_REPOSITORY`, read from `$GATES_DIR` as `run/weakening.py` reads it.
+The verdict prints `tool-gates: unpinned-uses at .github/workflows/ci.yml:5 matches recorded policy first-party-shared-at-main` for each one dropped, and every other finding keeps the row red.
+An `unpinned-uses` finding with `GATES_DIR` or `GITHUB_REPOSITORY` unset, or a policy file that fails its schema, is refused `undecided`; output that is not a JSON list of findings drops nothing.
+zizmor judges the whole tree with no base, so it cannot tell a commit pin turned back into `@main` from a new reference; the `weakening-moving-ref` row refuses that one, so a caller runs both.
 actionlint reads a project's config only inside a git repository, so a fixture tree needs a `.git` to show the bypass; `.ci/test-tool-gates.py --real` plants one, which osv-scanner's `.gitignore` cases need too.
 
 A `package-lock.json` or `npm-shrinkwrap.json` entry that has a `version`, no `resolved` and no `link`, whether under a `node_modules/` key or in a v1 `dependencies` map at any depth, is refused `undecided`, naming the file and the entry, before osv-scanner runs.
@@ -446,7 +450,7 @@ shadow_since = 2026-10-19
 ```
 
 `.ci/test-tool-gates.py` runs these rows through `run/gate.py` against stub tools and folds each to `shadow`.
-Eight registry rows (`workflow-zizmor`, `workflow-actionlint`, `advisories-osv`, `advisories-osv-undecided`, `advisories-osv-undecided-v1`, `advisories-osv-unscanned`, `advisories-osv-stale`, `tool-missing`) prove the script by execution with stub tools, because the `gates-proof` job installs none of the real ones.
+Nine registry rows (`workflow-zizmor`, `workflow-zizmor-moving-ref`, `workflow-actionlint`, `advisories-osv`, `advisories-osv-undecided`, `advisories-osv-undecided-v1`, `advisories-osv-unscanned`, `advisories-osv-stale`, `tool-missing`) prove the script by execution with stub tools, because the `gates-proof` job installs none of the real ones.
 
 **In CI.**
 The `shell` job installs the three pinned tools, with the checksums above, and downloads an npm-only database, then `.ci/check.sh` runs `.ci/test-tool-gates.py --real` when `CI` is set; a bare checkout runs the stub cases only, because a skip on a missing tool would pass the same way.

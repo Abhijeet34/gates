@@ -30,8 +30,12 @@ ROOT = Path(__file__).resolve().parent.parent
 GATE = ROOT / "run/tool-gates.py"
 RUNNER = ROOT / "run/gate.py"
 DB_ENV = "OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY"
+# GATES_DIR and GITHUB_REPOSITORY decide which recorded policy zizmor's findings meet,
+# so each case sets them itself rather than inheriting the runner's.
 CLEAN_ENV = {
-    k: v for k, v in os.environ.items() if k != DB_ENV and not k.startswith("GIT_")
+    k: v
+    for k, v in os.environ.items()
+    if k not in (DB_ENV, "GATES_DIR", "GITHUB_REPOSITORY") and not k.startswith("GIT_")
 }
 ENV = {
     **CLEAN_ENV,
@@ -152,6 +156,52 @@ def gate(check, files, env):
 
 
 WF = {".github/workflows/ci.yml": WORKFLOW}
+GATES_REF = "Abhijeet34/gates/.github/workflows/shared-x.yml@main"
+OTHER_REF = "someone/else/.github/workflows/shared-x.yml@main"
+RECORDED = {"GATES_DIR": str(ROOT), "GITHUB_REPOSITORY": "Abhijeet34/fixture"}
+
+
+def calling(*refs):
+    """A workflow with one job per ref, each calling that reusable workflow."""
+    jobs = "".join(f"  j{i}:\n    uses: {ref}\n" for i, ref in enumerate(refs))
+    return {".github/workflows/ci.yml": f"on: push\npermissions: {{}}\njobs:\n{jobs}"}
+
+
+def finding(ident, row, feature):
+    """One finding as zizmor 1.29.0's json-v1 output carries it, on a 0-based row."""
+    return {
+        "ident": ident,
+        "desc": "stub finding",
+        "locations": [
+            {
+                "symbolic": {
+                    "key": {"Local": {"verbatim_path": ".github/workflows/ci.yml"}}
+                },
+                "concrete": {
+                    "location": {"start_point": {"row": row}},
+                    "feature": feature,
+                },
+            }
+        ],
+    }
+
+
+def zizmor_json(*found):
+    return stubbed({"zizmor": ("1.29.0", 14, json.dumps(list(found)))})
+
+
+def gates_with(policy):
+    """A gates checkout holding only `policy` as its relaxation records."""
+    folder = fresh_dir()
+    (folder / "policy").mkdir()
+    (folder / "policy/relaxations.toml").write_text(policy)
+    return folder
+
+
+SELF_GRANT = (
+    '[[relaxation]]\nid = "self"\nratified = 2026-10-26\nby = "the change"\n'
+    'kinds = ["moving-ref"]\nrepos = ["*/*"]\nref = \'^.*$\'\n'
+)
 LOCK = {"package-lock.json": LOCKFILE}
 LODASH_RED = npm_lock(lodash("4.17.15"))
 LOCK_RED = {"package-lock.json": LODASH_RED}
@@ -268,6 +318,99 @@ STUB_CASES = [
         stubbed({"zizmor": ("1.29.0", 13)}),
         0,
         "no workflow files under .github/workflows, nothing to check",
+    ),
+    (
+        "zizmor drops an unpinned-uses finding a moving-ref record covers",
+        "zizmor",
+        calling(GATES_REF),
+        {**zizmor_json(finding("unpinned-uses", 4, GATES_REF)), **RECORDED},
+        0,
+        "unpinned-uses at .github/workflows/ci.yml:5 matches recorded policy first-party-shared-at-main",
+    ),
+    (
+        "zizmor keeps an unpinned-uses finding no record covers",
+        "zizmor",
+        calling(OTHER_REF),
+        {**zizmor_json(finding("unpinned-uses", 4, OTHER_REF)), **RECORDED},
+        1,
+        f"unpinned-uses at .github/workflows/ci.yml:5: stub finding: {OTHER_REF}",
+    ),
+    (
+        "zizmor keeps a recorded ref for a repository outside the record",
+        "zizmor",
+        calling(GATES_REF),
+        {
+            **zizmor_json(finding("unpinned-uses", 4, GATES_REF)),
+            **RECORDED,
+            "GITHUB_REPOSITORY": "someone/fixture",
+        },
+        1,
+        f"unpinned-uses at .github/workflows/ci.yml:5: stub finding: {GATES_REF}",
+    ),
+    (
+        "zizmor drops only the covered finding",
+        "zizmor",
+        calling(GATES_REF),
+        {
+            **zizmor_json(
+                finding("unpinned-uses", 4, GATES_REF),
+                finding("dangerous-triggers", 0, "on: push"),
+            ),
+            **RECORDED,
+        },
+        1,
+        "dangerous-triggers at .github/workflows/ci.yml:1",
+    ),
+    (
+        "zizmor reads no record from the tree under review",
+        "zizmor",
+        {**calling(GATES_REF), "policy/relaxations.toml": SELF_GRANT},
+        {
+            **zizmor_json(finding("unpinned-uses", 4, GATES_REF)),
+            **RECORDED,
+            "GATES_DIR": str(gates_with("")),
+        },
+        1,
+        f"unpinned-uses at .github/workflows/ci.yml:5: stub finding: {GATES_REF}",
+    ),
+    (
+        "zizmor with an unpinned-uses finding and no GATES_DIR is undecided",
+        "zizmor",
+        calling(GATES_REF),
+        {
+            **zizmor_json(finding("unpinned-uses", 4, GATES_REF)),
+            "GITHUB_REPOSITORY": "Abhijeet34/fixture",
+        },
+        2,
+        "GATES_DIR is unset",
+    ),
+    (
+        "zizmor with an unpinned-uses finding and no GITHUB_REPOSITORY is undecided",
+        "zizmor",
+        calling(GATES_REF),
+        {**zizmor_json(finding("unpinned-uses", 4, GATES_REF)), "GATES_DIR": str(ROOT)},
+        2,
+        "GITHUB_REPOSITORY is unset",
+    ),
+    (
+        "zizmor with a policy that fails its schema is undecided",
+        "zizmor",
+        calling(GATES_REF),
+        {
+            **zizmor_json(finding("unpinned-uses", 4, GATES_REF)),
+            **RECORDED,
+            "GATES_DIR": str(gates_with("[[relaxation]]\nid = 1\n")),
+        },
+        2,
+        refused("undecided"),
+    ),
+    (
+        "zizmor's finding exit with no finding listed is still a finding",
+        "zizmor",
+        WF,
+        {**zizmor_json(), **RECORDED},
+        1,
+        "tool-gates: zizmor refused the workflows (exit 14)",
     ),
     (
         "actionlint with no findings passes",
@@ -653,6 +796,30 @@ def real_cases(seen):
             {},
             1,
             "dangerous-triggers",
+        ),
+        (
+            "zizmor passes a gates shared workflow at @main with the record",
+            "zizmor",
+            calling(GATES_REF),
+            RECORDED,
+            0,
+            "matches recorded policy first-party-shared-at-main",
+        ),
+        (
+            "zizmor refuses another owner's shared workflow at @main",
+            "zizmor",
+            calling(OTHER_REF),
+            RECORDED,
+            1,
+            f"unpinned-uses at .github/workflows/ci.yml:5: unpinned action reference: {OTHER_REF}",
+        ),
+        (
+            "zizmor refuses a gates shared workflow at @main without the record",
+            "zizmor",
+            calling(GATES_REF),
+            {**RECORDED, "GATES_DIR": str(gates_with(""))},
+            1,
+            f"unpinned-uses at .github/workflows/ci.yml:5: unpinned action reference: {GATES_REF}",
         ),
         (
             "actionlint passes a clean workflow",

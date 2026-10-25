@@ -725,6 +725,28 @@ printf '#!/bin/sh\n[ "$1" = --version ] && { echo "zizmor 1.29.0"; exit 0; }\nok
 run = 'py=$(command -v python3); PATH="$PWD/bin" "$py" "$GATE" zizmor .'
 finding = "tool-gates: zizmor refused the workflows (exit 13)"
 
+# zizmor's unpinned-uses finding passes only where a moving-ref record in the gates
+# checkout covers the ref for the repository; the stub prints zizmor's json-v1 shape.
+[[gate]]
+id = "workflow-zizmor-moving-ref"
+surface = "Security"
+gates = ["run/tool-gates.py"]
+test = ".ci/test-tool-gates.py"
+suite = "shell"
+command = "run/tool-gates.py"
+red = '''
+mkdir -p bin .github/workflows && printf 'on: push\njobs:\n  a:\n    uses: someone/else/.github/workflows/shared-x.yml@main\n' > .github/workflows/ci.yml
+echo '[{"ident":"unpinned-uses","desc":"unpinned action reference","locations":[{"symbolic":{"key":{"Local":{"verbatim_path":".github/workflows/ci.yml"}}},"concrete":{"location":{"start_point":{"row":3}},"feature":"someone/else/.github/workflows/shared-x.yml@main"}}]}]' > bin/zizmor.json
+printf '#!/bin/sh\n[ "$1" = --version ] && { echo "zizmor 1.29.0"; exit 0; }\nread -r out < bin/zizmor.json; echo "$out"\nexit 14\n' > bin/zizmor && chmod +x bin/zizmor
+'''
+clean = '''
+mkdir -p bin .github/workflows && printf 'on: push\njobs:\n  a:\n    uses: Abhijeet34/gates/.github/workflows/shared-x.yml@main\n' > .github/workflows/ci.yml
+echo '[{"ident":"unpinned-uses","desc":"unpinned action reference","locations":[{"symbolic":{"key":{"Local":{"verbatim_path":".github/workflows/ci.yml"}}},"concrete":{"location":{"start_point":{"row":3}},"feature":"Abhijeet34/gates/.github/workflows/shared-x.yml@main"}}]}]' > bin/zizmor.json
+printf '#!/bin/sh\n[ "$1" = --version ] && { echo "zizmor 1.29.0"; exit 0; }\nread -r out < bin/zizmor.json; echo "$out"\nexit 14\n' > bin/zizmor && chmod +x bin/zizmor
+'''
+run = 'py=$(command -v python3); PATH="$PWD/bin" GATES_DIR="$ROOT" GITHUB_REPOSITORY=Abhijeet34/fixture "$py" "$GATE" zizmor .'
+finding = "unpinned-uses at .github/workflows/ci.yml:4: unpinned action reference: someone/else/.github/workflows/shared-x.yml@main"
+
 [[gate]]
 id = "workflow-actionlint"
 surface = "Infra and CI config"
