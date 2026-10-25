@@ -25,8 +25,9 @@ the author and from the finder: `cross-model` when the families differ,
 Only an `error` finding can block, and only once the verifier pass reproduces it:
 its quote is line `line` of `path` at H, its `reproduce` command, run in a fresh
 export of H with no credential in its environment and an empty HOME, inside a
-sandbox with no network that writes only the export, that HOME and a TMPDIR and
-reads nothing else under the user's home, exits non-zero and not 126 or 127, and the verifier session answers that the output
+sandbox with no network and no local service to call, that writes only the export,
+that HOME and a TMPDIR and reads nothing else under the user's home or the shared
+temporary and runtime directories, exits non-zero and not 126 or 127, and the verifier session answers that the output
 demonstrates the claimed defect. A finding that fails a step is kept in the record and
 printed as downgraded with the reason; it never blocks and is never dropped.
 
@@ -106,6 +107,16 @@ AUTH_METHODS = ("claude.ai", "oauth_token")
 REPRODUCE_ENV = ("PATH", "LANG", "TERM")
 SECRET_WORDS = ("TOKEN", "SECRET", "KEY", "PASSWORD", "CREDENTIAL")
 OUTPUT_TAIL = 4000  # bytes of a reproduction's output the verifier reads
+# Other tasks' scratch and the sockets of local services live under these.
+SHARED_ROOTS = ("/tmp", "/var/folders", "/run", "/var/run")  # noqa: S108 hidden, never used
+# Seatbelt has no rule for launchd's own routines, so a macOS reproduction starts
+# with no bootstrap port, which leaves it neither launchd nor any Mach service to call.
+NO_BOOTSTRAP = """import ctypes, os, sys
+c = ctypes.CDLL(None)
+task = ctypes.c_uint.in_dll(c, "mach_task_self_")
+if c.task_set_special_port(task, 4, 0) or c.mach_ports_register(task, None, 0):
+    sys.exit("could not drop the bootstrap port")
+os.execv(sys.argv[1], sys.argv[1:])"""
 CLI_SECONDS = 30
 CLASSES = ("trivial", "medium", "large")
 ROUTER = "claude-haiku-5-5"  # r4 7.3: "a Haiku 5.5 router"
@@ -220,9 +231,9 @@ def reproduce_env(home, tmp):
 
 
 def confinement(tree, home, tmp):
-    """The argv prefix that runs a reproducing command with no network, writing only
-    under `tree`, `home` and `tmp`, and reading nothing under the user's home but
-    those; Undecided on a host with no sandbox to give it."""
+    """The argv prefix that runs a reproducing command with no network and no local
+    service, writing only under `tree`, `home` and `tmp`, and reading nothing under
+    the user's home or SHARED_ROOTS but those; Undecided on a host with no sandbox."""
     writable = [os.path.realpath(p) for p in (tree, home, tmp)]
     hidden = sorted(
         {
@@ -231,6 +242,10 @@ def confinement(tree, home, tmp):
         }
         - {"/"}
     )
+    shared = {os.path.realpath(p) for p in (*SHARED_ROOTS, tempfile.gettempdir())}
+    roots = {*hidden, *(p for p in shared if os.path.isdir(p))} - {"/"}
+    # bwrap cannot mount over a path an earlier tmpfs already hid, so only the outermost stays.
+    hidden = sorted(p for p in roots if not any(p.startswith(r + "/") for r in roots))
     # One switch per control serves both sandboxes, so each has one place to remove.
     network = False
     if sys.platform == "darwin":
@@ -242,10 +257,14 @@ def confinement(tree, home, tmp):
         rules.append("(deny file-write*)")
         # The last matching rule wins, so a writable tree under a hidden home is still readable.
         rules += [f"(allow file-read* file-write* (subpath {q(p)}))" for p in writable]
+        # A shell's getcwd stats each ancestor of its directory, some of them hidden.
+        above = sorted({str(a) for p in writable for a in Path(p).parents})
+        rules += [f"(allow file-read-metadata (literal {q(a)}))" for a in above]
         rules.append(
             '(allow file-write* (literal "/dev/null") (literal "/dev/tty") (subpath "/dev/fd"))'
         )
-        return ["/usr/bin/sandbox-exec", "-p", "\n".join(rules)]
+        jail = ["/usr/bin/sandbox-exec", "-p", "\n".join(rules)]
+        return [sys.executable, "-I", "-c", NO_BOOTSTRAP, *jail]
     if shutil.which("bwrap"):
         argv = ["bwrap", "--ro-bind", "/", "/", "--dev", "/dev", "--unshare-pid",
                 "--proc", "/proc", "--die-with-parent", "--new-session"]  # fmt: skip

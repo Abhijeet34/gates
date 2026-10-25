@@ -335,10 +335,14 @@ def probed(script, probe, **over):
 
 
 def reproduction_reads_no_home(script):
-    home = Path(tempfile.mkdtemp(dir=workdir))
-    (home / "secret").write_text(PLANTED)
-    probe = f'cat "{home}/secret" && echo read=open || echo "read=""denied"; exit 1'
-    _, result, seen = probed(script, lambda f: probe, HOME=str(home))
+    # The jail hides the temporary directories too, so a home there proves nothing.
+    home = Path(tempfile.mkdtemp(dir=ROOT, prefix=".test-review-home-"))
+    try:
+        (home / "secret").write_text(PLANTED)
+        probe = f'cat "{home}/secret" && echo read=open || echo "read=""denied"; exit 1'
+        _, result, seen = probed(script, lambda f: probe, HOME=str(home))
+    finally:
+        shutil.rmtree(home)
     why = expect("a probe of the user's home", result, 0, "downgraded")
     if not why and (PLANTED in seen or "read=denied" not in seen):
         why = f"the reproducing command read the user's home: {seen[-300:]}"
@@ -373,6 +377,56 @@ def reproduction_has_no_network(script):
     why = expect("a probe of the network", result, 0, "downgraded")
     if not why and "net=denied" not in seen:
         why = f"the reproducing command reached the network: {seen[-300:]}"
+    return why
+
+
+def reproduction_lists_no_sibling_temp(script):
+    sibling = Path(tempfile.mkdtemp(dir=workdir))
+    (sibling / "note").write_text(PLANTED)
+    probe = f'ls "{sibling}" && cat "{sibling}/note" && echo temp=open || echo "temp=""hidden"; exit 1'
+    _, result, seen = probed(script, lambda f: probe)
+    why = expect(
+        "a probe of another task's temporary directory", result, 0, "downgraded"
+    )
+    if not why and (PLANTED in seen or "temp=hidden" not in seen):
+        why = (
+            f"the reproducing command read a sibling temporary directory: {seen[-300:]}"
+        )
+    return why
+
+
+def reproduction_connects_to_no_socket(script):
+    path = Path(tempfile.mkdtemp(dir=workdir)) / "s"
+    with socket.socket(socket.AF_UNIX) as server:
+        server.bind(str(path))
+        server.listen()
+        connect = f"import socket; socket.socket(socket.AF_UNIX).connect('{path}')"
+        probe = (
+            f'python3 -c "{connect}" && echo sock=open || echo "sock=""refused"; exit 1'
+        )
+        _, result, seen = probed(script, lambda f: probe)
+    why = expect("a probe of a local socket", result, 0, "downgraded")
+    if not why and "sock=refused" not in seen:
+        why = f"the reproducing command reached a local socket: {seen[-300:]}"
+    return why
+
+
+KEYCHAIN = """import ctypes
+c = ctypes.CDLL(None)
+kr = c.bootstrap_look_up(ctypes.c_uint.in_dll(c, "bootstrap_port"), b"com.apple.SecurityServer", ctypes.byref(ctypes.c_uint()))
+print("keychain=" + ("reached" if kr == 0 else "refu" + "sed"))"""
+
+
+def reproduction_reaches_no_mach_service(script):
+    probe = (
+        'launchctl print "gui/$(id -u)" >/dev/null 2>&1 && echo launchd=reached'
+        ' || echo "launchd=""refused"\n'
+        f"python3 - <<'PY'\n{KEYCHAIN}\nPY\nexit 1"
+    )
+    _, result, seen = probed(script, lambda f: probe)
+    why = expect("a probe of launchd and the keychain daemon", result, 0, "downgraded")
+    if not why and not ("launchd=refused" in seen and "keychain=refused" in seen):
+        why = f"the reproducing command reached a Mach service: {seen[-300:]}"
     return why
 
 
@@ -1039,6 +1093,7 @@ CASES = [
     (reproduction_reads_no_home, "the user's home hidden from a reproduction", "    hidden = sorted(\n", "    hidden = [] and sorted(\n"),
     (reproduction_cannot_write_store, "a reproduction writing only its own directories", "for p in (tree, home, tmp)]", 'for p in (tree, home, tmp, "/")]'),
     (reproduction_has_no_network, "a reproduction with no network", "    network = False\n", "    network = True\n"),
+    (reproduction_lists_no_sibling_temp, "the shared temporary directories hidden from a reproduction", "    shared = {os.path.realpath(p) for p in (*SHARED_ROOTS, tempfile.gettempdir())}\n", "    shared = set()\n"),
     (trivial_claim_without_router_errors, "an unconfirmed trivial claim recorded as error", 'verdict = "error" if entry.get("unconfirmed") else "pass"', 'verdict = "pass"'),
     (unreadable_finding_errors, "a finding's severity is checked", 'and f.get("severity") in SEVERITIES', ""),
     (bad_row_errors, "the row's budget is checked", "and all(type(v) is int and v > 0 for v in extra.values())", ""),
@@ -1071,6 +1126,17 @@ CASES = [
     (trivial_assigns_no_lens, "a trivial change getting no lens", 'LENS_CLASSES = ("medium", "large")', "LENS_CLASSES = CLASSES"),
     (malformed_lens_refused, "a lens's checklist of yes or no questions", 'and all(isinstance(q, str) and q.strip().endswith("?") for q in items)', "and all(isinstance(q, str) for q in items)"),
 ]  # fmt: skip
+# A filesystem socket is refused by the network rule on macOS and by hiding the
+# shared directories under bwrap; launchd and Mach services exist only on macOS.
+if sys.platform == "darwin":
+    CASES += [
+        (reproduction_connects_to_no_socket, "a reproduction reaching no local socket", "    network = False\n", "    network = True\n"),
+        (reproduction_reaches_no_mach_service, "a reproduction with no bootstrap port", 'return [sys.executable, "-I", "-c", NO_BOOTSTRAP, *jail]', "return jail"),
+    ]  # fmt: skip
+else:
+    CASES += [
+        (reproduction_connects_to_no_socket, "a reproduction reaching no local socket", "    shared = {os.path.realpath(p) for p in (*SHARED_ROOTS, tempfile.gettempdir())}\n", "    shared = set()\n"),
+    ]  # fmt: skip
 
 
 def main():
