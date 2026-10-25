@@ -832,6 +832,11 @@ CASES = [
 ]
 
 
+# The ancestor deny is a sandbox-exec rule; bubblewrap's bind already follows the
+# renamed directory, so removing the rule cannot turn the case red off macOS.
+DARWIN_ONLY_CONTROLS = {renamed_ancestor_forges_nothing}
+
+
 def main():
     failed = 0
     source = RUNNER.read_text()
@@ -842,6 +847,9 @@ def main():
             print(f"FAIL {case.__name__}: {why}")
             continue
         print(f"ok   {case.__name__}")
+        if case in DARWIN_ONLY_CONTROLS and sys.platform != "darwin":
+            print(f"skip without {control}: the rule exists only in the macOS sandbox profile")
+            continue
         if source.count(old) != 1:
             failed = 1
             print(
