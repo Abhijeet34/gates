@@ -106,10 +106,24 @@ verdict=$(jq -n \
   def norm: ascii_downcase | gsub("[-_.]+"; "-");
   # Whether the pull request makes a $type change, at this alert own
   # manifest, to a version of its package that carries its advisory.
-  def touches($chg; $x; $type):
-    any($chg[]; .change_type == $type and .manifest == $x.manifest
+  def touches_at($chg; $x; $type; $m):
+    any($chg[]; .change_type == $type and .manifest == $m
                 and (.name | norm) == ($x.pkg | norm)
                 and any(.vulnerabilities[]; .advisory_ghsa_id == $x.ghsa));
+  def touches($chg; $x; $type): touches_at($chg; $x; $type; $x.manifest);
+  # The GitHub compare lists an npm change under the lockfile alone, never under
+  # package.json, so a package.json alert is judged on the lockfiles in its
+  # own directory. Any other manifest type keeps the same-manifest rule.
+  def siblings($x):
+    if ($x.manifest | test("(^|/)package\\.json$"))
+    then ($x.manifest | sub("package\\.json$"; "")) as $dir
+         | ["package-lock.json", "npm-shrinkwrap.json", "yarn.lock", "pnpm-lock.yaml"] | map($dir + .)
+    else [] end;
+  def fixed($chg; $x):
+    (touches($chg; $x; "removed") and (touches($chg; $x; "added") | not))
+    or ( siblings($x) as $s
+         | any($s[]; . as $m | touches_at($chg; $x; "removed"; $m))
+           and (any($s[]; . as $m | touches_at($chg; $x; "added"; $m)) | not) );
   ($compare[0].error // null) as $cerr
   | ($compare[0].changes // []) as $chg
   | ($alerts[0] // []) as $a
@@ -124,7 +138,7 @@ verdict=$(jq -n \
       pkg: .dependency.package.name,
       manifest: (.dependency.manifest_path // "?"),
       url: (.html_url // "")
-    }) | map(. + {fixed: (touches($chg; .; "removed") and (touches($chg; .; "added") | not))})) as $open
+    }) | map(. + {fixed: fixed($chg; .)})) as $open
   | ($open | map(select((.sev | rank) >= ($floor | rank))
                         | select($faildev or .scope != "development"))) as $atfloor
   | ($d | map(.ghsa)) as $dghsa
@@ -178,7 +192,7 @@ get() { printf '%s' "$verdict" | jq -r --arg file "$DEFERRALS_FILE_PROP" "$1"; }
   get '.open | sort_by(.sev) | reverse | .[] | "| \(.sev) | \(.scope) | \(.pkg) | \(.ghsa) | \(.manifest) |"'
   if [ "$(get '.fixed | length')" != 0 ]; then
     echo
-    echo "Fixed in this pull request, so not failing: it removes the vulnerable version at the alert's manifest and adds none still affected."
+    echo "Fixed in this pull request, so not failing: it removes the vulnerable version at the alert's manifest (for a package.json, at a lockfile beside it) and adds none still affected."
     echo
     get '.fixed[] | "- \(.sev) \(.pkg) \(.ghsa) (\(.manifest))"'
   fi

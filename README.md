@@ -47,6 +47,8 @@ That token also could not open a pull request, because the repository's Actions 
 It can dispatch the caller's own workflows, and a dispatched run puts its `checks` result on the commit it ran on, so the write is the only missing piece.
 A pinned `uses:` therefore needs a writer that already holds workflow write, such as Dependabot's `github-actions` updater, whose pull requests do receive the caller's checks.
 A reusable workflow runs in the caller's checkout with the caller's token, so a caller grants whatever the workflow reads: `shared-dependency-advisories.yml` needs `vulnerability-alerts: read` plus the `contents: read` its pull-request dependency compare uses, and `shared-no-mistakes-required.yml` needs `pull-requests: read`.
+The advisories judge counts an alert as fixed by a pull request when the dependency compare shows the package removed with that GHSA, at the alert's own manifest and adding no version still carrying it.
+For an alert filed against a `package.json`, whose npm changes the compare lists under the lockfile only, a `package-lock.json`, `npm-shrinkwrap.json`, `yarn.lock` or `pnpm-lock.yaml` in the same directory stands in; a lockfile in another directory, or any other manifest type, gets no such credit (measured 2026-10-25 on pointback PR 139).
 `shared-secret-scan.yml` compares `.gitleaks.toml`, `.githooks/pre-push` and `.githooks/commit-msg` byte for byte with this repository at the locked commit, so a caller whose synced copy has drifted fails until `.ci/gitleaks/sync.sh <clone>` is re-run.
 Every gate runs from a checkout of this repository, never from the caller's tree, so a caller carries no copy of a scanner and a copy it does carry is never the one run.
 
