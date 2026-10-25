@@ -130,14 +130,17 @@ The surface is security design 7.2's list, mapped onto the paths that exist toda
 | --- | --- | --- |
 | `settings*.json` and worker profiles | `**/.claude/settings*.json`, `**/managed-settings.json`, `**/managed-settings.d/**`, `**/claude-code/config/settings*.json`, `internal/sandbox/profile.go` | any |
 | (added) what else the worker sandbox grants | `internal/sandbox/*.go` | any, `*_test.go` aside |
+| (added) the boxed run's network allowlist | `internal/adapter/claude/claude.go`, `repos/depbase.go`; `egress/*.go` | the `Egress` or `Registries` declaration differs, or a changed line names it; the proxy, any, `*_test.go` aside |
+| (added) Claude Code hook scripts | `**/.claude/hooks/**`, `**/claude-code/config/hooks/**` | any |
 | (added) an agent's tools | `**/.mcp.json`; `commands/**.md`, `agents/**.md` and `skills/**/SKILL.md` under `**/.claude/` and `**/claude-code/config/` | `.mcp.json`, any; the others, a front matter key other than `name`, `description`, `argument-hint`, `when_to_use`, `color` or `model`, or front matter left unclosed |
 | the `fac permit` rule table | `internal/permit/permit.go` | any |
 | `route.toml` `[tiers]` and `[vendors]` | `route.toml` | `[tiers]`, `[repos]` or `[vendors]` differs, or the file cannot be parsed |
 | App manifests and the minter's permission subsets | `**/github-apps/roles.json`, `**/github-apps/app-token.sh`, `**/github-apps/register-app.py` | any |
 | workflow `permissions:`, rulesets, Actions settings | `.github/workflows/*.yml` and `*.yaml`; `.github/ruleset*.json`, `.github/rulesets/**` | a workflow's `permissions:` blocks differ, comments aside, or a changed line spells `permissions` another way, opens a flow mapping or spells an explicit or escaped key, or the file uses a YAML anchor or alias and any line changed; a ruleset, any |
-| gate registry rows with `phase = "security"` | `.github/gates.toml`, every row; `.ci/gate-registry.toml`, rows with `surface = "Security"` and the rows `SECURITY_ROWS` names (the tool, PR-text and licence rows) | an existing row deleted or any of its fields changed; a new row passes |
+| gate registry rows with `phase = "security"` | `.github/gates.toml`, every row; `.ci/gate-registry.toml`, rows with `surface` `"Security"`, `"Code review"` or `"Gate pinning"`, and the rows `SECURITY_ROWS` names (the tool, PR-text, licence, workflow-policy, dependency-advisories, signature, exposure and commit-msg rows) | an existing row deleted or any of its fields changed; a new row passes |
 | (added) the tool rows' ignore lists, pins and in-tree configuration | `policy/**`; `run/tool-gates.py`; `**/zizmor.yml`, `**/zizmor.yaml`, `**/.github/actionlint.yml`, `**/.github/actionlint.yaml`, `**/osv-scanner.toml` | any |
 | (added) the PR-text and licence rows | `run/pr-text.py`, `run/licence.py`, `.github/licence-policy.toml` | any |
+| (added) the review, secret-scan, workflow-policy and advisories rows, and the runner whose globs this gate matches with | `run/review.py`, `run/secret-scan.sh`, `.gitleaks.toml`, `.ci/test-workflow-policy.sh`, `run/dependency-advisories.sh`, `run/dependency-advisories/**`, `run/gate.py` | any |
 | the outbound pattern set and channel allowlists | `outbound/outbound.go` | any |
 | memory guards and `captain.md` | `**/memory-write-guard.sh`, `**/captain.md` | any |
 | (added) the gate's own surface | `run/permissions-diff.py` | any |
@@ -152,7 +155,7 @@ Where 7.2 no longer matches what exists:
 - `settings*.json` misses `managed-settings.json`, which outranks every other scope, and catches an editor's `.vscode/settings.json`, so the globs name Claude Code's files.
 - A workflow is read by lines, not parsed, because the gates are standard-library Python, which has no YAML parser; it therefore fails closed, and an edit to a workflow that uses an anchor or a flow mapping is refused even when no token changes.
 - 7.1 says the PR text scan shares the outbound pattern set with `fac`; it is a separate set in `run/pr-text.py`, so that file is protected beside `outbound/outbound.go`.
-- Not protected, and candidates for the list: `.github/CODEOWNERS`, `.github/secret_scanning.yml`, `.gitleaks.toml`'s allowlists, `.githooks/**`, and a new workflow with no `permissions:` key, which takes the repository's default token.
+- Not protected, and candidates for the list: `.github/CODEOWNERS`, `.github/secret_scanning.yml`, `.githooks/**`, and a new workflow with no `permissions:` key, which takes the repository's default token.
 
 A caller runs it as a shadow row in its `.github/gates.toml`, so `run/gate.py` reports its red as `shadow` until the promotion rule in its docstring lets it block:
 

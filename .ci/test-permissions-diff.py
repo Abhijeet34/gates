@@ -94,6 +94,50 @@ permissions:
 jobs:
   build: {runs-on: ubuntu-latest, steps: [{run: echo hi}]}
 """
+# A row of each kind the gate proof protects outside the Security surface.
+PROTECTED_ROWS = {
+    "workflow-policy": "Infra and CI config",
+    "dependency-advisories": "Dependencies",
+    "review-verifier": "Code review",
+    "review-trivial": "Code review",
+    "critic-hold": "Code review",
+    "lock-imposter": "Gate pinning",
+    "lock-drift": "Gate pinning",
+    "signature-check": "Pre-push",
+    "exposure-scan": "Pre-push",
+    "commit-msg": "Pre-commit",
+}
+GUARDED_REGISTRY = PROOF_REGISTRY + "".join(
+    f'\n[[gate]]\nid = "{gid}"\nsurface = "{surface}"\nred = "echo red"\n'
+    for gid, surface in PROTECTED_ROWS.items()
+)
+
+
+def without_row(gid):
+    rows = GUARDED_REGISTRY.split("\n\n")
+    return "\n\n".join(r for r in rows if f'id = "{gid}"' not in r)
+
+
+CLAUDE_GO = """package claude
+
+// Egress is every host a boxed run may reach through its proxy.
+var Egress = []string{"api.anthropic.com"}
+
+func start(stream string) {
+\tegress.Start(stream+".egress", Egress...)
+}
+
+func timeout() int { return 30 }
+"""
+DEPBASE_GO = """package repos
+
+var Registries = map[string][]string{
+\t"package-lock.json": {"registry.npmjs.org"},
+\t"Cargo.lock":        {"index.crates.io", "static.crates.io"},
+}
+
+func kinds() int { return len(Registries) }
+"""
 COMMAND = "---\ndescription: Ship it\nallowed-tools: Bash(git status:*)\n---\nShip the branch.\n"
 AGENT = "---\nname: critic\ndescription: Reads.\ntools: Read, Grep\n---\nYou read.\n"
 BASE = {
@@ -111,6 +155,9 @@ BASE = {
     ".claude/commands/ship.md": COMMAND,
     ".claude/agents/critic.md": AGENT,
     "internal/sandbox/toolchain_test.go": "package sandbox\n",
+    "internal/adapter/claude/claude.go": CLAUDE_GO,
+    "repos/depbase.go": DEPBASE_GO,
+    "egress/egress_test.go": "package egress\n",
 }
 
 workdir = Path(tempfile.mkdtemp())
@@ -546,6 +593,148 @@ CASES = [
         {"README.md": "A fixture, edited.\n"},
         0,
         "permissions-diff: 1 changed path(s), none on the protected surface",
+    ),
+    *(
+        (
+            f"the {gid} row deleted from the gate proof",
+            {".ci/gate-registry.toml": without_row(gid)},
+            1,
+            f".ci/gate-registry.toml changes the gate proof's security rows: row '{gid}' deleted",
+            "base",
+            {**BASE, ".ci/gate-registry.toml": GUARDED_REGISTRY},
+        )
+        for gid in PROTECTED_ROWS
+    ),
+    (
+        "a Code review row's red fixture edited in the gate proof",
+        {
+            ".ci/gate-registry.toml": GUARDED_REGISTRY.replace(
+                'id = "review-verifier"\nsurface = "Code review"\nred = "echo red"',
+                'id = "review-verifier"\nsurface = "Code review"\nred = "true"',
+            )
+        },
+        1,
+        "row 'review-verifier' changed (red)",
+        "base",
+        {**BASE, ".ci/gate-registry.toml": GUARDED_REGISTRY},
+    ),
+    (
+        "the review agent and its verifier",
+        {"run/review.py": "CONFINE = False\n"},
+        1,
+        "permissions-diff: run/review.py changes the review agent and its verifier's sandbox",
+    ),
+    (
+        "the gate runner whose globs this gate matches with",
+        {"run/gate.py": "def glob_re(g): pass\n"},
+        1,
+        "permissions-diff: run/gate.py changes the gate runner and the globs this gate matches with",
+    ),
+    (
+        "the secret scan",
+        {"run/secret-scan.sh": "exit 0\n"},
+        1,
+        "permissions-diff: run/secret-scan.sh changes the secret scan",
+    ),
+    (
+        "the secret scan's rules",
+        {".gitleaks.toml": "[allowlist]\npaths = ['.*']\n"},
+        1,
+        "permissions-diff: .gitleaks.toml changes the secret scan's rules and allowlists",
+    ),
+    (
+        "the workflow policy",
+        {".ci/test-workflow-policy.sh": "exit 0\n"},
+        1,
+        "permissions-diff: .ci/test-workflow-policy.sh changes the workflow policy",
+    ),
+    (
+        "the dependency advisories entry point",
+        {"run/dependency-advisories.sh": "exit 0\n"},
+        1,
+        "permissions-diff: run/dependency-advisories.sh changes the dependency advisories row",
+    ),
+    (
+        "the dependency advisories judge",
+        {"run/dependency-advisories/judge.sh": "exit 0\n"},
+        1,
+        "permissions-diff: run/dependency-advisories/judge.sh changes the dependency advisories row",
+    ),
+    (
+        "a Claude Code hook script added",
+        {".claude/hooks/x.sh": "exit 0\n"},
+        1,
+        "permissions-diff: .claude/hooks/x.sh changes a Claude Code hook script",
+    ),
+    (
+        "a deployed Claude Code hook script",
+        {"system-maintenance/claude-code/config/hooks/guard.sh": "exit 0\n"},
+        1,
+        "changes a Claude Code hook script",
+    ),
+    (
+        "a host added to a boxed run's egress",
+        {
+            "internal/adapter/claude/claude.go": CLAUDE_GO.replace(
+                '"api.anthropic.com"}', '"api.anthropic.com", "example.com"}'
+            )
+        },
+        1,
+        "permissions-diff: internal/adapter/claude/claude.go changes the hosts a boxed run's proxy allows: the Egress declaration changed",
+    ),
+    (
+        "a boxed run's egress assigned outside its declaration",
+        {
+            "internal/adapter/claude/claude.go": CLAUDE_GO
+            + '\nfunc init() { Egress = append(Egress, "example.com") }\n'
+        },
+        1,
+        "changes the hosts a boxed run's proxy allows: a line naming Egress changed",
+    ),
+    (
+        "a boxed run's egress moved into a var group",
+        {
+            "internal/adapter/claude/claude.go": CLAUDE_GO.replace(
+                'var Egress = []string{"api.anthropic.com"}',
+                'var (\n\tEgress = []string{"api.anthropic.com", "example.com"}\n)',
+            )
+        },
+        1,
+        "the Egress declaration changed",
+    ),
+    (
+        "an edit beside a boxed run's egress",
+        {"internal/adapter/claude/claude.go": CLAUDE_GO.replace("30", "60")},
+        0,
+        "none on the protected surface",
+    ),
+    (
+        "a host added to a base build's registries",
+        {
+            "repos/depbase.go": DEPBASE_GO.replace(
+                '"static.crates.io"}', '"static.crates.io", "example.com"}'
+            )
+        },
+        1,
+        "permissions-diff: repos/depbase.go changes the hosts a base build's proxy allows: the Registries declaration changed",
+    ),
+    (
+        "an edit beside a base build's registries",
+        {"repos/depbase.go": DEPBASE_GO + "\nfunc none() {}\n"},
+        0,
+        "none on the protected surface",
+    ),
+    (
+        "the egress proxy",
+        {"egress/egress.go": "package egress\n"},
+        1,
+        "permissions-diff: egress/egress.go changes the boxed run's egress proxy: the source changed",
+    ),
+    (
+        "an egress proxy test",
+        {"egress/egress_test.go": "package egress\n\nfunc init() {}\n"},
+        0,
+        "none on the protected surface",
     ),
     (
         "a protected file deleted",
