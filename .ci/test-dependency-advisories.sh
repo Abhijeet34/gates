@@ -326,6 +326,33 @@ judge 'a push ignores a compare record and keeps the alert failing' nonzero "$FA
 EVENT=schedule COMPARE="$FIXES" \
 judge 'a scheduled run ignores it too' nonzero "$FASTURI" /nonexistent.yml
 
+# The shape the live compare answered for pointback PR 139 (2026-10-25): an npm
+# fix is listed under package-lock.json alone, though Dependabot holds an alert
+# for package.json too.
+MDIT="$workdir/markdown-it.json"
+alert high runtime GHSA-gfr2-rv44-r23c markdown-it package.json | inventory >"$MDIT"
+MDIT_FIX="$workdir/cmp-mdit-fix.json"
+{ change removed markdown-it 15.0.2 GHSA-gfr2-rv44-r23c
+  change added markdown-it 15.0.3; } | record >"$MDIT_FIX"
+MDIT_STILL="$workdir/cmp-mdit-still.json"
+{ change removed markdown-it 15.0.2 GHSA-gfr2-rv44-r23c
+  change added markdown-it 15.0.2 GHSA-gfr2-rv44-r23c; } | record >"$MDIT_STILL"
+MDIT_ELSEWHERE="$workdir/cmp-mdit-elsewhere.json"
+{ change removed markdown-it 15.0.2 GHSA-gfr2-rv44-r23c docs/package-lock.json
+  change added markdown-it 15.0.3 "" docs/package-lock.json; } | record >"$MDIT_ELSEWHERE"
+MDIT_PIP="$workdir/markdown-it-pip.json"
+alert high runtime GHSA-gfr2-rv44-r23c markdown-it requirements.txt | inventory >"$MDIT_PIP"
+
+EVENT=pull_request COMPARE="$MDIT_FIX" \
+judge 'a package.json alert is fixed by the sibling lockfile removing the version' 0 "$MDIT" /nonexistent.yml
+said  '  and names the package.json alert as fixed' '- high markdown-it GHSA-gfr2-rv44-r23c (package.json)' out
+EVENT=pull_request COMPARE="$MDIT_STILL" \
+judge 'a sibling lockfile that still adds the affected version gives no credit' nonzero "$MDIT" /nonexistent.yml
+EVENT=pull_request COMPARE="$MDIT_ELSEWHERE" \
+judge 'a lockfile in another directory gives a package.json alert no credit' nonzero "$MDIT" /nonexistent.yml
+EVENT=pull_request COMPARE="$MDIT_FIX" \
+judge 'the sibling rule does not reach a requirements.txt alert' nonzero "$MDIT_PIP" /nonexistent.yml
+
 PIP="$workdir/pip.json"
 alert high runtime GHSA-aaaa-bbbb-cccc Foo_Bar requirements.txt | inventory >"$PIP"
 PIPFIX="$workdir/cmp-pip.json"
@@ -602,7 +629,7 @@ fi
 
 # 4. The re-add check: a bump to another still-vulnerable version is no fix.
 if mut=$(mutate 'still-vulnerable re-add' "$JUDGE_STEP" \
-    's/touches(\$chg; \.; "removed") and (touches(\$chg; \.; "added") | not)/touches($chg; .; "removed")/'); then
+    's/and (touches(\$chg; \$x; "added") | not))$/and true)/'); then
     mutation_allows 'dropping the re-add check lets a still-vulnerable bump pass' \
         EVENT_NAME=pull_request COMPARE_JSON="$STILL" ALERTS_JSON="$FASTURI" DEFERRALS_PATH=/nonexistent.yml \
         SEVERITY_FLOOR=high FAIL_ON_DEVELOPMENT=true GITHUB_STEP_SUMMARY=/dev/null
@@ -633,6 +660,21 @@ if mut=$(mutate 'compare shape check' "$COMPARE_STEP" \
     else
         printf 'FAIL %s\n' 'the mutated compare read still refuses, so the shape check has no teeth'
         failed=1
+    fi
+else
+    failed=1
+fi
+
+# 7. The sibling-lockfile rule: the PR-139 shape passes only because of it.
+if mut=$(mutate 'sibling lockfile rule' "$JUDGE_STEP" \
+    's/^    or ( siblings(\$x) as \$s$/    or ( [] as $s/'); then
+    if ( cd "$workdir" && env EVENT_NAME=pull_request COMPARE_JSON="$MDIT_FIX" ALERTS_JSON="$MDIT" \
+            DEFERRALS_PATH=/nonexistent.yml SEVERITY_FLOOR=high FAIL_ON_DEVELOPMENT=true \
+            GITHUB_STEP_SUMMARY=/dev/null bash -e "$mut" ) >/dev/null 2>&1; then
+        printf 'FAIL %s\n' 'the mutated body still passes the PR-139 shape, so the sibling rule has no teeth'
+        failed=1
+    else
+        printf 'ok   %s\n' 'dropping the sibling rule fails the PR-139 shape'
     fi
 else
     failed=1
