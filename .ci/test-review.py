@@ -335,10 +335,14 @@ def probed(script, probe, **over):
 
 
 def reproduction_reads_no_home(script):
-    home = Path(tempfile.mkdtemp(dir=workdir))
-    (home / "secret").write_text(PLANTED)
-    probe = f'cat "{home}/secret" && echo read=open || echo "read=""denied"; exit 1'
-    _, result, seen = probed(script, lambda f: probe, HOME=str(home))
+    # The jail hides the temporary directories too, so a home there proves nothing.
+    home = Path(tempfile.mkdtemp(dir=ROOT, prefix=".test-review-home-"))
+    try:
+        (home / "secret").write_text(PLANTED)
+        probe = f'cat "{home}/secret" && echo read=open || echo "read=""denied"; exit 1'
+        _, result, seen = probed(script, lambda f: probe, HOME=str(home))
+    finally:
+        shutil.rmtree(home)
     why = expect("a probe of the user's home", result, 0, "downgraded")
     if not why and (PLANTED in seen or "read=denied" not in seen):
         why = f"the reproducing command read the user's home: {seen[-300:]}"
