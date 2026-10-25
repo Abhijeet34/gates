@@ -45,7 +45,12 @@ class, each tool probe's output and the (mode, blob, path) of every file at H
 its inputs match, so a change outside a gate's inputs reuses its verdict. `run`
 appends one verdict record per selected gate to DIR/records.jsonl, reusing a
 `pass` with the same key instead of running, and keeps each log under DIR/logs
-by its sha256. `fold` exits 0 only when every selected blocking gate's latest
+by its sha256. Rows and their tool probes run in a sandbox that cannot write
+DIR, so only the runner writes a record, after the row has exited, under the key
+it computed; it reuses a `pass` only from a record it wrote for a confined row,
+and from none at all once any record says a row ran unconfined. A host with no
+sandbox that starts runs every row unconfined and reuses nothing: README.md,
+"The verdict cache", owns the design. `fold` exits 0 only when every selected blocking gate's latest
 record for H is `pass`; a missing, `fail` or `error` record refuses.
 
 Promotion (design 4.5 and 4.7): a row's shadow window opens at the later of its
@@ -67,6 +72,7 @@ import json
 import os
 import platform
 import re
+import shutil
 import signal
 import subprocess
 import sys
@@ -220,12 +226,39 @@ def select(rows, base, head):
     }
 
 
-def probe(row):
+def confinement(store):
+    """The argv prefix that runs a row with no write to `store`, or [] on a host
+    whose sandbox will not start, where no row's record can be trusted for reuse."""
+    path = os.path.realpath(store)
+    # One switch serves both sandboxes, so the control has one place to remove.
+    store_writable = False
+    if sys.platform == "darwin":
+        rules = ["(version 1)", "(allow default)"]
+        if not store_writable:
+            rules.append(f"(deny file-write* (subpath {json.dumps(path)}))")
+        argv = ["/usr/bin/sandbox-exec", "-p", "\n".join(rules)]
+    elif shutil.which("bwrap"):
+        bind = "--bind" if store_writable else "--ro-bind"
+        argv = ["bwrap", "--dev-bind", "/", "/", bind, path, path]
+    else:
+        return []
+    try:
+        proc = subprocess.run(
+            [*argv, "true"], capture_output=True, timeout=PROBE_TIMEOUT
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    return argv if proc.returncode == 0 else []
+
+
+def probe(row, confine=()):
     versions = {}
     for name, command in sorted(row.get("tools", {}).items()):
         try:
             proc = subprocess.run(
-                ["bash", "-c", command], capture_output=True, timeout=PROBE_TIMEOUT
+                [*confine, "bash", "-c", command],
+                capture_output=True,
+                timeout=PROBE_TIMEOUT,
             )
         except subprocess.TimeoutExpired as e:
             raise Undecided(f"{row['id']}: tool probe {name!r} timed out") from e
@@ -358,7 +391,9 @@ def keep_log(store, data):
     return f"sha256:{digest}"
 
 
-def run_one(row, head, base, store, timeout):
+def run_one(row, head, base, store, timeout, prior=(), confine=()):
+    """One row's record; a `pass` in `prior` under its key is reused only when
+    this row would run confined and the record says the runner confined its row."""
     started = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     rec = {
         "schema": 1,
@@ -367,9 +402,10 @@ def run_one(row, head, base, store, timeout):
         "base": base,
         "runner": RUNNER,
         "started": started,
+        "confined": bool(confine),
     }
     try:
-        tools = probe(row)
+        tools = probe(row, confine)
         rec.update(tools=tools, key=key(row, head, tools))
     except Undecided as e:
         return {
@@ -379,8 +415,12 @@ def run_one(row, head, base, store, timeout):
             "detail": str(e),
             "reused_from": None,
         }
-    for old in records(store, strict=False):
-        if old.get("key") == rec["key"] and old["verdict"] == "pass":
+    for old in prior if confine else ():
+        if (
+            old.get("key") == rec["key"]
+            and old["verdict"] == "pass"
+            and old.get("confined") is True
+        ):
             return {
                 **rec,
                 "verdict": "pass",
@@ -390,7 +430,7 @@ def run_one(row, head, base, store, timeout):
             }
     t0 = time.monotonic()
     proc = subprocess.Popen(
-        ["bash", "-e", "-c", row["run"]],
+        [*confine, "bash", "-e", "-c", row["run"]],
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -504,11 +544,32 @@ def main():
                 )
             failed, ledger = False, events(args.store)
             now = datetime.datetime.now(datetime.UTC)
+            args.store.mkdir(parents=True, exist_ok=True)
+            confine = confinement(args.store)
+            if not confine:
+                print(
+                    "gate: no sandbox keeps the rows from the store (macOS's sandbox-exec, or bubblewrap elsewhere), so nothing is reused",
+                    file=sys.stderr,
+                )
+            prior = records(args.store, strict=False)
+            # The runner writes a row's `confined` after it exits, so a `false` means
+            # some row could have written any other line here.
+            if any(r.get("confined") is False for r in prior):
+                prior = []
+            pinned = os.stat(args.store)
             for row in rows:
                 if row["id"] in chosen and row["kind"] != "check":
                     print(f"await {row['id']}: its {row['kind']} verdict is recorded")
                 elif row["id"] in chosen:
-                    rec = run_one(row, head, base, args.store, args.timeout)
+                    rec = run_one(
+                        row, head, base, args.store, args.timeout, prior, confine
+                    )
+                    # A row can move an ancestor and leave another store at the path.
+                    now_at = os.stat(args.store)
+                    if (now_at.st_dev, now_at.st_ino) != (pinned.st_dev, pinned.st_ino):
+                        raise Undecided(
+                            f"{args.store} is not the store it was when {row['id']} started, so nothing is recorded"
+                        )
                     write(args.store, rec)
                     blocks, _ = standing(
                         row,
