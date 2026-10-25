@@ -49,7 +49,7 @@ mketc() {
 run() { # run <etc> -> sets rc, log
   : >"$workdir/log"
   rc=0
-  APT_ETC=$1 APT_GET="$workdir/apt-get" APT_SUDO= STUB_LOG="$workdir/log" \
+  APT_ETC=$1 APT_GET="$workdir/apt-get" APT_SUDO='' STUB_LOG="$workdir/log" \
     bash -e run/apt-install.sh libimage-exiftool-perl >"$workdir/out" 2>&1 || rc=$?
 }
 
