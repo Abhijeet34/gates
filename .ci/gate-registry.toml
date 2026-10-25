@@ -532,6 +532,36 @@ echo more >> README.md && git commit -qam edit
 run = 'python3 "$GATE" --base base'
 finding = "permissions-diff: .claude/settings.json changes Claude Code settings"
 
+# A ruleset change passes only as a required context rename a relaxation record in
+# GATES_DIR covers; both inputs plant that record outside the tree under review.
+[[gate]]
+id = "permissions-diff-ruleset-rename"
+surface = "Security"
+gates = ["run/permissions-diff.py"]
+test = ".ci/test-permissions-diff.py"
+suite = "shell"
+command = "run/permissions-diff.py"
+red = """
+mkdir -p "$PROOF_SCRATCH/gates/policy"
+printf '[[relaxation]]\nid = "r"\nratified = 2026-10-25\nby = "maintainer decision"\nkinds = ["context-removed"]\nrepos = ["Abhijeet34/*"]\ncontext_to = %s\n' "'^[a-z0-9-]+ / {from}$'" > "$PROOF_SCRATCH/gates/policy/relaxations.toml"
+git init -q -b main && mkdir -p .github/rulesets
+echo '{"rules": [{"parameters": {"required_status_checks": [{"context": "checks"}, {"context": "secret scan"}]}}]}' > .github/rulesets/main.json
+git add -A && git commit -qm base && git tag base
+echo '{"rules": [{"parameters": {"required_status_checks": [{"context": "checks"}]}}]}' > .github/rulesets/main.json
+git commit -qam drop
+"""
+clean = """
+mkdir -p "$PROOF_SCRATCH/gates/policy"
+printf '[[relaxation]]\nid = "r"\nratified = 2026-10-25\nby = "maintainer decision"\nkinds = ["context-removed"]\nrepos = ["Abhijeet34/*"]\ncontext_to = %s\n' "'^[a-z0-9-]+ / {from}$'" > "$PROOF_SCRATCH/gates/policy/relaxations.toml"
+git init -q -b main && mkdir -p .github/rulesets
+echo '{"rules": [{"parameters": {"required_status_checks": [{"context": "checks"}, {"context": "secret scan"}]}}]}' > .github/rulesets/main.json
+git add -A && git commit -qm base && git tag base
+echo '{"rules": [{"parameters": {"required_status_checks": [{"context": "checks"}, {"context": "secrets / secret scan"}]}}]}' > .github/rulesets/main.json
+git commit -qam rename
+"""
+run = 'GATES_DIR="$PROOF_SCRATCH/gates" python3 "$GATE" --base base --repo Abhijeet34/fixture'
+finding = "permissions-diff: .github/rulesets/main.json changes a branch ruleset: required context 'secret scan' removed"
+
 # A change that relaxes a test, a required context, a required workflow or a pin,
 # unless policy/relaxations.toml in the gates checkout covers it; README.md, "The weakening guard".
 [[gate]]

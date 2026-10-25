@@ -816,6 +816,189 @@ CASES = [
 ]
 
 
+# A branch ruleset as an inline job left it, before the job moved into a called workflow.
+RULESET = """{
+  "name": "main",
+  "target": "branch",
+  "enforcement": "active",
+  "rules": [
+    { "type": "deletion" },
+    {
+      "type": "required_status_checks",
+      "parameters": {
+        "strict_required_status_checks_policy": true,
+        "required_status_checks": [
+          { "context": "checks" },
+          { "context": "tests kept" },
+          { "context": "secret scan" }
+        ]
+      }
+    }
+  ]
+}
+"""
+RENAMED = RULESET.replace('"secret scan"', '"secrets / secret scan"')
+RENAME_RECORD = """[[relaxation]]
+id = "required-context-follows-called-workflow"
+ratified = 2026-10-25
+by = "maintainer decision"
+kinds = ["context-removed"]
+repos = ["Abhijeet34/*"]
+context_to = '^[a-z0-9-]+ / {from}$'
+"""
+MAIN_JSON = ".github/rulesets/main.json"
+RULESET_BASE = {**BASE, MAIN_JSON: RULESET}
+
+
+def ruleset_gate(change, policy, repo="Abhijeet34/fixture", base=RULESET_BASE):
+    """The gate with GATES_DIR holding `policy` as its relaxation records (None: unset)."""
+    repo_dir = fixture(change, base)
+    env = {k: v for k, v in ENV.items() if k not in ("GATES_DIR", "GITHUB_REPOSITORY")}
+    if policy is not None:
+        gates = repo_dir.parent / f"{repo_dir.name}-gates"
+        (gates / "policy").mkdir(parents=True)
+        (gates / "policy/relaxations.toml").write_text(policy)
+        env["GATES_DIR"] = str(gates)
+    args = ["--base", "base"] + (["--repo", repo] if repo else [])
+    return run(sys.executable, str(GATE), *args, cwd=repo_dir, env=env)
+
+
+RULESET_CASES = [
+    (
+        "a context rename a recorded policy covers",
+        {MAIN_JSON: RENAMED},
+        RENAME_RECORD,
+        "Abhijeet34/fixture",
+        0,
+        f"permissions-diff: {MAIN_JSON} renames required context 'secret scan' to"
+        " 'secrets / secret scan', which matches recorded policy"
+        " required-context-follows-called-workflow",
+    ),
+    (
+        "a context rename with no record",
+        {MAIN_JSON: RENAMED},
+        "",
+        "Abhijeet34/fixture",
+        1,
+        f"permissions-diff: {MAIN_JSON} changes a branch ruleset: required context"
+        " 'secret scan' removed, and no recorded policy covers a replacement",
+    ),
+    (
+        "a context removed outright, with the rename record",
+        {MAIN_JSON: RULESET.replace(',\n          { "context": "secret scan" }', "")},
+        RENAME_RECORD,
+        "Abhijeet34/fixture",
+        1,
+        "required context 'secret scan' removed, and no recorded policy covers a replacement",
+    ),
+    (
+        "a context renamed to one the record's pattern does not match",
+        {MAIN_JSON: RULESET.replace('"secret scan"', '"scan"')},
+        RENAME_RECORD,
+        "Abhijeet34/fixture",
+        1,
+        "required context 'secret scan' removed, and no recorded policy covers a replacement",
+    ),
+    (
+        "a covered rename beside another ruleset change",
+        {MAIN_JSON: RENAMED.replace('"active"', '"disabled"')},
+        RENAME_RECORD,
+        "Abhijeet34/fixture",
+        1,
+        f"{MAIN_JSON} changes a branch ruleset: a change beside the required context rename",
+    ),
+    (
+        "a covered rename beside a context added",
+        {
+            MAIN_JSON: RENAMED.replace(
+                '{ "context": "checks" },',
+                '{ "context": "checks" },\n          { "context": "lint" },',
+            )
+        },
+        RENAME_RECORD,
+        "Abhijeet34/fixture",
+        1,
+        "a change beside the required context rename",
+    ),
+    (
+        "a context added alone",
+        {
+            MAIN_JSON: RULESET.replace(
+                '"checks" },', '"checks" },\n { "context": "lint" },'
+            )
+        },
+        RENAME_RECORD,
+        "Abhijeet34/fixture",
+        1,
+        "a change other than a required context rename",
+    ),
+    (
+        "a covered rename in a repository outside the record's scope",
+        {MAIN_JSON: RENAMED},
+        RENAME_RECORD,
+        "someone/else",
+        1,
+        "no recorded policy covers a replacement",
+    ),
+    (
+        "a covered rename with no repository named",
+        {MAIN_JSON: RENAMED},
+        RENAME_RECORD,
+        None,
+        1,
+        "no recorded policy covers a replacement",
+    ),
+    (
+        "a covered rename with no GATES_DIR",
+        {MAIN_JSON: RENAMED},
+        None,
+        "Abhijeet34/fixture",
+        1,
+        "no recorded policy covers a replacement",
+    ),
+    (
+        "a non-JSON file beside the rulesets, with the rename record",
+        {".github/rulesets/README.md": "The rulesets.\n"},
+        RENAME_RECORD,
+        "Abhijeet34/fixture",
+        1,
+        "permissions-diff: .github/rulesets/README.md changes a branch ruleset: any change",
+    ),
+    (
+        "a ruleset that is not JSON",
+        {MAIN_JSON: RENAMED + "}"},
+        RENAME_RECORD,
+        "Abhijeet34/fixture",
+        1,
+        f"{MAIN_JSON} cannot be read as JSON",
+    ),
+    (
+        "a relaxation file that fails its schema",
+        {MAIN_JSON: RENAMED},
+        RENAME_RECORD.replace("kinds", "kind"),
+        "Abhijeet34/fixture",
+        2,
+        "could not decide",
+    ),
+]
+
+
+def expect_ruleset(name, change, policy, repo, rc, line):
+    got_rc, out = ruleset_gate(change, policy, repo)
+    if got_rc != rc or line not in out:
+        return f"{name}: wanted exit {rc} naming {line!r}, got exit {got_rc}:\n{out}"
+    return None
+
+
+def callers_own_record():
+    """A record in the tree under review grants nothing: only GATES_DIR's file is read."""
+    base = {**RULESET_BASE, "policy/relaxations.toml": RENAME_RECORD}
+    rc, out = ruleset_gate({MAIN_JSON: RENAMED}, "", base=base)
+    if rc != 1 or "no recorded policy covers a replacement" not in out:
+        return f"a caller's own record: wanted exit 1, got exit {rc}:\n{out}"
+    return None
+
+
 def no_base():
     return expect(
         "no base compares with the empty tree",
@@ -912,6 +1095,7 @@ def keyed_by_base():
 
 def main():
     failures = [expect(*case) for case in CASES]
+    failures += [expect_ruleset(*case) for case in RULESET_CASES]
     failures += [
         f()
         for f in (
@@ -921,10 +1105,11 @@ def main():
             in_shadow,
             established_blocks,
             keyed_by_base,
+            callers_own_record,
         )
     ]
     failures = [f for f in failures if f]
-    total = len(CASES) + 6
+    total = len(CASES) + len(RULESET_CASES) + 7
     for f in failures:
         print(f"FAIL {f}", file=sys.stderr)
     print(f"test-permissions-diff: {total - len(failures)} of {total} cases passed")
