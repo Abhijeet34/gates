@@ -371,7 +371,7 @@ shadow_since = 2026-10-19
 ```
 
 `.ci/test-tool-gates.py` runs these rows through `run/gate.py` against stub tools and folds each to `shadow`.
-Five registry rows (`workflow-zizmor`, `workflow-actionlint`, `advisories-osv`, `advisories-osv-stale`, `tool-missing`) prove the script by execution with stub tools, because the `gates-proof` job installs none of the real ones.
+Eight registry rows (`workflow-zizmor`, `workflow-actionlint`, `advisories-osv`, `advisories-osv-undecided`, `advisories-osv-undecided-v1`, `advisories-osv-unscanned`, `advisories-osv-stale`, `tool-missing`) prove the script by execution with stub tools, because the `gates-proof` job installs none of the real ones.
 
 **In CI.**
 The `shell` job installs the three pinned tools, with the checksums above, and downloads an npm-only database, then `.ci/check.sh` runs `.ci/test-tool-gates.py --real` when `CI` is set; a bare checkout runs the stub cases only, because a skip on a missing tool would pass the same way.
