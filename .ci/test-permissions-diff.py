@@ -379,7 +379,11 @@ CASES = [
     ),
     (
         "a shell *) in a run block, comment edited",
-        {".github/workflows/star.yml": SHELL_STAR.replace("name: ci", "name: ci # edited")},
+        {
+            ".github/workflows/star.yml": SHELL_STAR.replace(
+                "name: ci", "name: ci # edited"
+            )
+        },
         0,
         "",
     ),
@@ -387,7 +391,8 @@ CASES = [
         "a shell *) in a run block, step added",
         {
             ".github/workflows/star.yml": SHELL_STAR.replace(
-                "      - run: echo hi\n", "      - run: echo hi\n      - run: echo bye\n"
+                "      - run: echo hi\n",
+                "      - run: echo hi\n      - run: echo bye\n",
             )
         },
         0,
@@ -397,7 +402,8 @@ CASES = [
         "a real anchor beside a run block",
         {
             ".github/workflows/star.yml": SHELL_STAR.replace(
-                "      - run: echo hi\n", "      - run: echo hi\n        env: &e\n          A: b\n"
+                "      - run: echo hi\n",
+                "      - run: echo hi\n        env: &e\n          A: b\n",
             )
         },
         1,
