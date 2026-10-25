@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Refuse a change to the protected surface: the files that grant an agent authority.
 
-Usage: permissions-diff.py --base B [--head H]
+Usage: permissions-diff.py --base B [--head H] [--repo OWNER/NAME]
 
 Reads `git diff B...H` in the current repository and names every changed path
 on SURFACE, the protected surface of security design 7.2 as it exists today
@@ -20,13 +20,19 @@ a file that uses an anchor or alias, since either can carry a token's grant.
 
 Every change it names is refused, a narrowing included: telling one from a
 widening is the review's job, and the refusal is what sizes the change L and
-opens a class-2 decision. A base of forty zeros compares with the empty tree.
+opens a class-2 decision. The one exception is a branch ruleset whose only
+change renames required contexts, each rename covered by a `context-removed`
+record of $GATES_DIR/policy/relaxations.toml for --repo (default
+GITHUB_REPOSITORY); the verdict names the record. A base of forty zeros
+compares with the empty tree.
 
 Exit status: 0 nothing protected changed, 1 refused, 2 could not decide.
 """
 
 import argparse
 import difflib
+import json
+import os
 import re
 import subprocess
 import sys
@@ -36,6 +42,7 @@ import tomllib
 # proof reads every file under run/ as a gate.
 sys.dont_write_bytecode = True
 from gate import glob_re  # noqa: E402
+import weakening  # noqa: E402
 
 NO_BASE = "0" * 40
 DECISION = (
@@ -240,6 +247,83 @@ def grants(path, old, new):
     return [] if a == b else ["a front matter key that can grant authority changed"]
 
 
+# The repository a relaxation record must be scoped to, and the renames records
+# covered; main sets the first and prints the second.
+REPO = None
+MATCHED = []
+
+
+def records():
+    """The relaxation records in the gates checkout; none without GATES_DIR or a repository."""
+    if not REPO or not os.environ.get("GATES_DIR"):
+        return []
+    try:
+        return weakening.load_policy()
+    except weakening.Undecided as e:
+        raise Undecided(str(e)) from e
+
+
+def renamed(x, names):
+    """`x` with each required context in `names` replaced by its value."""
+    if isinstance(x, dict):
+        return {
+            k: (
+                [
+                    {**c, "context": names.get(c.get("context"), c.get("context"))}
+                    if isinstance(c, dict) and "context" in c
+                    else c
+                    for c in v
+                ]
+                if k == "required_status_checks" and isinstance(v, list)
+                else renamed(v, names)
+            )
+            for k, v in x.items()
+        }
+    if isinstance(x, list):
+        return [renamed(v, names) for v in x]
+    return x
+
+
+def ruleset(path, old, new):
+    """Any change, unless it only renames required contexts as recorded policies allow."""
+    if old is None or new is None or not path.endswith(".json"):
+        return ["any change"]
+    try:
+        a, b = json.loads(old), json.loads(new)
+    except json.JSONDecodeError as e:
+        raise Unreadable(f"{path} cannot be read as JSON ({e})") from e
+    (c0, _), (c1, _) = weakening.contexts({path: old}), weakening.contexts({path: new})
+    gone, added = sorted(c0 - c1), sorted(c1 - c0)
+    if not gone:
+        return ["a change other than a required context rename"]
+    recs, pairs = records(), {}
+    for f in gone:
+        for t in (t for t in added if t not in pairs):
+            subject = json.dumps({"from": f, "to": [t]})
+            rec = next(
+                (
+                    r
+                    for r in recs
+                    if weakening.covers(r, "context-removed", subject, REPO)
+                ),
+                None,
+            )
+            if rec:
+                pairs[t] = (f, rec["id"])
+                break
+        else:
+            return [
+                f"required context {f!r} removed, and no recorded policy covers a replacement"
+            ]
+    if renamed(b, {t: f for t, (f, _) in pairs.items()}) != a:
+        return ["a change beside the required context rename"]
+    MATCHED.extend(
+        f"{path} renames required context {f!r} to {t!r}, which matches recorded policy {rid}"
+        for t, (f, rid) in sorted(pairs.items())
+    )
+    return []
+
+
 def source(path, old, new):
     """Go source, read whole; its tests grant nothing."""
     return [] if path.endswith("_test.go") else ["the source changed"]
@@ -346,8 +430,8 @@ SURFACE = [
     ("**/github-apps/register-app.py", "the GitHub App manifests", None),
     (".github/workflows/*.yml", "a workflow token's permissions", workflow),
     (".github/workflows/*.yaml", "a workflow token's permissions", workflow),
-    (".github/ruleset*.json", "a branch ruleset", None),
-    (".github/rulesets/**", "a branch ruleset", None),
+    (".github/ruleset*.json", "a branch ruleset", ruleset),
+    (".github/rulesets/**", "a branch ruleset", ruleset),
     (".github/gates.toml", "the gate registry", rows(lambda row: True)),
     (
         ".ci/gate-registry.toml",
@@ -435,7 +519,10 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--base", required=True)
     ap.add_argument("--head", default="HEAD")
+    ap.add_argument("--repo", default=os.environ.get("GITHUB_REPOSITORY"))
     args = ap.parse_args()
+    global REPO
+    REPO = args.repo
     try:
         head = git("rev-parse", "--verify", f"{args.head}^{{commit}}").decode().strip()
         base = args.base
@@ -445,7 +532,7 @@ def main():
     except Undecided as e:
         print(f"permissions-diff: could not decide: {e}", file=sys.stderr)
         return 2
-    for line in found:
+    for line in MATCHED + found:
         print(f"permissions-diff: {line}")
     if found:
         print(

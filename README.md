@@ -146,6 +146,9 @@ The macOS profile also denies a rename of each of the store's ancestors, a rule 
 `run/permissions-diff.py --base B` reads `git diff B...HEAD` and refuses every change to the files that grant an agent authority, naming each path, in 0.12 s on this repository (measured 2026-10-19).
 Its refusal is the signal that sizes the change L and opens a class-2 decision; an automatic change may not land it.
 It refuses a narrowing too: telling a narrowing from a widening is left to that decision.
+The one exception is a branch ruleset whose only change renames required contexts, each rename covered by a `context-removed` record in `policy/relaxations.toml` (see "The weakening guard").
+It reads the records from `$GATES_DIR` for `--repo`, which defaults to `GITHUB_REPOSITORY`, and prints the record each rename matched, `permissions-diff: .github/rulesets/main.json renames required context 'secret scan' to 'secrets / secret scan', which matches recorded policy required-context-follows-called-workflow`.
+Without `GATES_DIR` or a repository no record applies; a context removed with no covered replacement, a context added, any other edit in the same file, a ruleset added or deleted, and a file under `.github/rulesets/` that is not JSON are refused as before.
 
 The surface is security design 7.2's list, mapped onto the paths that exist today (read 2026-10-19 across the fleet's repositories):
 
@@ -159,7 +162,7 @@ The surface is security design 7.2's list, mapped onto the paths that exist toda
 | the `fac permit` rule table | `internal/permit/permit.go` | any |
 | `route.toml` `[tiers]` and `[vendors]` | `route.toml` | `[tiers]`, `[repos]` or `[vendors]` differs, or the file cannot be parsed |
 | App manifests and the minter's permission subsets | `**/github-apps/roles.json`, `**/github-apps/app-token.sh`, `**/github-apps/register-app.py` | any |
-| workflow `permissions:`, rulesets, Actions settings | `.github/workflows/*.yml` and `*.yaml`; `.github/ruleset*.json`, `.github/rulesets/**` | a workflow's `permissions:` blocks differ, comments aside, or a changed line spells `permissions` another way, opens a flow mapping or spells an explicit or escaped key, or the file uses a YAML anchor or alias and any line changed; a ruleset, any |
+| workflow `permissions:`, rulesets, Actions settings | `.github/workflows/*.yml` and `*.yaml`; `.github/ruleset*.json`, `.github/rulesets/**` | a workflow's `permissions:` blocks differ, comments aside, or a changed line spells `permissions` another way, opens a flow mapping or spells an explicit or escaped key, or the file uses a YAML anchor or alias and any line changed; a ruleset, any change but a required context rename a relaxation record covers |
 | gate registry rows with `phase = "security"` | `.github/gates.toml`, every row; `.ci/gate-registry.toml`, rows with `surface` `"Security"`, `"Code review"` or `"Gate pinning"`, and the rows `SECURITY_ROWS` names (the tool, PR-text, licence, workflow-policy, dependency-advisories, signature, exposure and commit-msg rows) | an existing row deleted or any of its fields changed; a new row passes |
 | (added) the tool rows' ignore lists, pins and in-tree configuration, and the relaxation records | `policy/**`; `run/tool-gates.py`; `**/zizmor.yml`, `**/zizmor.yaml`, `**/.github/actionlint.yml`, `**/.github/actionlint.yaml`, `**/osv-scanner.toml` | any |
 | (added) the PR-text, licence and weakening rows | `run/pr-text.py`, `run/licence.py`, `run/weakening.py`, `.github/licence-policy.toml` | any |
@@ -194,7 +197,7 @@ shadow_since = 2026-10-19
 ```
 
 `BASE_SHA` and `GATES_DIR` come from the calling workflow, which does not exist yet.
-`.ci/test-permissions-diff.py` runs 7.2's five red fixtures, a case for each form a workflow reader refuses and for each added path, and runs this row through `run/gate.py`, which folds it to `shadow` with a `shadow_since` and refuses without one.
+`.ci/test-permissions-diff.py` runs 7.2's five red fixtures, a case for each form a workflow reader refuses and for each added path, a context moved into a called workflow with and without the rename record and each way a ruleset change still refuses, and runs this row through `run/gate.py`, which folds it to `shadow` with a `shadow_since` and refuses without one.
 
 ## The weakening guard
 
