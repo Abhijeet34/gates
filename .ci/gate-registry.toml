@@ -2009,3 +2009,7 @@ reason = "git-lfs shim; gates nothing"
 [[exempt]]
 path = "run/install-gitleaks.sh"
 reason = "installer; its checksum refusal runs in every job that installs gitleaks"
+
+[[exempt]]
+path = "run/apt-install.sh"
+reason = "installer; .ci/test-apt-install.sh runs it against a stub apt-get"
