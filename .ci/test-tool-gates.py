@@ -54,6 +54,13 @@ def npm_lock(entry, version="4.17.15"):
     return json.dumps({"name": "fx", "lockfileVersion": 3, "packages": packages}) + "\n"
 
 
+def npm_lock_v1(entry, version="4.17.15", nested=None):
+    """A lockfile v1: one `dependencies` entry, and `nested` as the map under it when given."""
+    if nested:
+        entry = {**entry, "dependencies": nested}
+    return json.dumps({"lockfileVersion": 1, "dependencies": {"lodash": entry}}) + "\n"
+
+
 def lodash(version, resolved=True):
     """The entry npm writes, or with `resolved=False` the shape osv-scanner 2.7.0 skips as local."""
     entry = {"version": version}
@@ -86,11 +93,11 @@ def tree(files):
 
 
 # The flags a call must carry: --offline keeps the network out, the rest keep the tree
-# under review from supplying the tool's configuration.
+# under review from supplying the tool's configuration or hiding a file from the walk.
 GUARDS = {
     "zizmor": ("--offline", "--no-config", "--no-ignores"),
     "actionlint": ("-config-file",),
-    "osv-scanner": ("--offline", "--config"),
+    "osv-scanner": ("--offline", "--config", "--no-ignore"),
 }
 
 
@@ -145,6 +152,8 @@ def gate(check, files, env):
 
 WF = {".github/workflows/ci.yml": WORKFLOW}
 LOCK = {"package-lock.json": LOCKFILE}
+LODASH_RED = npm_lock(lodash("4.17.15"))
+LOCK_RED = {"package-lock.json": LODASH_RED}
 NO_TOOLS = {"PATH": str(fresh_dir())}
 
 
@@ -325,6 +334,38 @@ STUB_CASES = [
         "no package source in the tree, nothing to check",
     ),
     (
+        "osv exit 128 on a tree that holds a lockfile is undecided, not a pass",
+        "osv",
+        LOCK,
+        stubbed({"osv-scanner": ("2.7.0", 128)}, database()),
+        2,
+        refused("undecided"),
+    ),
+    (
+        "osv exit 128 names the nested lockfile it found",
+        "osv",
+        {"web/Cargo.lock": "x"},
+        stubbed({"osv-scanner": ("2.7.0", 128)}, database()),
+        2,
+        "web/Cargo.lock",
+    ),
+    (
+        "osv reads a lockfile that a .gitignore names",
+        "osv",
+        {**LOCK_RED, ".gitignore": "package-lock.json\n"},
+        stubbed({"osv-scanner": ("2.7.0", 1, "GHSA-xxxx")}, database()),
+        1,
+        "known vulnerabilities",
+    ),
+    (
+        "osv reads a lockfile in a folder that a .gitignore names",
+        "osv",
+        {"web/package-lock.json": LODASH_RED, ".gitignore": "web/\n"},
+        stubbed({"osv-scanner": ("2.7.0", 1, "GHSA-xxxx")}, database()),
+        1,
+        "known vulnerabilities",
+    ),
+    (
         "osv exit 127 naming a missing ecosystem",
         "osv",
         LOCK,
@@ -350,6 +391,38 @@ STUB_CASES = [
         stubbed({"osv-scanner": ("2.7.0", 0)}, database()),
         2,
         refused("undecided"),
+    ),
+    (
+        "osv refuses a lockfile v1 dependency with no resolved URL as undecided",
+        "osv",
+        {"package-lock.json": npm_lock_v1(lodash("4.17.15", resolved=False))},
+        stubbed({"osv-scanner": ("2.7.0", 0)}, database()),
+        2,
+        "package-lock.json: dependencies > lodash has a version and no resolved URL",
+    ),
+    (
+        "osv refuses a nested lockfile v1 dependency with no resolved URL",
+        "osv",
+        {
+            "package-lock.json": npm_lock_v1(
+                lodash("4.18.1"), nested={"b": {"version": "1.0.0"}}
+            )
+        },
+        stubbed({"osv-scanner": ("2.7.0", 0)}, database()),
+        2,
+        "dependencies > lodash > b has a version and no resolved URL",
+    ),
+    (
+        "osv passes a lockfile v1 dependency with its resolved URL",
+        "osv",
+        {
+            "package-lock.json": npm_lock_v1(
+                lodash("4.18.1"), nested={"b": lodash("1.0.0")}
+            )
+        },
+        stubbed({"osv-scanner": ("2.7.0", 0)}, database()),
+        0,
+        "no known vulnerabilities",
     ),
     (
         "osv names the lockfile and the entry it cannot decide",
@@ -525,7 +598,6 @@ OSV_IGNORE = '[[PackageOverrides]]\nname = "lodash"\necosystem = "npm"\nignore =
 ACTIONLINT_IGNORE = (
     'paths:\n  .github/workflows/*.yml:\n    ignore:\n      - "is not defined"\n'
 )
-LODASH_RED = npm_lock(lodash("4.17.15"))
 CARGO_LOCK = (
     '[[package]]\nname = "time"\nversion = "0.1.45"\n'
     'source = "registry+https://github.com/rust-lang/crates.io-index"\n'
@@ -605,6 +677,47 @@ def real_cases(seen):
                 "web/package-lock.json": LODASH_RED,
                 "web/osv-scanner.toml": OSV_IGNORE,
             },
+            env,
+            1,
+            "GHSA-35jh-r3h4-6jhm",
+        ),
+        (
+            "osv refuses lodash 4.17.15 when a .gitignore names the lockfile",
+            "osv",
+            {
+                "package-lock.json": LODASH_RED,
+                ".gitignore": "package-lock.json\n",
+                # osv-scanner reads .gitignore only where it finds a git repository.
+                ".git/HEAD": "ref: refs/heads/main\n",
+            },
+            env,
+            1,
+            "GHSA-35jh-r3h4-6jhm",
+        ),
+        (
+            "osv refuses lodash 4.17.15 when a .gitignore names the lockfile's folder",
+            "osv",
+            {
+                "web/package-lock.json": LODASH_RED,
+                ".gitignore": "web/\n",
+                ".git/HEAD": "ref: refs/heads/main\n",
+            },
+            env,
+            1,
+            "GHSA-35jh-r3h4-6jhm",
+        ),
+        (
+            "osv refuses a lockfile v1 dependency with no resolved URL, where 2.7.0 scans it clean",
+            "osv",
+            {"package-lock.json": npm_lock_v1(lodash("4.17.15", resolved=False))},
+            env,
+            2,
+            refused("undecided"),
+        ),
+        (
+            "osv refuses lodash 4.17.15 in a lockfile v1",
+            "osv",
+            {"package-lock.json": npm_lock_v1(lodash("4.17.15"))},
             env,
             1,
             "GHSA-35jh-r3h4-6jhm",
