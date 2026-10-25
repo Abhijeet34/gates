@@ -9,6 +9,10 @@
 
 set -uo pipefail
 
+# The lint step refuses Python bytecode left in the tree, and every Python suite
+# already sets this for its own children; exporting it covers the rest.
+export PYTHONDONTWRITEBYTECODE=1
+
 cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 
 # Pinned so a local run and a CI run apply the same rules.
