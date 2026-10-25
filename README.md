@@ -1052,6 +1052,8 @@ A finding that fails a step stays in the record with `blocks: false` and a `down
 A step that cannot decide within the pass's budget makes the review an `error`.
 Running the command at the base too was rejected: a defect in a new file fails there as well, so the rule would downgrade every real finding in new code.
 The command runs the change's code, so it runs sandboxed: no network, no read of anything under the user's home but its own directories, and writes only to the export, its `HOME` and its `TMPDIR`, so it can neither reach a login nor append a record to the store.
+It also reads nothing under `/tmp`, `/var/folders`, `/run`, `/var/run` or the system temporary directory but its own, where other tasks' scratch and local services' sockets live, and on macOS it starts with no bootstrap port, so neither launchd nor any Mach service such as the keychain daemon answers it; a sandbox profile rule cannot refuse launchd's own requests (measured 2026-10-25: `launchctl print` and `kickstart` answered under `(deny mach*)`).
+A reproduction therefore cannot resolve a user name (`id -un` prints the uid).
 The sandbox is macOS's `sandbox-exec`, or bubblewrap (`bwrap`) elsewhere; a host with neither, or one where it cannot start (inside another `sandbox-exec`, or on Ubuntu 24.04 with its default AppArmor limit on user namespaces), makes the review an `error`, never an unconfined run, since a sandbox that fails to start exits non-zero as a reproduction would.
 A tool installed under the user's home is therefore out of a reproduction's reach. `ci.yml` installs bubblewrap and lifts that AppArmor limit on its throwaway runners for the suites that reproduce.
 
