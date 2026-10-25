@@ -6,6 +6,7 @@
 #   2. the Ubuntu archive sources are, and the install keeps --no-install-recommends,
 #   3. an archive source failing still fails the step,
 #   4. a host with no archive source refuses rather than updating nothing.
+#   5. lookalike hosts are refused and the retry and timeout options reach apt-get.
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 
@@ -59,6 +60,9 @@ run "$workdir/etc1"
 grep -q 'update' "$workdir/log" && grep -q 'install -y --no-install-recommends libimage-exiftool-perl' "$workdir/log" \
   && pass "update then a recommends-free install of the named package" || fail "unexpected apt-get calls: $(cat "$workdir/log")"
 
+[ "$(grep -c 'Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30' "$workdir/log")" -eq 2 ] \
+  && pass "retry and timeout options reach update and install" || fail "apt-get missed the retry/timeout options: $(cat "$workdir/log")"
+
 # The archive source itself failing must still fail the job.
 export FAIL_ON='ubuntu\.com'; run "$workdir/etc1"; unset FAIL_ON
 [ "$rc" -ne 0 ] && pass "a failing archive source still fails" || fail "archive failure was swallowed"
@@ -67,6 +71,12 @@ mkdir -p "$workdir/etc2/sources.list.d"
 printf 'Types: deb\nURIs: https://packages.microsoft.com/x\n' >"$workdir/etc2/sources.list.d/m.sources"
 run "$workdir/etc2"
 [ "$rc" -ne 0 ] && [ ! -s "$workdir/log" ] && pass "no archive source refuses before calling apt-get" || fail "ran without an archive source"
+
+mkdir -p "$workdir/etc4/sources.list.d"
+printf 'Types: deb\nURIs: https://notubuntu.com/ubuntu/\n' >"$workdir/etc4/sources.list.d/n.sources"
+printf 'deb https://ppa.example.test/ubuntu.com/x noble main\n' >"$workdir/etc4/sources.list.d/p.list"
+run "$workdir/etc4"
+[ "$rc" -ne 0 ] && [ ! -s "$workdir/log" ] && pass "lookalike hosts and paths are not archive sources" || fail "a lookalike source was kept"
 
 # Control: handing apt-get every source reproduces the original failure.
 mkdir -p "$workdir/etc3"; cp -R "$workdir/etc1/." "$workdir/etc3/"
