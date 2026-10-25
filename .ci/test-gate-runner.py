@@ -297,7 +297,9 @@ def planted(runner, row):
     registry = PLANT
     if row:
         start = registry.index("run = '''")
-        registry = registry[:start] + row + registry[registry.index("'''\n", start + 9) + 4 :]
+        registry = (
+            registry[:start] + row + registry[registry.index("'''\n", start + 9) + 4 :]
+        )
     f.env.update(GATE_PY=str(runner), STORE=str(f.store))
     f.commit({".github/gates.toml": registry})
     return f
