@@ -532,6 +532,102 @@ echo more >> README.md && git commit -qam edit
 run = 'python3 "$GATE" --base base'
 finding = "permissions-diff: .claude/settings.json changes Claude Code settings"
 
+# A change that relaxes a test, a required context, a required workflow or a pin,
+# unless policy/relaxations.toml in the gates checkout covers it; README.md, "The weakening guard".
+[[gate]]
+id = "weakening-test-exemption"
+surface = "Security"
+gates = ["run/weakening.py"]
+test = ".ci/test-weakening.py"
+suite = "shell"
+command = "run/weakening.py"
+red = """
+git init -q -b main && mkdir test && echo "test('a', () => {});" > test/a.test.ts
+git add -A && git commit -qm base && git tag base
+echo "test('b', { skip: true }, () => {});" >> test/a.test.ts && git commit -qam skip
+"""
+clean = """
+git init -q -b main && mkdir test && echo "test('a', () => {});" > test/a.test.ts
+git add -A && git commit -qm base && git tag base
+echo "test('b', () => {});" >> test/a.test.ts && git commit -qam add
+"""
+run = '''GATES_DIR="$ROOT" python3 "$GATE" --base base --repo Abhijeet34/fixture --tests 'test/**' '''
+finding = "weakening: test-exemption at test/a.test.ts:2: test('b', { skip: true }"
+
+[[gate]]
+id = "weakening-context-removed"
+surface = "Security"
+gates = ["run/weakening.py"]
+test = ".ci/test-weakening.py"
+suite = "shell"
+command = "run/weakening.py"
+red = """
+git init -q -b main && mkdir -p .github/rulesets
+echo '{"rules": [{"parameters": {"required_status_checks": [{"context": "checks"}, {"context": "secret scan"}]}}]}' > .github/rulesets/main.json
+git add -A && git commit -qm base && git tag base
+echo '{"rules": [{"parameters": {"required_status_checks": [{"context": "checks"}]}}]}' > .github/rulesets/main.json
+git commit -qam drop
+"""
+clean = """
+git init -q -b main && mkdir -p .github/rulesets
+echo '{"rules": [{"parameters": {"required_status_checks": [{"context": "checks"}]}}]}' > .github/rulesets/main.json
+git add -A && git commit -qm base && git tag base
+echo '{"rules": [{"parameters": {"required_status_checks": [{"context": "checks"}, {"context": "secret scan"}]}}]}' > .github/rulesets/main.json
+git commit -qam add
+"""
+run = 'GATES_DIR="$ROOT" python3 "$GATE" --base base --repo Abhijeet34/fixture'
+finding = 'weakening: context-removed at rulesets: {"from": "secret scan", "to": []}'
+
+[[gate]]
+id = "weakening-workflow-condition"
+surface = "Security"
+gates = ["run/weakening.py"]
+test = ".ci/test-weakening.py"
+suite = "shell"
+command = "run/weakening.py"
+red = """
+git init -q -b main && mkdir -p .github/rulesets .github/workflows
+echo '{"rules": [{"parameters": {"required_status_checks": [{"context": "checks"}]}}]}' > .github/rulesets/main.json
+printf 'on:\\n  pull_request:\\njobs:\\n  checks:\\n    runs-on: ubuntu-24.04\\n    steps:\\n      - run: echo ok\\n' > .github/workflows/ci.yml
+git add -A && git commit -qm base && git tag base
+printf 'on:\\n  pull_request:\\njobs:\\n  checks:\\n    continue-on-error: true\\n    runs-on: ubuntu-24.04\\n    steps:\\n      - run: echo ok\\n' > .github/workflows/ci.yml
+git commit -qam relax
+"""
+clean = """
+git init -q -b main && mkdir -p .github/rulesets .github/workflows
+echo '{"rules": [{"parameters": {"required_status_checks": [{"context": "checks"}]}}]}' > .github/rulesets/main.json
+printf 'on:\\n  pull_request:\\njobs:\\n  checks:\\n    runs-on: ubuntu-24.04\\n    steps:\\n      - run: echo ok\\n' > .github/workflows/ci.yml
+git add -A && git commit -qm base && git tag base
+printf 'on:\\n  pull_request:\\njobs:\\n  checks:\\n    if: always()\\n    runs-on: ubuntu-24.04\\n    steps:\\n      - run: echo ok\\n' > .github/workflows/ci.yml
+git commit -qam always
+"""
+run = 'GATES_DIR="$ROOT" python3 "$GATE" --base base --repo Abhijeet34/fixture'
+finding = "weakening: workflow-condition at .github/workflows/ci.yml:5: job checks: continue-on-error: true"
+
+# The clean input adds the shape policy/relaxations.toml records, so it also proves the record is read.
+[[gate]]
+id = "weakening-moving-ref"
+surface = "Security"
+gates = ["run/weakening.py"]
+test = ".ci/test-weakening.py"
+suite = "shell"
+command = "run/weakening.py"
+red = """
+git init -q -b main && mkdir -p .github/workflows
+printf 'on: [pull_request]\\njobs:\\n  t:\\n    runs-on: ubuntu-24.04\\n    steps:\\n      - run: echo ok\\n' > .github/workflows/ci.yml
+git add -A && git commit -qm base && git tag base
+printf '      - uses: actions/checkout@v7\\n' >> .github/workflows/ci.yml && git commit -qam ref
+"""
+clean = """
+git init -q -b main && mkdir -p .github/workflows
+printf 'on: [pull_request]\\njobs:\\n  t:\\n    runs-on: ubuntu-24.04\\n    steps:\\n      - run: echo ok\\n' > .github/workflows/ci.yml
+git add -A && git commit -qm base && git tag base
+printf 'on: [pull_request]\\njobs:\\n  s:\\n    uses: Abhijeet34/gates/.github/workflows/shared-secret-scan.yml@main\\n' > .github/workflows/scan.yml
+git add -A && git commit -qm shared
+"""
+run = 'GATES_DIR="$ROOT" python3 "$GATE" --base base --repo Abhijeet34/fixture'
+finding = "weakening: moving-ref at .github/workflows/ci.yml:7: actions/checkout@v7"
+
 # Three document rules over one script; README.md, "The documentation rows". They
 # are rows of a caller's .github/gates.toml in shadow, never a workflow step.
 [[gate]]

@@ -1,0 +1,16 @@
+# The only relaxation records run/weakening.py reads. It reads them from the gates
+# checkout ($GATES_DIR), so a file of this name in the tree under review is never read.
+# A record names the finding kinds it covers, the repositories it applies to, and one
+# exact matcher per kind; README.md, "The weakening guard", owns the schema.
+# permissions-diff refuses any change to this file.
+
+# Maintainer decision 2026-10-25: a fleet repository may call gates' shared workflows
+# at @main where it did not pin them before. The guard never lets a record cover a
+# commit pin turned back into a moving ref.
+[[relaxation]]
+id = "first-party-shared-at-main"
+ratified = 2026-10-25
+by = "maintainer decision"
+kinds = ["moving-ref", "test-exemption"]
+repos = ["Abhijeet34/*"]
+ref = '^Abhijeet34/gates/\.github/workflows/shared-[a-z-]+\.yml@main$'
