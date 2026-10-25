@@ -22,12 +22,12 @@ trap 'rm -rf "$parts"' EXIT
 kept=0
 for f in "$etc"/sources.list.d/*.sources "$etc"/sources.list.d/*.list; do
   [ -f "$f" ] || continue
-  if grep -Eq '^(URIs:|deb(-src)?[[:space:]]).*https?://[A-Za-z0-9.-]*ubuntu\.com/' "$f"; then
+  if grep -Eq '^(URIs:|deb(-src)?[[:space:]]).*https?://([A-Za-z0-9-]+\.)*ubuntu\.com/' "$f"; then
     ln -s "$f" "$parts/$(basename "$f")"
     kept=$((kept + 1))
   fi
 done
-if [ -f "$etc/sources.list" ] && grep -Eq '^deb(-src)?[[:space:]].*https?://[A-Za-z0-9.-]*ubuntu\.com/' "$etc/sources.list"; then
+if [ -f "$etc/sources.list" ] && grep -Eq '^deb(-src)?[[:space:]].*https?://([A-Za-z0-9-]+\.)*ubuntu\.com/' "$etc/sources.list"; then
   main_list="$etc/sources.list"
   kept=$((kept + 1))
 else
@@ -35,6 +35,7 @@ else
 fi
 [ "$kept" -gt 0 ] || { echo "apt-install: no Ubuntu archive source under $etc" >&2; exit 1; }
 
-opts=(-o "Dir::Etc::sourcelist=$main_list" -o "Dir::Etc::sourceparts=$parts")
+opts=(-o "Dir::Etc::sourcelist=$main_list" -o "Dir::Etc::sourceparts=$parts"
+  -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30)
 ${sudo[@]+"${sudo[@]}"} "$apt" "${opts[@]}" update
 ${sudo[@]+"${sudo[@]}"} "$apt" "${opts[@]}" install -y --no-install-recommends "$@"
