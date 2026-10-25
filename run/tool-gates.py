@@ -4,7 +4,10 @@
 Usage: tool-gates.py zizmor|actionlint|osv|osv-stamp [root]    (default root: the current directory)
 
 zizmor      zizmor, offline, over .github/workflows (default persona), with no
-            configuration file and no inline ignore read.
+            configuration file and no inline ignore read. An `unpinned-uses`
+            finding is dropped only when a `moving-ref` record of
+            $GATES_DIR/policy/relaxations.toml covers that ref for
+            $GITHUB_REPOSITORY, as run/weakening.py matches it.
 actionlint  actionlint over the same files, with shellcheck and pyflakes switched
             off so the verdict does not depend on what else the machine has.
 osv         OSV-Scanner over the tree against a local database, no network.
@@ -31,7 +34,9 @@ wrong-version     the tool's version is not the one pinned in PINS.
 missing-database  osv: the database directory is unset, holds no all.zip, or lacks
                   the ecosystem of a lockfile in the tree.
 stale-database    osv: the oldest all.zip is older than MAX_DB_AGE_DAYS.
-undecided         osv: a lockfile the tool would read as clean without judging all
+undecided         zizmor: an `unpinned-uses` finding with GATES_DIR or
+                  GITHUB_REPOSITORY unset, or a policy file that fails its schema.
+                  osv: a lockfile the tool would read as clean without judging all
                   of it (see above), one that cannot be parsed, or a tree that
                   holds a PACKAGE_SOURCES file on which the tool found no package
                   source.
@@ -182,18 +187,91 @@ def lint_workflows(name, argv, found_rc, root):
 
 
 def zizmor(root):
-    return lint_workflows(
-        "zizmor",
-        lambda files: [
+    exe = tool("zizmor")
+    files = workflow_files(root)
+    if not files:
+        print(f"tool-gates: no workflow files under {WORKFLOWS}, nothing to check")
+        return 0
+    rc, out = run(
+        [
+            exe,
             "--offline",
             "--no-progress",
+            "--quiet",
             "--no-config",
             "--no-ignores",
+            "--format",
+            "json-v1",
             WORKFLOWS,
         ],
-        ZIZMOR_FINDINGS,
         root,
     )
+    if rc == 0:
+        print(
+            f"tool-gates: zizmor {PINS['zizmor']}: {len(files)} workflow file(s), no findings"
+        )
+        return 0
+    if rc not in ZIZMOR_FINDINGS:
+        raise broke("zizmor", rc, out)
+    try:
+        found = json.loads(out)
+        hits = [(f, f["locations"][0]) for f in found]
+    except (ValueError, TypeError, KeyError, IndexError):
+        found = None
+    if not found:
+        # Output it cannot read drops nothing, so the finding exit stands.
+        print(out.rstrip())
+        print(f"tool-gates: zizmor refused the workflows (exit {rc})")
+        return 1
+    records, repo = [], os.environ.get("GITHUB_REPOSITORY")
+    if any(f["ident"] == "unpinned-uses" for f, _ in hits):
+        # Imported only here: run/weakening.py needs Python 3.11 (tomllib), and the
+        # other checks run on whatever python3 the runner's PATH holds. The import
+        # would also leave run/__pycache__, which the gate proof reads as a gate.
+        sys.dont_write_bytecode = True
+        try:
+            from weakening import Undecided, covers, load_policy
+        except ImportError as e:
+            raise Refused(
+                "undecided", f"the recorded policy cannot be read: {e}"
+            ) from e
+        try:
+            if not repo:
+                raise Undecided("GITHUB_REPOSITORY is unset")
+            records = load_policy()
+        except Undecided as e:
+            raise Refused(
+                "undecided", f"an unpinned-uses finding needs a recorded policy: {e}"
+            ) from e
+    kept = 0
+    for f, loc in hits:
+        where = loc.get("symbolic", {}).get("key", {}).get("Local", {})
+        start = loc.get("concrete", {}).get("location", {}).get("start_point", {})
+        at = f"{where.get('verbatim_path', '?')}:{start.get('row', -1) + 1}"
+        subject = loc.get("concrete", {}).get("feature", "")
+        rec = next(
+            (
+                r
+                for r in records
+                if f["ident"] == "unpinned-uses"
+                and covers(r, "moving-ref", subject, repo)
+            ),
+            None,
+        )
+        if rec:
+            print(
+                f"tool-gates: unpinned-uses at {at} matches recorded policy {rec['id']}"
+            )
+            continue
+        kept += 1
+        print(f"{f['ident']} at {at}: {f.get('desc', '')}: {subject}")
+    if kept:
+        print(f"tool-gates: zizmor refused the workflows (exit {rc})")
+        return 1
+    print(
+        f"tool-gates: zizmor {PINS['zizmor']}: {len(files)} workflow file(s), every finding matches a recorded policy"
+    )
+    return 0
 
 
 def actionlint(root):
