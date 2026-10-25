@@ -125,11 +125,17 @@ jobs:
         run: run/install-gitleaks.sh
 
       # exiftool inspects; qpdf, ffmpeg and ImageMagick are the writers `clean`
-      # uses for the formats exiftool cannot rewrite.
+      # uses for the formats exiftool cannot rewrite. ffmpeg stays because
+      # test-watermark-scan.py generates and hashes mp3/wav/mkv with it.
+      # Without recommends the set is 215 packages / 137 MiB, not 340 / 229 MiB
+      # (measured 2026-10-26); the bounded step fails fast on a slow mirror
+      # instead of spending the job's 15 minutes (a run stalled there 2026-10-25).
       - name: Install the watermark gate's inspector and writers
+        timeout-minutes: 6
         run: |
-          sudo apt-get update
-          sudo apt-get install -y libimage-exiftool-perl qpdf ffmpeg imagemagick
+          apt='-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30'
+          sudo apt-get $apt update
+          sudo apt-get $apt install -y --no-install-recommends libimage-exiftool-perl qpdf ffmpeg imagemagick
 
       - run: .ci/check.sh secrets
 
