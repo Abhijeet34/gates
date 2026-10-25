@@ -163,6 +163,8 @@ def refused(kind):
 
 
 def package_sources():
+    # The import must not leave run/__pycache__ behind: gates-proof reads it as an unregistered gate.
+    sys.dont_write_bytecode = True
     spec = importlib.util.spec_from_file_location("tool_gates", GATE)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
