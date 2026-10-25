@@ -236,6 +236,10 @@ def confinement(store):
         rules = ["(version 1)", "(allow default)"]
         if not store_writable:
             rules.append(f"(deny file-write* (subpath {json.dumps(path)}))")
+            # Renaming an ancestor aside takes the store out from under the
+            # deny, so every ancestor is refused by its own literal path.
+            for up in Path(path).parents:
+                rules.append(f"(deny file-write* (literal {json.dumps(str(up))}))")
         argv = ["/usr/bin/sandbox-exec", "-p", "\n".join(rules)]
     elif shutil.which("bwrap"):
         bind = "--bind" if store_writable else "--ro-bind"

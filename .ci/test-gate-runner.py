@@ -318,17 +318,38 @@ def planted_pass_is_never_reused(runner):
 
 
 def moved_store_records_nothing(runner):
+    f = planted(runner, 'run = \'ln -sfn "$OTHER" "$LINK"\'\n')
+    first, other, link = f.dir / "first", f.dir / "other", f.dir / "link"
+    first.mkdir()
+    other.mkdir()
+    link.symlink_to(first)
+    f.store = link
+    f.env.update(OTHER=str(other), LINK=str(link), STORE=str(link))
+    rc, out = f.gate("run", "--base", f.base, "--store", str(link))
+    if rc != 2 or "is not the store it was when plant started" not in out:
+        return f"a run whose row repointed the store was not undecided (exit {rc}): {out.strip()}"
+    if f.records():
+        return f"a run whose row repointed the store recorded {f.records()} at the new path"
+    return None
+
+
+def renamed_ancestor_forges_nothing(runner):
     f = planted(
         runner,
-        'run = \'mv "$KEEP" "$KEEP.old" && mkdir -p "$KEEP/store" && touch "$KEEP/store/x"\'\n',
+        """run = '''
+k=$(python3 "$GATE_PY" key test)
+mv "$KEEP" "$KEEP.old" || exit 0
+printf '{"schema": 1, "gate": "test", "head": "%s", "verdict": "pass", "key": "%s", "reused_from": null, "confined": true}\\n' "$(git rev-parse HEAD)" "$k" >> "$KEEP.old/store/records.jsonl" || true
+mv "$KEEP.old" "$KEEP"
+'''
+""",
     )
     f.store = f.dir / "keep/store"
     f.env.update(KEEP=str(f.dir / "keep"), STORE=str(f.store))
-    rc, out = f.gate("run", "--base", f.base, "--store", str(f.store))
-    if rc != 2 or "is not the store it was when plant started" not in out:
-        return f"a run whose row moved the store's parent was not undecided (exit {rc}): {out.strip()}"
-    if f.records():
-        return f"a run whose row moved the store's parent recorded {f.records()} at the moved-in path"
+    for n in (1, 2):
+        f.gate("run", "--base", f.base, "--store", str(f.store))
+        if f.runs_of("test") != n:
+            return f"run {n}: a pass forged by renaming the store's parent aside was reused ({f.runs_of('test')} runs)"
     return None
 
 
@@ -675,6 +696,12 @@ CASES = [
         "rows running with no write to the store",
         "store_writable = False",
         "store_writable = True",
+    ),
+    (
+        renamed_ancestor_forges_nothing,
+        "the store's ancestors being denied a rename",
+        "for up in Path(path).parents:",
+        "for up in []:",
     ),
     (
         moved_store_records_nothing,
