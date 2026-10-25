@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# Install apt packages from the Ubuntu archive alone. A hosted runner image ships
+# third-party sources (Microsoft, Azure CLI, ...) that a job installing from the
+# archive never uses, and one of them answering 403 fails a plain `apt-get update`
+# with exit 100 (measured 2026-10-25). An archive source being down still fails.
+#
+#   run/apt-install.sh PACKAGE...
+#
+# APT_ETC, APT_GET and APT_SUDO exist for .ci/test-apt-install.sh.
+set -euo pipefail
+
+[ "$#" -gt 0 ] || { echo "apt-install: no packages named" >&2; exit 2; }
+etc=${APT_ETC:-/etc/apt}
+apt=${APT_GET:-apt-get}
+read -r -a sudo <<<"${APT_SUDO-sudo}"
+
+parts=$(mktemp -d)
+trap 'rm -rf "$parts"' EXIT
+
+# A source is the archive's when it names an ubuntu.com host (archive, security,
+# azure.archive mirror). Anything else is left out of this run, not removed.
+kept=0
+for f in "$etc"/sources.list.d/*.sources "$etc"/sources.list.d/*.list; do
+  [ -f "$f" ] || continue
+  if grep -Eq '^(URIs:|deb(-src)?[[:space:]]).*https?://[A-Za-z0-9.-]*ubuntu\.com/' "$f"; then
+    ln -s "$f" "$parts/$(basename "$f")"
+    kept=$((kept + 1))
+  fi
+done
+if [ -f "$etc/sources.list" ] && grep -Eq '^deb(-src)?[[:space:]].*https?://[A-Za-z0-9.-]*ubuntu\.com/' "$etc/sources.list"; then
+  main_list="$etc/sources.list"
+  kept=$((kept + 1))
+else
+  main_list=/dev/null
+fi
+[ "$kept" -gt 0 ] || { echo "apt-install: no Ubuntu archive source under $etc" >&2; exit 1; }
+
+opts=(-o "Dir::Etc::sourcelist=$main_list" -o "Dir::Etc::sourceparts=$parts")
+${sudo[@]+"${sudo[@]}"} "$apt" "${opts[@]}" update
+${sudo[@]+"${sudo[@]}"} "$apt" "${opts[@]}" install -y --no-install-recommends "$@"

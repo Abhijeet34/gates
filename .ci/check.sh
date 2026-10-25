@@ -87,6 +87,8 @@ check_shell() {
     bash .ci/test-watermark-scan-workflow.sh || rc=1
     # The bootstrap's lock controls, against fixture gates and caller repositories.
     bash .ci/test-lock.sh || rc=1
+    # The archive-only apt install the watermark jobs run, against a stub apt-get.
+    bash .ci/test-apt-install.sh || rc=1
     bash .ci/test-upstream-owner-refs.sh || rc=1
     bash .ci/test-suite-coverage.sh || rc=1
     # The gate runner's selection, cache and fold, each case also run without its control.
