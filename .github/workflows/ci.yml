@@ -6,12 +6,10 @@ name: CI
 # `checks`, so jobs here can be added or renamed without touching branch
 # protection.
 #
-# Triggers are push, pull_request, pull_request_review, schedule and
+# Triggers are pull_request, pull_request_review, schedule and
 # workflow_dispatch only; .ci/test-workflow-policy.sh refuses the triggers that would run a fork's code
 # with this repository's token, and any runner that is not GitHub-hosted.
 on:
-  push:
-    branches: [main]
   pull_request:
   # A review re-decides `checks`, so record-approval sees an approval or its
   # dismissal without a new push.
@@ -23,8 +21,10 @@ on:
     - cron: "17 6 * * 1"
   workflow_dispatch:
 
-# A superseded pull request run is noise. A superseded push run on main is
-# not: it is the only record that a given merged commit was green.
+# The ruleset's strict status policy makes the tree that lands on main the tree
+# its pull request run tested, so there is no push run to re-verify it; the
+# record that a merged commit was green is the pull request run on its head.
+# A superseded run of the same ref is noise; the scheduled one stays uncancelled.
 concurrency:
   group: ci-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}

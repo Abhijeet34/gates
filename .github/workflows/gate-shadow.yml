@@ -6,8 +6,6 @@ name: gate shadow
 # `checks` alone, and `needs` reaches only jobs of its own file, so nothing here
 # can turn `checks` red.
 on:
-  push:
-    branches: [main]
   pull_request:
     branches: [main]
   workflow_dispatch:
