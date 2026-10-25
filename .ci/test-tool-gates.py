@@ -16,6 +16,7 @@ ci.yml installs them (README.md, "The tool rows").
 """
 
 import datetime
+import importlib.util
 import json
 import os
 import shutil
@@ -159,6 +160,27 @@ NO_TOOLS = {"PATH": str(fresh_dir())}
 
 def refused(kind):
     return f"tool-gates: refused ({kind}):"
+
+
+def package_sources():
+    spec = importlib.util.spec_from_file_location("tool_gates", GATE)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.PACKAGE_SOURCES
+
+
+# One case per name osv-scanner reads: a `*` becomes a stem so the pattern is a real file name.
+SOURCE_CASES = [
+    (
+        f"osv exit 128 on a tree holding only {pattern} is undecided",
+        "osv",
+        {pattern.replace("*", "x"): "x"},
+        stubbed({"osv-scanner": ("2.7.0", 128)}, database()),
+        2,
+        pattern.replace("*", "x"),
+    )
+    for pattern in package_sources()
+]
 
 
 # name, check, files, environment, wanted exit, wanted output
@@ -798,7 +820,7 @@ def main():
     if real:
         results = real_cases(seen)
     else:
-        results = [expect(*case) for case in STUB_CASES]
+        results = [expect(*case) for case in STUB_CASES + SOURCE_CASES]
         results += stamp_cases()
         results += [f() for f in (in_shadow, established_blocks)]
     failures = [r for r in results if r]

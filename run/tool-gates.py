@@ -42,6 +42,7 @@ and database-refresh steps. Fetching the database is not this script's job: it
 runs with no network, so a database it cannot find is a refusal.
 """
 
+import fnmatch
 import json
 import os
 import re
@@ -61,11 +62,46 @@ POLICY = Path(__file__).resolve().parent.parent / "policy"
 ZIZMOR_FINDINGS = range(10, 15)
 NPM_LOCKS = ("package-lock.json", "npm-shrinkwrap.json")
 OSV_FINDINGS, OSV_NO_PACKAGES, OSV_ERROR = 1, 128, 127
-# A file osv-scanner reads as package source: a lockfile of any ecosystem, or a manifest
-# it parses without one.
-LOCKFILE_NAME = re.compile(
-    r"(^|[._-])lockb?(file)?($|[._-])|^(go\.mod|pom\.xml|requirements.*\.txt)$",
-    re.IGNORECASE,
+# The names osv-scanner 2.7.0 reads as package source by default (presets lockfile, sbom and
+# directory); `*` matches any run of characters. lockfiles() is the only reader.
+PACKAGE_SOURCES = (
+    "package-lock.json",
+    "npm-shrinkwrap.json",
+    "yarn.lock",
+    "pnpm-lock.yaml",
+    "bun.lock",
+    "deno.lock",
+    "Cargo.lock",
+    "go.mod",
+    "pom.xml",
+    "gradle.lockfile",
+    "buildscript-gradle.lockfile",
+    "verification-metadata.xml",
+    "composer.lock",
+    "Gemfile.lock",
+    "gems.locked",
+    "mix.lock",
+    "pubspec.lock",
+    "renv.lock",
+    "conan.lock",
+    "packages.lock.json",
+    "packages.config",
+    "*.deps.json",
+    "poetry.lock",
+    "Pipfile.lock",
+    "uv.lock",
+    "pdm.lock",
+    "pylock.toml",
+    "pylock.*.toml",
+    "requirements*.txt",
+    "cabal.project.freeze",
+    "stack.yaml.lock",
+    "Package.resolved",
+    "Podfile.lock",
+    "*.cdx.json",
+    "*.cdx.xml",
+    "*.spdx.json",
+    "*.spdx",
 )
 
 
@@ -253,7 +289,7 @@ def lockfiles(root):
         found += [
             str((Path(folder) / f).relative_to(root))
             for f in files
-            if LOCKFILE_NAME.search(f)
+            if any(fnmatch.fnmatchcase(f.lower(), p.lower()) for p in PACKAGE_SOURCES)
         ]
     return sorted(found)
 

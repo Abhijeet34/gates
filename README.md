@@ -281,7 +281,7 @@ actionlint reads a project's config only inside a git repository, so a fixture t
 
 A `package-lock.json` or `npm-shrinkwrap.json` entry that has a `version`, no `resolved` and no `link`, whether under a `node_modules/` key or in a v1 `dependencies` map at any depth, is refused `undecided`, naming the file and the entry, before osv-scanner runs.
 A lockfile that cannot be read as JSON is refused the same way.
-osv-scanner's exit 128 ("no package source") passes only on a tree with no file named like a lockfile or a manifest it parses (`LOCKFILE_NAME` in `run/tool-gates.py`); on a tree that holds one it is refused `undecided`.
+osv-scanner's exit 128 ("no package source") passes only on a tree with no file osv-scanner 2.7.0 parses by default (every name in `PACKAGE_SOURCES` in `run/tool-gates.py`, from its lockfile, sbom and directory presets); on a tree that holds one it is refused `undecided`.
 Whether npm ever writes a registry package without `resolved` was not measured; if it does, that entry is refused until it is judged some other way.
 
 **The offline database** is OSV's per-ecosystem `all.zip` under the directory `OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY` names.
