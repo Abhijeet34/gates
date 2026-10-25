@@ -8,11 +8,14 @@ zizmor      zizmor, offline, over .github/workflows (default persona), with no
 actionlint  actionlint over the same files, with shellcheck and pyflakes switched
             off so the verdict does not depend on what else the machine has.
 osv         OSV-Scanner over the tree against a local database, no network.
-            An npm lockfile entry under node_modules/ with a version, no resolved
-            URL and no link is refused as undecided: 2.7.0 skips it as local.
+            An npm lockfile entry (under node_modules/, or in a v1 dependencies
+            map) with a version, no resolved URL and no link is refused as
+            undecided: 2.7.0 skips it as local. The tool is told to read files a
+            .gitignore names, and "no package source" on a tree that holds any file
+            named in PACKAGE_SOURCES is refused rather than passed.
 
-None of the three reads configuration from the tree under review, which a change
-could otherwise add to silence the finding that gates it. osv and actionlint are
+None of the three reads configuration or ignore lists from the tree under review,
+which a change could otherwise add to silence the finding that gates it. osv and actionlint are
 handed a file under policy/ of this repository, and zizmor is handed none. Any
 ignore belongs in that file, which security design 7.2's surface protects.
 osv-stamp   Print today's UTC date and the size and mtime of each database file, as
@@ -29,7 +32,9 @@ missing-database  osv: the database directory is unset, holds no all.zip, or lac
                   the ecosystem of a lockfile in the tree.
 stale-database    osv: the oldest all.zip is older than MAX_DB_AGE_DAYS.
 undecided         osv: a lockfile the tool would read as clean without judging all
-                  of it (see above), or one that cannot be parsed.
+                  of it (see above), one that cannot be parsed, or a tree that
+                  holds a PACKAGE_SOURCES file on which the tool found no package
+                  source.
 tool-error        the tool crashed, timed out or exited with a status that means
                   neither pass nor finding.
 
@@ -38,6 +43,7 @@ and database-refresh steps. Fetching the database is not this script's job: it
 runs with no network, so a database it cannot find is a refusal.
 """
 
+import fnmatch
 import json
 import os
 import re
@@ -57,6 +63,47 @@ POLICY = Path(__file__).resolve().parent.parent / "policy"
 ZIZMOR_FINDINGS = range(10, 15)
 NPM_LOCKS = ("package-lock.json", "npm-shrinkwrap.json")
 OSV_FINDINGS, OSV_NO_PACKAGES, OSV_ERROR = 1, 128, 127
+# The names osv-scanner 2.7.0 reads as package source by default (presets lockfile, sbom and
+# directory); `*` matches any run of characters. lockfiles() is the only reader.
+PACKAGE_SOURCES = (
+    "package-lock.json",
+    "npm-shrinkwrap.json",
+    "yarn.lock",
+    "pnpm-lock.yaml",
+    "bun.lock",
+    "deno.lock",
+    "Cargo.lock",
+    "go.mod",
+    "pom.xml",
+    "gradle.lockfile",
+    "buildscript-gradle.lockfile",
+    "verification-metadata.xml",
+    "composer.lock",
+    "Gemfile.lock",
+    "gems.locked",
+    "mix.lock",
+    "pubspec.lock",
+    "renv.lock",
+    "conan.lock",
+    "packages.lock.json",
+    "packages.config",
+    "*.deps.json",
+    "poetry.lock",
+    "Pipfile.lock",
+    "uv.lock",
+    "pdm.lock",
+    "pylock.toml",
+    "pylock.*.toml",
+    "requirements*.txt",
+    "cabal.project.freeze",
+    "stack.yaml.lock",
+    "Package.resolved",
+    "Podfile.lock",
+    "*.cdx.json",
+    "*.cdx.xml",
+    "*.spdx.json",
+    "*.spdx",
+)
 
 
 class Refused(Exception):
@@ -191,6 +238,19 @@ def database():
     return len(zips)
 
 
+def v1_entries(deps):
+    """(chain, entry) for each package of a lockfile v1 `dependencies` map, nested ones included."""
+    stack = [((), deps)]
+    while stack:
+        chain, level = stack.pop()
+        if not isinstance(level, dict):
+            continue
+        for name, entry in level.items():
+            if isinstance(entry, dict):
+                yield (*chain, name), entry
+                stack.append(((*chain, name), entry.get("dependencies")))
+
+
 def undecided_npm_entries(root):
     """Each `lockfile: entry` osv-scanner 2.7.0 would skip as local, or could not be read."""
     found = []
@@ -202,21 +262,37 @@ def undecided_npm_entries(root):
             path = Path(folder) / name
             rel = path.relative_to(root)
             try:
-                entries = list(json.loads(path.read_text()).get("packages", {}).items())
+                lock = json.loads(path.read_text())
+                packages = list(lock.get("packages", {}).items())
+                nested = list(v1_entries(lock.get("dependencies")))
             except (OSError, ValueError, AttributeError) as e:
                 # A lockfile this cannot read is one the tool may skip, so it is not a pass.
                 found.append(f"{rel}: not readable as an npm lockfile ({e})")
                 continue
+            entries = [(key, e) for key, e in packages if "node_modules/" in key]
+            entries += [("dependencies > " + " > ".join(c), e) for c, e in nested]
             found += [
                 f"{rel}: {key} has a version and no resolved URL"
                 for key, entry in entries
-                if "node_modules/" in key
-                and isinstance(entry, dict)
+                if isinstance(entry, dict)
                 and "version" in entry
                 and not entry.get("resolved")
                 and not entry.get("link")
             ]
     return found
+
+
+def lockfiles(root):
+    """Each path under `root` whose name osv-scanner would read as package source."""
+    found = []
+    for folder, dirs, files in os.walk(root):
+        dirs[:] = [d for d in dirs if d != ".git"]
+        found += [
+            str((Path(folder) / f).relative_to(root))
+            for f in files
+            if any(fnmatch.fnmatchcase(f.lower(), p.lower()) for p in PACKAGE_SOURCES)
+        ]
+    return sorted(found)
 
 
 def osv(root):
@@ -230,7 +306,8 @@ def osv(root):
             f" would read clean unjudged: {'; '.join(undecided)}",
         )
     # --offline forbids the network; the second flag names the source of the verdict;
-    # --config stops the tree under review from supplying the tool's configuration.
+    # --config stops the tree under review from supplying the tool's configuration, and
+    # --no-ignore stops its .gitignore from hiding a lockfile from the walk.
     rc, out = run(
         [
             exe,
@@ -240,6 +317,7 @@ def osv(root):
             str(POLICY / "osv-scanner.toml"),
             "--offline",
             "--offline-vulnerabilities",
+            "--no-ignore",
             "-r",
             ".",
         ],
@@ -251,6 +329,12 @@ def osv(root):
         )
         return 0
     if rc == OSV_NO_PACKAGES:
+        held = lockfiles(root)
+        if held:
+            raise Refused(
+                "undecided",
+                f"osv-scanner found no package source in a tree that holds {', '.join(held[:5])}",
+            )
         print("tool-gates: no package source in the tree, nothing to check")
         return 0
     if rc == OSV_FINDINGS:

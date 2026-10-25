@@ -617,7 +617,7 @@ printf '#!/bin/sh\n[ "$1" = --version ] && { echo 1.7.12; exit 0; }\ncase " $* "
 run = 'py=$(command -v python3); PATH="$PWD/bin" "$py" "$GATE" actionlint .'
 finding = "tool-gates: actionlint refused the workflows (exit 1)"
 
-# The stub exits 99 unless called with --offline and --config, so a call that could reach the network, or read the tree's own configuration, fails.
+# The stub exits 99 unless called with --offline, --config and --no-ignore, so a call that could reach the network, read the tree's own configuration or skip a file its .gitignore names fails.
 [[gate]]
 id = "advisories-osv"
 surface = "Dependencies"
@@ -627,12 +627,12 @@ suite = "shell"
 command = "run/tool-gates.py"
 red = '''
 mkdir -p bin db/npm && : > db/npm/all.zip && echo '{}' > package-lock.json
-printf '#!/bin/sh\n[ "$1" = --version ] && { echo "osv-scanner version: 2.7.0"; exit 0; }\nok=1; for f in --offline --config; do case " $* " in *" $f "*) ;; *) ok=0 ;; esac; done\n[ $ok = 1 ] && exit 1\nexit 99\n' > bin/osv-scanner
+printf '#!/bin/sh\n[ "$1" = --version ] && { echo "osv-scanner version: 2.7.0"; exit 0; }\nok=1; for f in --offline --config --no-ignore; do case " $* " in *" $f "*) ;; *) ok=0 ;; esac; done\n[ $ok = 1 ] && exit 1\nexit 99\n' > bin/osv-scanner
 chmod +x bin/osv-scanner
 '''
 clean = '''
 mkdir -p bin db/npm && : > db/npm/all.zip && echo '{}' > package-lock.json
-printf '#!/bin/sh\n[ "$1" = --version ] && { echo "osv-scanner version: 2.7.0"; exit 0; }\nok=1; for f in --offline --config; do case " $* " in *" $f "*) ;; *) ok=0 ;; esac; done\n[ $ok = 1 ] && exit 0\nexit 99\n' > bin/osv-scanner
+printf '#!/bin/sh\n[ "$1" = --version ] && { echo "osv-scanner version: 2.7.0"; exit 0; }\nok=1; for f in --offline --config --no-ignore; do case " $* " in *" $f "*) ;; *) ok=0 ;; esac; done\n[ $ok = 1 ] && exit 0\nexit 99\n' > bin/osv-scanner
 chmod +x bin/osv-scanner
 '''
 run = 'py=$(command -v python3); PATH="$PWD/bin" OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY="$PWD/db" "$py" "$GATE" osv .'
@@ -657,6 +657,52 @@ clean = '''
 mkdir -p bin db/npm && : > db/npm/all.zip
 echo '{"packages": {"node_modules/lodash": {"version": "4.17.15", "resolved": "https://registry.npmjs.org/lodash/-/lodash-4.17.15.tgz"}}}' > package-lock.json
 printf '#!/bin/sh\n[ "$1" = --version ] && { echo "osv-scanner version: 2.7.0"; exit 0; }\nexit 0\n' > bin/osv-scanner
+chmod +x bin/osv-scanner
+'''
+run = 'py=$(command -v python3); PATH="$PWD/bin" OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY="$PWD/db" "$py" "$GATE" osv .'
+finding = "tool-gates: refused (undecided)"
+
+# A lockfile of the v1 shape keeps its packages under `dependencies`, which the v2 `packages`
+# walk does not reach; the stub answers clean either way, so the verdict is the script's own.
+[[gate]]
+id = "advisories-osv-undecided-v1"
+surface = "Dependencies"
+gates = ["run/tool-gates.py"]
+test = ".ci/test-tool-gates.py"
+suite = "shell"
+command = "run/tool-gates.py"
+red = '''
+mkdir -p bin db/npm && : > db/npm/all.zip
+echo '{"lockfileVersion": 1, "dependencies": {"lodash": {"version": "4.17.15"}}}' > package-lock.json
+printf '#!/bin/sh\n[ "$1" = --version ] && { echo "osv-scanner version: 2.7.0"; exit 0; }\nexit 0\n' > bin/osv-scanner
+chmod +x bin/osv-scanner
+'''
+clean = '''
+mkdir -p bin db/npm && : > db/npm/all.zip
+echo '{"lockfileVersion": 1, "dependencies": {"lodash": {"version": "4.17.15", "resolved": "https://registry.npmjs.org/lodash/-/lodash-4.17.15.tgz"}}}' > package-lock.json
+printf '#!/bin/sh\n[ "$1" = --version ] && { echo "osv-scanner version: 2.7.0"; exit 0; }\nexit 0\n' > bin/osv-scanner
+chmod +x bin/osv-scanner
+'''
+run = 'py=$(command -v python3); PATH="$PWD/bin" OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY="$PWD/db" "$py" "$GATE" osv .'
+finding = "tool-gates: refused (undecided)"
+
+# "No package source" on a tree that holds a lockfile is a refusal, not a pass; the same answer
+# on a tree with none stays a pass.
+[[gate]]
+id = "advisories-osv-unscanned"
+surface = "Dependencies"
+gates = ["run/tool-gates.py"]
+test = ".ci/test-tool-gates.py"
+suite = "shell"
+command = "run/tool-gates.py"
+red = '''
+mkdir -p bin db/npm && : > db/npm/all.zip && echo '{}' > package-lock.json
+printf '#!/bin/sh\n[ "$1" = --version ] && { echo "osv-scanner version: 2.7.0"; exit 0; }\nexit 128\n' > bin/osv-scanner
+chmod +x bin/osv-scanner
+'''
+clean = '''
+mkdir -p bin db/npm && : > db/npm/all.zip
+printf '#!/bin/sh\n[ "$1" = --version ] && { echo "osv-scanner version: 2.7.0"; exit 0; }\nexit 128\n' > bin/osv-scanner
 chmod +x bin/osv-scanner
 '''
 run = 'py=$(command -v python3); PATH="$PWD/bin" OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY="$PWD/db" "$py" "$GATE" osv .'

@@ -273,13 +273,15 @@ curl -fsSLO https://github.com/google/osv-scanner/releases/download/v2.7.0/osv-s
 **What the rows do not read.**
 A change must not be able to silence the finding that gates it, so no row reads configuration from the tree under review:
 zizmor runs with `--no-config --no-ignores`, which drops `zizmor.yml`, `.github/zizmor.yml` and inline `# zizmor: ignore` comments;
-osv-scanner and actionlint run with `--config` and `-config-file` naming `policy/osv-scanner.toml` and `policy/actionlint.yaml` of this repository, which stops `osv-scanner.toml` (at the root or beside a lockfile) and `.github/actionlint.yaml` from being read.
+osv-scanner and actionlint run with `--config` and `-config-file` naming `policy/osv-scanner.toml` and `policy/actionlint.yaml` of this repository, which stops `osv-scanner.toml` (at the root or beside a lockfile) and `.github/actionlint.yaml` from being read;
+osv-scanner also runs with `--no-ignore`, so a `.gitignore` that names a lockfile or its folder does not hide it from the scan.
 Both files hold a comment and no ignore.
 An ignore, when one is justified, is an entry in one of them with a reason, and `policy/**` is on the permissions-diff surface, so adding one is a class-2 decision.
-actionlint reads a project's config only inside a git repository, so a fixture tree needs a `.git` to show the bypass; `.ci/test-tool-gates.py --real` plants one.
+actionlint reads a project's config only inside a git repository, so a fixture tree needs a `.git` to show the bypass; `.ci/test-tool-gates.py --real` plants one, which osv-scanner's `.gitignore` cases need too.
 
-A `package-lock.json` or `npm-shrinkwrap.json` entry whose key holds `node_modules/` and that has a `version`, no `resolved` and no `link` is refused `undecided`, naming the file and the key, before osv-scanner runs.
+A `package-lock.json` or `npm-shrinkwrap.json` entry that has a `version`, no `resolved` and no `link`, whether under a `node_modules/` key or in a v1 `dependencies` map at any depth, is refused `undecided`, naming the file and the entry, before osv-scanner runs.
 A lockfile that cannot be read as JSON is refused the same way.
+osv-scanner's exit 128 ("no package source") passes only on a tree with no file osv-scanner 2.7.0 parses by default (every name in `PACKAGE_SOURCES` in `run/tool-gates.py`, from its lockfile, sbom and directory presets); on a tree that holds one it is refused `undecided`.
 Whether npm ever writes a registry package without `resolved` was not measured; if it does, that entry is refused until it is judged some other way.
 
 **The offline database** is OSV's per-ecosystem `all.zip` under the directory `OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY` names.
@@ -369,7 +371,7 @@ shadow_since = 2026-10-19
 ```
 
 `.ci/test-tool-gates.py` runs these rows through `run/gate.py` against stub tools and folds each to `shadow`.
-Five registry rows (`workflow-zizmor`, `workflow-actionlint`, `advisories-osv`, `advisories-osv-stale`, `tool-missing`) prove the script by execution with stub tools, because the `gates-proof` job installs none of the real ones.
+Eight registry rows (`workflow-zizmor`, `workflow-actionlint`, `advisories-osv`, `advisories-osv-undecided`, `advisories-osv-undecided-v1`, `advisories-osv-unscanned`, `advisories-osv-stale`, `tool-missing`) prove the script by execution with stub tools, because the `gates-proof` job installs none of the real ones.
 
 **In CI.**
 The `shell` job installs the three pinned tools, with the checksums above, and downloads an npm-only database, then `.ci/check.sh` runs `.ci/test-tool-gates.py --real` when `CI` is set; a bare checkout runs the stub cases only, because a skip on a missing tool would pass the same way.
