@@ -216,13 +216,20 @@ def grants(path, old, new):
 
 
 def source(path, old, new):
-    """Sandbox source, read whole; its tests are not what the sandbox grants."""
+    """Go source, read whole; its tests grant nothing."""
     return [] if path.endswith("_test.go") else ["the source changed"]
 
 
 # Rows proved in .ci/gate-registry.toml whose control is a security control, though
-# their surface names what they read; a row on the Security surface is protected too.
+# their surface names what they read; a row on a SECURITY_SURFACES surface is
+# protected too: the review agent's security lens and the gate pinning lock.
+SECURITY_SURFACES = {"Security", "Code review", "Gate pinning"}
 SECURITY_ROWS = {
+    "workflow-policy",
+    "dependency-advisories",
+    "signature-check",
+    "exposure-scan",
+    "commit-msg",
     "workflow-zizmor",
     "workflow-actionlint",
     "advisories-osv",
@@ -238,6 +245,65 @@ SECURITY_ROWS = {
     "licence-review",
     "licence-vendored",
 }
+
+
+def go_declaration(text, name):
+    """The top-level `var name` declaration in Go source, to the line closing its brackets."""
+    m = re.search(rf"^var\s+{name}\b", text or "", re.M)
+    if not m:
+        return None
+    # The declaration ends where Go would insert its semicolon: a newline outside
+    # brackets after an identifier, a literal or a closing bracket.
+    i, depth, last = m.start(), 0, ""
+    while i < len(text):
+        c = text[i]
+        if text.startswith("//", i):
+            i = text.find("\n", i)
+            if i < 0:
+                break
+            continue
+        if text.startswith("/*", i):
+            i = text.find("*/", i + 2)
+            if i < 0:
+                break
+            i += 2
+            continue
+        if c in "\"'`":
+            j = i + 1
+            while j < len(text) and text[j] != c and (c == "`" or text[j] != "\n"):
+                j += 2 if c != "`" and text[j] == "\\" else 1
+            i, last = j + 1, c
+            continue
+        if c in "([{":
+            depth += 1
+        elif c in ")]}":
+            depth -= 1
+        elif c == "\n" and depth <= 0 and (last.isalnum() or last in "_)]}\"'`"):
+            return text[m.start() : i]
+        if not c.isspace():
+            last = c
+        i += 1
+    return text[m.start() :]
+
+
+def declarations(*names):
+    """A Go declaration, and every changed line naming it, so an assignment elsewhere is named too."""
+
+    def changed(path, old, new):
+        a, b = (old or "").splitlines(), (new or "").splitlines()
+        ops = difflib.SequenceMatcher(None, a, b, autojunk=False).get_opcodes()
+        lines = [
+            x for t, i1, i2, j1, j2 in ops if t != "equal" for x in a[i1:i2] + b[j1:j2]
+        ]
+        out = []
+        for name in names:
+            if go_declaration(old, name) != go_declaration(new, name):
+                out.append(f"the {name} declaration changed")
+            elif any(re.search(rf"\b{name}\b", line) for line in lines):
+                out.append(f"a line naming {name} changed")
+        return out
+
+    return changed
 
 
 # (glob, what the matching file grants, how its change is read: None names any change).
@@ -263,7 +329,8 @@ SURFACE = [
         "the gate proof's security rows",
         rows(
             lambda row: (
-                row.get("surface") == "Security" or row.get("id") in SECURITY_ROWS
+                row.get("surface") in SECURITY_SURFACES
+                or row.get("id") in SECURITY_ROWS
             )
         ),
     ),
@@ -277,6 +344,24 @@ SURFACE = [
     ("**/.github/actionlint.yml", "a tool's in-tree configuration", None),
     ("**/.github/actionlint.yaml", "a tool's in-tree configuration", None),
     ("**/osv-scanner.toml", "a tool's in-tree configuration", None),
+    ("run/review.py", "the review agent and its verifier's sandbox", None),
+    ("run/gate.py", "the gate runner and the globs this gate matches with", None),
+    ("run/secret-scan.sh", "the secret scan", None),
+    (".gitleaks.toml", "the secret scan's rules and allowlists", None),
+    (".ci/test-workflow-policy.sh", "the workflow policy", None),
+    ("run/dependency-advisories.sh", "the dependency advisories row", None),
+    ("run/dependency-advisories/**", "the dependency advisories row", None),
+    (
+        "internal/adapter/claude/claude.go",
+        "the hosts a boxed run's proxy allows",
+        declarations("Egress"),
+    ),
+    (
+        "repos/depbase.go",
+        "the hosts a base build's proxy allows",
+        declarations("Registries"),
+    ),
+    ("egress/*.go", "the boxed run's egress proxy", source),
     ("**/.mcp.json", "an agent's MCP servers", None),
     ("**/.claude/commands/**.md", "a command's tool grants", grants),
     ("**/.claude/agents/**.md", "an agent's tool grants", grants),
@@ -284,6 +369,8 @@ SURFACE = [
     ("**/claude-code/config/commands/**.md", "a command's tool grants", grants),
     ("**/claude-code/config/agents/**.md", "an agent's tool grants", grants),
     ("**/claude-code/config/skills/**/SKILL.md", "a skill's tool grants", grants),
+    ("**/.claude/hooks/**", "a Claude Code hook script", None),
+    ("**/claude-code/config/hooks/**", "a Claude Code hook script", None),
     ("outbound/outbound.go", "the outbound text pattern set", None),
     ("**/memory-write-guard.sh", "the memory write guard", None),
     ("**/captain.md", "the captain's standing instructions", None),
