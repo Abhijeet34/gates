@@ -138,6 +138,7 @@ A store written before this rule holds no `confined` mark, so its records still 
 The sandbox keeps a row from the store and nothing else: a process outside the runner, under the same account, can still write it, so a store shared with unconfined tools carries no provenance.
 `run_one` and `probe` take the prior records and the sandbox's argv prefix as arguments, and default to no reuse and no sandbox, so a caller that drives them inside a box of its own never reuses a record that box's rows could have written.
 `.ci/test-gate-runner.py` holds each control to a case that goes red without it.
+The macOS profile also denies a rename of each of the store's ancestors, a rule bubblewrap has no counterpart for because its bind follows the directory, so that control's red proof runs on macOS only and prints a skip with that reason elsewhere; the case itself, that no forged record is reused, runs on both.
 
 ## The permissions-diff gate
 
