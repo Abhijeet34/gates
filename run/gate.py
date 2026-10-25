@@ -50,8 +50,9 @@ DIR, so only the runner writes a record, after the row has exited, under the key
 it computed; it reuses a `pass` only from a record it wrote for a confined row,
 and from none at all once any record says a row ran unconfined. A host with no
 sandbox that starts runs every row unconfined and reuses nothing: README.md,
-"The verdict cache", owns the design. `fold` exits 0 only when every selected blocking gate's latest
-record for H is `pass`; a missing, `fail` or `error` record refuses.
+"The verdict cache", owns the design. `fold` exits 0 only when every selected
+blocking gate's latest record for H is `pass`; a missing, `fail` or `error`
+record refuses.
 
 Promotion (design 4.5 and 4.7): a row's shadow window opens at the later of its
 `shadow_since` and its latest event in DIR/standing.jsonl, one JSON line
