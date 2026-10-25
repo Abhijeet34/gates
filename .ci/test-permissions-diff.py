@@ -452,7 +452,7 @@ CASES = [
         "an ignore added to the advisory row's config",
         {"policy/osv-scanner.toml": '[[IgnoredVulns]]\nid = "GHSA-35jh-r3h4-6jhm"\n'},
         1,
-        "permissions-diff: policy/osv-scanner.toml changes the tool rows' ignore lists",
+        "permissions-diff: policy/osv-scanner.toml changes the tool rows' ignore lists and the relaxation records",
     ),
     (
         "a gate row deleted",
@@ -518,6 +518,18 @@ CASES = [
         {"run/licence.py": "ALLOWED = None\n"},
         1,
         "permissions-diff: run/licence.py changes the licence row",
+    ),
+    (
+        "the weakening guard",
+        {"run/weakening.py": "KINDS = {}\n"},
+        1,
+        "permissions-diff: run/weakening.py changes the weakening guard",
+    ),
+    (
+        "a relaxation record",
+        {"policy/relaxations.toml": "[[relaxation]]\n"},
+        1,
+        "permissions-diff: policy/relaxations.toml changes the tool rows' ignore lists and the relaxation records",
     ),
     (
         "the licence policy",

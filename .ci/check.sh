@@ -9,6 +9,10 @@
 
 set -uo pipefail
 
+# The lint step refuses Python bytecode left in the tree, and every Python suite
+# already sets this for its own children; exporting it covers the rest.
+export PYTHONDONTWRITEBYTECODE=1
+
 cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 
 # Pinned so a local run and a CI run apply the same rules.
@@ -93,6 +97,8 @@ check_shell() {
     python3 .ci/test-budget-monitor.py || rc=1
     # The protected surface of security design 7.2, and its row in shadow under the runner.
     python3 .ci/test-permissions-diff.py || rc=1
+    # The gate-weakening guard and the record it reads from policy/relaxations.toml.
+    python3 .ci/test-weakening.py || rc=1
     # The document rules, their shadow rows under the runner, and all but the budget on this tree.
     # The budget is not run here yet, though this tree's AGENTS.md now fits it.
     python3 .ci/test-docs-truth.py || rc=1

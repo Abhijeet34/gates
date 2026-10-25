@@ -28,6 +28,7 @@ Licensed under the Apache License 2.0; see `LICENSE` and `NOTICE`.
 | `run/corpus.py`, `corpus/` | The seeded corpus for the design, licence and release reviews and the runner that counts what a review row catches and what it flags on it; see "The seeded corpus". |
 | `run/lens-eval.py`, `corpus/lens/` | The role lenses: `kind = "lens"` rows a routed review assigns to its finders, the thirteen seed rows, and the ablation eval that measures each lens with and without itself; see "The role lenses". |
 | `run/critic.py`, `run/critic-eval.py`, `corpus/critic/` | The critic lens: one seat on another model writes the strongest counter-case to a decision request or a study and re-derives two numbers it rests on, and the gate holds it when a number does not survive; the eval measures each seat on planted wrong numbers, planted one-sided requests and their clean twins; see "The critic lens". |
+| `run/weakening.py`, `policy/relaxations.toml` | The weakening guard: a change that relaxes its tests, workflows or branch rulesets against the base, unless a recorded policy covers it; see "The weakening guard". |
 | `run/licence.py` | The licence row: dependency and vendored-file licences against a caller's `.github/licence-policy.toml`; see "The licence row". |
 | `run/budget-monitor.py` | The gate budget monitor: prints each budgeted step's weekly p50/p95, the alarm and the fix task text; see "The budget monitor". |
 | `bin/gates.py`, `bin/rollout.toml` | `gates bump` and `gates rollback`, which move callers' locks; see "Bumping". |
@@ -160,8 +161,8 @@ The surface is security design 7.2's list, mapped onto the paths that exist toda
 | App manifests and the minter's permission subsets | `**/github-apps/roles.json`, `**/github-apps/app-token.sh`, `**/github-apps/register-app.py` | any |
 | workflow `permissions:`, rulesets, Actions settings | `.github/workflows/*.yml` and `*.yaml`; `.github/ruleset*.json`, `.github/rulesets/**` | a workflow's `permissions:` blocks differ, comments aside, or a changed line spells `permissions` another way, opens a flow mapping or spells an explicit or escaped key, or the file uses a YAML anchor or alias and any line changed; a ruleset, any |
 | gate registry rows with `phase = "security"` | `.github/gates.toml`, every row; `.ci/gate-registry.toml`, rows with `surface` `"Security"`, `"Code review"` or `"Gate pinning"`, and the rows `SECURITY_ROWS` names (the tool, PR-text, licence, workflow-policy, dependency-advisories, signature, exposure and commit-msg rows) | an existing row deleted or any of its fields changed; a new row passes |
-| (added) the tool rows' ignore lists, pins and in-tree configuration | `policy/**`; `run/tool-gates.py`; `**/zizmor.yml`, `**/zizmor.yaml`, `**/.github/actionlint.yml`, `**/.github/actionlint.yaml`, `**/osv-scanner.toml` | any |
-| (added) the PR-text and licence rows | `run/pr-text.py`, `run/licence.py`, `.github/licence-policy.toml` | any |
+| (added) the tool rows' ignore lists, pins and in-tree configuration, and the relaxation records | `policy/**`; `run/tool-gates.py`; `**/zizmor.yml`, `**/zizmor.yaml`, `**/.github/actionlint.yml`, `**/.github/actionlint.yaml`, `**/osv-scanner.toml` | any |
+| (added) the PR-text, licence and weakening rows | `run/pr-text.py`, `run/licence.py`, `run/weakening.py`, `.github/licence-policy.toml` | any |
 | (added) the review, secret-scan, workflow-policy and advisories rows, and the runner whose globs this gate matches with | `run/review.py`, `run/secret-scan.sh`, `.gitleaks.toml`, `.ci/test-workflow-policy.sh`, `run/dependency-advisories.sh`, `run/dependency-advisories/**`, `run/gate.py` | any |
 | the outbound pattern set and channel allowlists | `outbound/outbound.go` | any |
 | memory guards and `captain.md` | `**/memory-write-guard.sh`, `**/captain.md` | any |
@@ -194,6 +195,52 @@ shadow_since = 2026-10-19
 
 `BASE_SHA` and `GATES_DIR` come from the calling workflow, which does not exist yet.
 `.ci/test-permissions-diff.py` runs 7.2's five red fixtures, a case for each form a workflow reader refuses and for each added path, and runs this row through `run/gate.py`, which folds it to `shadow` with a `shadow_since` and refuses without one.
+
+## The weakening guard
+
+`run/weakening.py --base B --repo OWNER/NAME [--tests GLOB]...` compares a change's tests, workflows and branch rulesets with its merge base and refuses one that relaxes them, unless the relaxation matches a policy recorded in `policy/relaxations.toml`.
+It reads that file from `$GATES_DIR`, the gates checkout at the locked commit, never from the tree under review, so a change cannot grant itself a policy and a locked caller moves its policies with its lock bump.
+`--repo` defaults to `GITHUB_REPOSITORY`; with neither, or with no `GATES_DIR`, it exits 2.
+
+| Kind | Finding | What a record matches |
+| --- | --- | --- |
+| `test-exemption` | a line added to a file `--tests` names that skips, ignores or marks a test todo, or a `continue`; a line moved within the file is not new | `ref`: the line holds exactly one regex or string literal, whose source with `\/` unescaped equals `ref`, and nothing that combines or negates it |
+| `context-removed` | a required status context gone from `.github/ruleset*.json` or `.github/rulesets/*.json`, or a ruleset that is not JSON | `context_to`: a pattern with `{from}` in it that one of the contexts the change added must fullmatch |
+| `workflow-condition` | `paths-ignore`, `continue-on-error` other than `false`, or a job `if:` other than `always()` added to a job a required context names, or one such a job needs | none yet |
+| `moving-ref` | a `uses:` added at a ref that is neither a commit nor a `sha256:` digest; a ref already present at the base is not new | `ref`: the whole `uses:` value fullmatches it |
+
+A moving ref that replaces a commit pin of the same workflow or action is refused whatever the records say.
+The verdict prints each match, `weakening: moving-ref at .github/workflows/secret-scan.yml:6 matches recorded policy first-party-shared-at-main`, and that line is the record of the claim, so a change declares nothing.
+An unmatched finding refuses and names itself; answering it is a gates pull request that adds a record, which covers every later change of the same shape.
+
+A record names the kinds it covers, the repositories it applies to and one exact matcher per kind:
+
+```toml
+[[relaxation]]
+id = "first-party-shared-at-main"
+ratified = 2026-10-25
+by = "maintainer decision"
+kinds = ["moving-ref", "test-exemption"]
+repos = ["Abhijeet34/*"]
+ref = '^Abhijeet34/gates/\.github/workflows/shared-[a-z-]+\.yml@main$'
+```
+
+The file is checked before anything is judged: an unknown table or key, a duplicate `id`, a `ratified` that is not a date, a kind outside the table above, a `repos` entry that is not `OWNER/NAME`, a matcher missing for a kind or present for none, or a pattern that does not compile exits 2.
+`policy/**` and `run/weakening.py` are on the permissions-diff surface, so adding a record is a class-2 decision.
+
+A caller runs it as a shadow row in its `.github/gates.toml`, naming its security tests:
+
+```toml
+[[gate]]
+id = "weakening"
+inputs = ["**"]
+tools = { base = 'git merge-base "$BASE_SHA" HEAD' }
+run = '''python3 "$GATES_DIR/run/weakening.py" --base "$BASE_SHA" --tests 'test/architecture/**' '''
+shadow_since = 2026-10-26
+```
+
+`.ci/test-weakening.py` runs an inline job moved into a shared workflow at `@main`, with the test that requires a commit pin taught to skip exactly that ref, with and without the record, then a widened literal, a third-party ref, a repository outside the record's scope, a commit pin turned back into `@main`, a caller's own `policy/relaxations.toml`, each finding kind and each schema refusal.
+`.ci/gate-registry.toml` proves the rows `weakening-test-exemption`, `weakening-context-removed`, `weakening-workflow-condition` and `weakening-moving-ref`.
 
 ## The documentation rows
 

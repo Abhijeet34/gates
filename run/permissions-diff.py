@@ -359,10 +359,11 @@ SURFACE = [
             )
         ),
     ),
-    ("policy/**", "the tool rows' ignore lists", None),
+    ("policy/**", "the tool rows' ignore lists and the relaxation records", None),
     ("run/tool-gates.py", "the tool rows' pins and flags", None),
     ("run/pr-text.py", "the pull request text pattern set", None),
     ("run/licence.py", "the licence row", None),
+    ("run/weakening.py", "the weakening guard", None),
     (".github/licence-policy.toml", "the licence policy and its declarations", None),
     ("**/zizmor.yml", "a tool's in-tree configuration", None),
     ("**/zizmor.yaml", "a tool's in-tree configuration", None),
