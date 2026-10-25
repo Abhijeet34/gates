@@ -11,8 +11,8 @@ osv         OSV-Scanner over the tree against a local database, no network.
             An npm lockfile entry (under node_modules/, or in a v1 dependencies
             map) with a version, no resolved URL and no link is refused as
             undecided: 2.7.0 skips it as local. The tool is told to read files a
-            .gitignore names, and "no package source" on a tree that holds a
-            lockfile is refused rather than passed.
+            .gitignore names, and "no package source" on a tree that holds any file
+            named in PACKAGE_SOURCES is refused rather than passed.
 
 None of the three reads configuration or ignore lists from the tree under review,
 which a change could otherwise add to silence the finding that gates it. osv and actionlint are
@@ -33,7 +33,8 @@ missing-database  osv: the database directory is unset, holds no all.zip, or lac
 stale-database    osv: the oldest all.zip is older than MAX_DB_AGE_DAYS.
 undecided         osv: a lockfile the tool would read as clean without judging all
                   of it (see above), one that cannot be parsed, or a tree that
-                  holds a lockfile on which the tool found no package source.
+                  holds a PACKAGE_SOURCES file on which the tool found no package
+                  source.
 tool-error        the tool crashed, timed out or exited with a status that means
                   neither pass nor finding.
 
