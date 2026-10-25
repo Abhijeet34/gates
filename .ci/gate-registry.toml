@@ -562,6 +562,40 @@ git commit -qam rename
 run = 'GATES_DIR="$PROOF_SCRATCH/gates" python3 "$GATE" --base base --repo Abhijeet34/fixture'
 finding = "permissions-diff: .github/rulesets/main.json changes a branch ruleset: required context 'secret scan' removed"
 
+# A change to policy/relaxations.toml with no approving review from the maintainer
+# at its head; README.md, "The record-approval check". `gh` serves the pull request.
+[[gate]]
+id = "record-approval"
+surface = "Security"
+gates = ["run/record-approval.py"]
+test = ".ci/test-record-approval.py"
+suite = "shell"
+command = "run/record-approval.py"
+red = """
+mkdir bin && cat > bin/gh <<'GH'
+#!/bin/sh
+case "$3" in
+  */files) echo '[{"filename": "policy/relaxations.toml"}]' ;;
+  */reviews) echo '[{"user": {"login": "Abhijeet34"}, "state": "APPROVED", "commit_id": "aaaa"}]' ;;
+  *) echo '{"user": {"login": "hw-bodhi[bot]"}, "head": {"sha": "bbbb"}, "changed_files": 1}' ;;
+esac
+GH
+chmod +x bin/gh
+"""
+clean = """
+mkdir bin && cat > bin/gh <<'GH'
+#!/bin/sh
+case "$3" in
+  */files) echo '[{"filename": "policy/relaxations.toml"}]' ;;
+  */reviews) echo '[{"user": {"login": "Abhijeet34"}, "state": "APPROVED", "commit_id": "bbbb"}]' ;;
+  *) echo '{"user": {"login": "hw-bodhi[bot]"}, "head": {"sha": "bbbb"}, "changed_files": 1}' ;;
+esac
+GH
+chmod +x bin/gh
+"""
+run = 'PATH="$PWD/bin:$PATH" python3 "$GATE" --repo o/r --pr 7 --head bbbb'
+finding = "record-approval: refused: Abhijeet34 approved aaaa, not the head bbbb"
+
 # A change that relaxes a test, a required context, a required workflow or a pin,
 # unless policy/relaxations.toml in the gates checkout covers it; README.md, "The weakening guard".
 [[gate]]

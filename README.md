@@ -29,6 +29,7 @@ Licensed under the Apache License 2.0; see `LICENSE` and `NOTICE`.
 | `run/lens-eval.py`, `corpus/lens/` | The role lenses: `kind = "lens"` rows a routed review assigns to its finders, the thirteen seed rows, and the ablation eval that measures each lens with and without itself; see "The role lenses". |
 | `run/critic.py`, `run/critic-eval.py`, `corpus/critic/` | The critic lens: one seat on another model writes the strongest counter-case to a decision request or a study and re-derives two numbers it rests on, and the gate holds it when a number does not survive; the eval measures each seat on planted wrong numbers, planted one-sided requests and their clean twins; see "The critic lens". |
 | `run/weakening.py`, `policy/relaxations.toml` | The weakening guard: a change that relaxes its tests, workflows or branch rulesets against the base, unless a recorded policy covers it; see "The weakening guard". |
+| `run/record-approval.py` | The record-approval check: a change to `policy/relaxations.toml` passes only with the maintainer's approving review at its head; see "The record-approval check". |
 | `run/licence.py` | The licence row: dependency and vendored-file licences against a caller's `.github/licence-policy.toml`; see "The licence row". |
 | `run/budget-monitor.py` | The gate budget monitor: prints each budgeted step's weekly p50/p95, the alarm and the fix task text; see "The budget monitor". |
 | `bin/gates.py`, `bin/rollout.toml` | `gates bump` and `gates rollback`, which move callers' locks; see "Bumping". |
@@ -165,7 +166,7 @@ The surface is security design 7.2's list, mapped onto the paths that exist toda
 | workflow `permissions:`, rulesets, Actions settings | `.github/workflows/*.yml` and `*.yaml`; `.github/ruleset*.json`, `.github/rulesets/**` | a workflow's `permissions:` blocks differ, comments aside, or a changed line spells `permissions` another way, opens a flow mapping or spells an explicit or escaped key, or the file uses a YAML anchor or alias and any line changed; a ruleset, any change but a required context rename a relaxation record covers |
 | gate registry rows with `phase = "security"` | `.github/gates.toml`, every row; `.ci/gate-registry.toml`, rows with `surface` `"Security"`, `"Code review"` or `"Gate pinning"`, and the rows `SECURITY_ROWS` names (the tool, PR-text, licence, workflow-policy, dependency-advisories, signature, exposure and commit-msg rows) | an existing row deleted or any of its fields changed; a new row passes |
 | (added) the tool rows' ignore lists, pins and in-tree configuration, and the relaxation records | `policy/**`; `run/tool-gates.py`; `**/zizmor.yml`, `**/zizmor.yaml`, `**/.github/actionlint.yml`, `**/.github/actionlint.yaml`, `**/osv-scanner.toml` | any |
-| (added) the PR-text, licence and weakening rows | `run/pr-text.py`, `run/licence.py`, `run/weakening.py`, `.github/licence-policy.toml` | any |
+| (added) the PR-text, licence, weakening and record-approval rows | `run/pr-text.py`, `run/licence.py`, `run/weakening.py`, `run/record-approval.py`, `.github/licence-policy.toml` | any |
 | (added) the review, secret-scan, workflow-policy and advisories rows, and the runner whose globs this gate matches with | `run/review.py`, `run/secret-scan.sh`, `.gitleaks.toml`, `.ci/test-workflow-policy.sh`, `run/dependency-advisories.sh`, `run/dependency-advisories/**`, `run/gate.py` | any |
 | the outbound pattern set and channel allowlists | `outbound/outbound.go` | any |
 | memory guards and `captain.md` | `**/memory-write-guard.sh`, `**/captain.md` | any |
@@ -244,6 +245,29 @@ shadow_since = 2026-10-26
 
 `.ci/test-weakening.py` runs an inline job moved into a shared workflow at `@main`, with the test that requires a commit pin taught to skip exactly that ref, with and without the record, then a widened literal, a third-party ref, a repository outside the record's scope, a commit pin turned back into `@main`, a caller's own `policy/relaxations.toml`, each finding kind and each schema refusal.
 `.ci/gate-registry.toml` proves the rows `weakening-test-exemption`, `weakening-context-removed`, `weakening-workflow-condition` and `weakening-moving-ref`.
+
+## The record-approval check
+
+`run/record-approval.py --repo OWNER/NAME --pr N --head SHA` holds a change to `policy/relaxations.toml` to the maintainer's approving review, so a record is never added by the change that needs it.
+It reads the pull request, its files and its reviews live through `gh api`, and exits 0 to pass, 1 to refuse and 2 when it cannot decide.
+
+| The pull request | Verdict |
+| --- | --- |
+| does not change `policy/relaxations.toml`, or there is none (a push) | passes |
+| changes it and was opened by `Abhijeet34` | refuses: GitHub refuses an author's approval of their own pull request, so a relaxation is opened by a bot identity |
+| changes it, and `Abhijeet34`'s latest approving, changes-requested or dismissed review is `APPROVED` on the head commit | passes |
+| changes it, and that review is on an older commit, is not `APPROVED`, or does not exist | refuses; a push after the approval needs a new one |
+| lists fewer files than it changes, or the API cannot be read | cannot decide |
+
+A commented review leaves the latest decision standing, as it does on GitHub.
+A run for a commit that is no longer the head refuses, since the head's own run decides.
+
+`ci.yml`'s `record-approval` job runs it on every pull request and on each review submitted or dismissed, and `checks` needs it, so a review re-decides the one required status.
+The job runs the base commit's copy of the script, so a pull request cannot pass by editing it; only a base that predates the script runs the pull request's own.
+`run/record-approval.py` is on the permissions-diff surface.
+
+`.ci/test-record-approval.py` serves each case through a stub `gh`: approved at the head, approved at an older commit, changes requested, no review, opened by the approver, the file left alone, another user's approval, a later change request, a dismissal, a comment after the approval, a second page of reviews, a rename away from the file, a truncated file list and a stale head.
+`.ci/gate-registry.toml` proves the row `record-approval`.
 
 ## The documentation rows
 

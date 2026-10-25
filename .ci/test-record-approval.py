@@ -52,7 +52,11 @@ def run(files, reviews, author=BOT, head=HEAD, changed=None, pr="7", raw=None):
         gh = tmp / "bin" / "gh"
         gh.write_text(STUB)
         gh.chmod(0o755)
-        env = {**os.environ, "PATH": f"{tmp / 'bin'}:{os.environ['PATH']}", "GH_STUB": str(tmp)}
+        env = {
+            **os.environ,
+            "PATH": f"{tmp / 'bin'}:{os.environ['PATH']}",
+            "GH_STUB": str(tmp),
+        }
         proc = subprocess.run(
             [sys.executable, str(CHECK), "--repo", REPO, "--pr", pr, "--head", HEAD],
             capture_output=True,
@@ -92,7 +96,11 @@ CASES = [
     ),
     (
         "a pull request opened by the approver refuses",
-        dict(files=TOUCHED, reviews=[review("Abhijeet34", "APPROVED")], author="Abhijeet34"),
+        dict(
+            files=TOUCHED,
+            reviews=[review("Abhijeet34", "APPROVED")],
+            author="Abhijeet34",
+        ),
         1,
         f"record-approval: refused: a change to {RECORDS} must be opened by a bot identity, not by Abhijeet34",
     ),
@@ -112,7 +120,10 @@ CASES = [
         "changes requested after the approval refuses",
         dict(
             files=TOUCHED,
-            reviews=[review("Abhijeet34", "APPROVED"), review("Abhijeet34", "CHANGES_REQUESTED")],
+            reviews=[
+                review("Abhijeet34", "APPROVED"),
+                review("Abhijeet34", "CHANGES_REQUESTED"),
+            ],
         ),
         1,
         "latest review of this change to policy/relaxations.toml is CHANGES_REQUESTED",
@@ -127,7 +138,10 @@ CASES = [
         "an approval after changes requested passes",
         dict(
             files=TOUCHED,
-            reviews=[review("Abhijeet34", "CHANGES_REQUESTED", OLD), review("abhijeet34", "APPROVED")],
+            reviews=[
+                review("Abhijeet34", "CHANGES_REQUESTED", OLD),
+                review("abhijeet34", "APPROVED"),
+            ],
         ),
         0,
         "approved this change",
@@ -136,7 +150,10 @@ CASES = [
         "a comment after the approval leaves it standing",
         dict(
             files=TOUCHED,
-            reviews=[review("Abhijeet34", "APPROVED"), review("Abhijeet34", "COMMENTED")],
+            reviews=[
+                review("Abhijeet34", "APPROVED"),
+                review("Abhijeet34", "COMMENTED"),
+            ],
         ),
         0,
         "approved this change",
@@ -154,7 +171,10 @@ CASES = [
     ),
     (
         "renaming the file away counts as changing it",
-        dict(files=[{"filename": "policy/old.toml", "previous_filename": RECORDS}], reviews=[]),
+        dict(
+            files=[{"filename": "policy/old.toml", "previous_filename": RECORDS}],
+            reviews=[],
+        ),
         1,
         "and there is none",
     ),
@@ -193,10 +213,14 @@ def main():
             print(f"ok   {name}")
         else:
             failed += 1
-            print(f"FAIL {name}: exit {code} (want {want_code}), want {want_line!r} in:")
+            print(
+                f"FAIL {name}: exit {code} (want {want_code}), want {want_line!r} in:"
+            )
             print("     " + out.replace("\n", "\n     "))
     if failed:
-        print(f"record-approval: {failed} of {len(CASES)} case(s) failed", file=sys.stderr)
+        print(
+            f"record-approval: {failed} of {len(CASES)} case(s) failed", file=sys.stderr
+        )
         return 1
     print(f"record-approval: all {len(CASES)} cases pass")
     return 0

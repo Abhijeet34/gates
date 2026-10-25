@@ -6,13 +6,17 @@ name: CI
 # `checks`, so jobs here can be added or renamed without touching branch
 # protection.
 #
-# Triggers are push, pull_request, schedule and workflow_dispatch only;
-# .ci/test-workflow-policy.sh refuses the triggers that would run a fork's code
+# Triggers are push, pull_request, pull_request_review, schedule and
+# workflow_dispatch only; .ci/test-workflow-policy.sh refuses the triggers that would run a fork's code
 # with this repository's token, and any runner that is not GitHub-hosted.
 on:
   push:
     branches: [main]
   pull_request:
+  # A review re-decides `checks`, so record-approval sees an approval or its
+  # dismissal without a new push.
+  pull_request_review:
+    types: [submitted, dismissed]
   # The full-history secret scan also runs weekly, so a gitleaks rule that
   # starts firing on old history is seen without waiting for a commit.
   schedule:
@@ -163,12 +167,43 @@ jobs:
 
       - run: .ci/check.sh gates-proof
 
+  # A change to policy/relaxations.toml passes only with the maintainer's
+  # approving review at the head; README.md, "The record-approval check".
+  record-approval:
+    name: record approval
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # The base's copy decides, so a pull request cannot pass by editing the
+      # check; only a base that predates the check runs the pull request's.
+      - name: Require the maintainer's approval of a relaxation record
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          check=run/record-approval.py
+          if [ -n "$BASE_SHA" ]; then
+            git fetch -q --depth=1 origin "$BASE_SHA"
+            if git cat-file -e "$BASE_SHA:$check" 2>/dev/null; then
+              git show "$BASE_SHA:$check" > "$RUNNER_TEMP/record-approval.py"
+              check=$RUNNER_TEMP/record-approval.py
+            fi
+          fi
+          python3 "$check" --repo "$GITHUB_REPOSITORY" --pr "$PR_NUMBER" --head "$HEAD_SHA"
+
   # The one status the branch ruleset requires. It always runs, and it passes
   # only when every job above succeeded. Every job in this workflow must be
   # listed in `needs`; .ci/test-checks-verdict.sh fails when one is not.
   checks:
     name: checks
-    needs: [shell, python, secrets, gates-proof]
+    needs: [shell, python, secrets, gates-proof, record-approval]
     if: ${{ always() && github.event_name != 'schedule' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5

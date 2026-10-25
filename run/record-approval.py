@@ -74,7 +74,9 @@ def decide(repo, number, head):
             f"listed {len(files)} of {pr['changed_files']} changed files,"
             f" so whether {RECORDS} changed is unknown"
         )
-    if not any(RECORDS in (f.get("filename"), f.get("previous_filename")) for f in files):
+    if not any(
+        RECORDS in (f.get("filename"), f.get("previous_filename")) for f in files
+    ):
         return 0, f"{RECORDS} is not changed by this pull request"
     if same(pr["user"]["login"]):
         return 1, (
@@ -87,11 +89,17 @@ def decide(repo, number, head):
         if same((r.get("user") or {}).get("login")) and r.get("state") in DECIDING
     ]
     if not reviews:
-        return 1, f"refused: a change to {RECORDS} needs {APPROVER}'s approving review at the head, and there is none"
+        return (
+            1,
+            f"refused: a change to {RECORDS} needs {APPROVER}'s approving review at the head, and there is none",
+        )
     # The endpoint lists reviews in the order they were submitted.
     latest = reviews[-1]
     if latest["state"] != "APPROVED":
-        return 1, f"refused: {APPROVER}'s latest review of this change to {RECORDS} is {latest['state']}"
+        return (
+            1,
+            f"refused: {APPROVER}'s latest review of this change to {RECORDS} is {latest['state']}",
+        )
     if latest.get("commit_id") != head:
         return 1, (
             f"refused: {APPROVER} approved {str(latest.get('commit_id'))[:12]}, not the head"
@@ -110,7 +118,10 @@ def main():
         print("record-approval: not a pull request, nothing to hold")
         return 0
     if not args.pr.isdigit() or not args.head:
-        print("record-approval: --pr must be a number and --head a commit", file=sys.stderr)
+        print(
+            "record-approval: --pr must be a number and --head a commit",
+            file=sys.stderr,
+        )
         return 2
     try:
         code, msg = decide(args.repo, args.pr, args.head)

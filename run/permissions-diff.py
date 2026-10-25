@@ -448,6 +448,7 @@ SURFACE = [
     ("run/pr-text.py", "the pull request text pattern set", None),
     ("run/licence.py", "the licence row", None),
     ("run/weakening.py", "the weakening guard", None),
+    ("run/record-approval.py", "the relaxation records' approval check", None),
     (".github/licence-policy.toml", "the licence policy and its declarations", None),
     ("**/zizmor.yml", "a tool's in-tree configuration", None),
     ("**/zizmor.yaml", "a tool's in-tree configuration", None),

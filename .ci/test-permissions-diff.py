@@ -526,6 +526,12 @@ CASES = [
         "permissions-diff: run/weakening.py changes the weakening guard",
     ),
     (
+        "the relaxation records' approval check",
+        {"run/record-approval.py": "APPROVER = None\n"},
+        1,
+        "permissions-diff: run/record-approval.py changes the relaxation records' approval check",
+    ),
+    (
         "a relaxation record",
         {"policy/relaxations.toml": "[[relaxation]]\n"},
         1,
