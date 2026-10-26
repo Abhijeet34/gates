@@ -14,6 +14,7 @@ the non-gating control is itself refused.
 
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -104,7 +105,53 @@ def case_no_registry(script):
         return "an undecided shadow run raised no annotation"
 
 
-CASES = [case_green, case_planted_blocking, case_planted_shadow_row, case_no_registry]
+def readme_rows():
+    """Every [[gate]] block the README documents for a caller that reads BASE_SHA."""
+    text = (ROOT / "README.md").read_text()
+    blocks = re.findall(r"```toml\n(.*?)```", text, re.S)
+    return [
+        row.strip()
+        for block in blocks
+        for row in re.split(r"(?m)^(?=\[\[gate\]\])", block)
+        if row.startswith("[[gate]]") and "BASE_SHA" in row
+    ]
+
+
+def case_documented_rows_see_base(script):
+    # Only what shared-gate-shadow.yml gives the runner step: SHADOW_BASE, never BASE_SHA.
+    rows = readme_rows()
+    if len(rows) < 2:
+        return f"want the README's BASE_SHA rows, found {len(rows)}"
+    repo = caller("\n".join(rows))
+    # A change to the registry selects every row, scoped ones included.
+    with (repo / ".github/gates.toml").open("a") as f:
+        f.write("# touched\n")
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True, env=ENV)
+    subprocess.run(["git", "commit", "-qm", "change"], cwd=repo, check=True, env=ENV)
+    base = subprocess.run(
+        ["git", "rev-parse", "HEAD~1"], cwd=repo, env=ENV, capture_output=True, text=True
+    ).stdout.strip()
+    store = Path(tempfile.mkdtemp(dir=workdir))
+    env = {k: v for k, v in ENV.items() if k != "BASE_SHA"}
+    env.update(GATES_DIR=str(ROOT), SHADOW_STORE=str(store), SHADOW_BASE=base)
+    proc = subprocess.run(
+        ["bash", "-e", str(script)], cwd=repo, env=env, capture_output=True, text=True
+    )
+    if "verdict=undecided" in (store / "shadow-verdict.txt").read_text():
+        return f"the README rows did not load: {proc.stdout[-400:]}"
+    recs = [json.loads(ln) for ln in (store / "records.jsonl").read_text().splitlines()]
+    bad = [r["gate"] for r in recs if "'base'" in r.get("detail", "")]
+    if bad:
+        return f"the base probe failed for {bad}"
+
+
+CASES = [
+    case_green,
+    case_planted_blocking,
+    case_planted_shadow_row,
+    case_no_registry,
+    case_documented_rows_see_base,
+]
 
 # The control removed: the script's last line propagates the runner's status.
 propagating = workdir / "gate-shadow-propagating.sh"

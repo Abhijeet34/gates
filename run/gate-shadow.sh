@@ -15,6 +15,9 @@ set -uo pipefail
 : "${SHADOW_STORE:?SHADOW_STORE is unset}"
 # gate.py's NO_BASE: with no base to compare with, every gate is selected.
 base=${SHADOW_BASE:-0000000000000000000000000000000000000000}
+# The caller's registry rows (README.md) read the base as BASE_SHA, which the
+# bootstrap sets only in its lock step, so the rows get it from here.
+export BASE_SHA="$base"
 gate="$GATES_DIR/run/gate.py"
 mkdir -p "$SHADOW_STORE"
 
