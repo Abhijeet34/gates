@@ -129,7 +129,11 @@ def case_documented_rows_see_base(script):
     subprocess.run(["git", "add", "-A"], cwd=repo, check=True, env=ENV)
     subprocess.run(["git", "commit", "-qm", "change"], cwd=repo, check=True, env=ENV)
     base = subprocess.run(
-        ["git", "rev-parse", "HEAD~1"], cwd=repo, env=ENV, capture_output=True, text=True
+        ["git", "rev-parse", "HEAD~1"],
+        cwd=repo,
+        env=ENV,
+        capture_output=True,
+        text=True,
     ).stdout.strip()
     store = Path(tempfile.mkdtemp(dir=workdir))
     env = {k: v for k, v in ENV.items() if k != "BASE_SHA"}
