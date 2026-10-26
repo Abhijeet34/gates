@@ -1,0 +1,29 @@
+name: dependency advisories
+
+# gates runs its own advisory gate on itself. The only manifests it holds are the
+# SHA-pinned actions in its workflows (.github/dependabot.yml) and the licence
+# gate's fixture lockfiles under corpus/. It is not in ci.yml's `checks` and not
+# a ruleset context: a called workflow can only be required by its own context,
+# and widening the ruleset is a separate decision.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Alerts open without a commit, so a weekly run sees them on a quiet week.
+    - cron: "41 6 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: dependency-advisories-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# A called workflow narrows its caller's token, never widens it.
+permissions:
+  contents: read
+  vulnerability-alerts: read
+
+jobs:
+  advisories:
+    uses: ./.github/workflows/shared-dependency-advisories.yml

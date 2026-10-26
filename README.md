@@ -1548,6 +1548,8 @@ It gates nothing, in three places:
 - The runner step is `continue-on-error`.
 - A caller keeps its shadow job out of the `needs` of its required status: `needs` reaches only jobs of the same file, so a caller puts the call in its own workflow file, as `gate-shadow.yml` does here.
 
+The script exports the base it was given as `BASE_SHA` as well as `SHADOW_BASE`, so the `BASE_SHA` rows documented in this file run as written; with no base (a first push) it is the all-zero value and a `git merge-base` probe records an `error`.
+
 Each run uploads `$RUNNER_TEMP/gate-shadow` as the artifact `gate-shadow-<run id>-<attempt>`: `records.jsonl`, the logs, `fold.txt` and `shadow-verdict.txt`, which names the head.
 The comparison is a head-by-head read of those artifacts against the caller's check runs on the same head; agreement on 99% of heads, and no head where the shadow was `clear` and an existing job failed as a defect, are the acceptance lines of study g1's M6.
 

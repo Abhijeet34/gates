@@ -43,7 +43,8 @@ finding = "ci.yml:2:  pull_request_target:"
 id = "dependency-advisories"
 surface = "Dependencies"
 gates = [
-  ".github/workflows/shared-dependency-advisories.yml", "run/dependency-advisories.sh",
+  ".github/workflows/shared-dependency-advisories.yml", ".github/workflows/dependency-advisories.yml",
+  "run/dependency-advisories.sh",
   "run/dependency-advisories/alerts.sh", "run/dependency-advisories/compare.sh",
   "run/dependency-advisories/judge.sh",
 ]
