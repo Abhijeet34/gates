@@ -99,6 +99,8 @@ check_shell() {
     python3 .ci/test-permissions-diff.py || rc=1
     # The gate-weakening guard and the record it reads from policy/relaxations.toml.
     python3 .ci/test-weakening.py || rc=1
+    # The maintainer's approving review a change to that record needs.
+    python3 .ci/test-record-approval.py || rc=1
     # The document rules, their shadow rows under the runner, and all but the budget on this tree.
     # The budget is not run here yet, though this tree's AGENTS.md now fits it.
     python3 .ci/test-docs-truth.py || rc=1
