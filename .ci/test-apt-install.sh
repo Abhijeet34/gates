@@ -78,6 +78,17 @@ printf 'deb https://ppa.example.test/ubuntu.com/x noble main\n' >"$workdir/etc4/
 run "$workdir/etc4"
 [ "$rc" -ne 0 ] && [ ! -s "$workdir/log" ] && pass "lookalike hosts and paths are not archive sources" || fail "a lookalike source was kept"
 
+# The ubuntu-24.04 runner layout: the archive is a deb822 file that points at a
+# mirror list, beside a one-line Microsoft source that answers 403.
+etc5="$workdir/etc5"; mkdir -p "$etc5/sources.list.d"
+printf 'Types: deb\nURIs: mirror+file:/etc/apt/apt-mirrors.txt\nSuites: noble noble-updates\nComponents: main\n' >"$etc5/sources.list.d/ubuntu.sources"
+printf 'http://azure.archive.ubuntu.com/ubuntu/\tpriority:1\nhttp://archive.ubuntu.com/ubuntu/\tpriority:2\n' >"$etc5/apt-mirrors.txt"
+printf 'deb [arch=amd64,arm64,armhf signed-by=/usr/share/keyrings/microsoft-prod.gpg] https://packages.microsoft.com/ubuntu/24.04/prod noble main\n' >"$etc5/sources.list.d/microsoft-prod.list"
+run "$etc5"
+[ "$rc" -eq 0 ] && pass "runner layout: archive via mirror list kept, Microsoft .list left out" || fail "runner layout failed: $(cat "$workdir/out")"
+FAIL_ON='mirror\+file'; export FAIL_ON; run "$etc5"; unset FAIL_ON
+[ "$rc" -ne 0 ] && pass "runner layout: the mirror-listed archive failing still fails" || fail "mirror archive failure was swallowed"
+
 # Control: handing apt-get every source reproduces the original failure.
 mkdir -p "$workdir/etc3"; cp -R "$workdir/etc1/." "$workdir/etc3/"
 : >"$workdir/log"

@@ -18,16 +18,29 @@ parts=$(mktemp -d)
 trap 'rm -rf "$parts"' EXIT
 
 # A source is the archive's when it names an ubuntu.com host (archive, security,
-# azure.archive mirror). Anything else is left out of this run, not removed.
+# azure.archive mirror), directly or through a `mirror+file:` list, which is how a
+# hosted runner image writes it (deb822 ubuntu.sources or a one-line entry). Anything
+# else is left out of this run, not removed.
+host='https?://([A-Za-z0-9-]+\.)*ubuntu\.com/'
+is_archive() {
+  local f=$1 m
+  grep -Eq "^(URIs:|deb(-src)?[[:space:]]).*$host" "$f" && return 0
+  while read -r m; do
+    [ -f "$m" ] || m="$etc/$(basename "$m")"
+    [ -f "$m" ] && grep -Eq "^$host" "$m" && return 0
+  done < <(grep -E '^(URIs:|deb(-src)?[[:space:]])' "$f" | grep -oE 'mirror\+file:[^[:space:]]+' | sed 's/^mirror+file://' || true)
+  return 1
+}
+
 kept=0
 for f in "$etc"/sources.list.d/*.sources "$etc"/sources.list.d/*.list; do
   [ -f "$f" ] || continue
-  if grep -Eq '^(URIs:|deb(-src)?[[:space:]]).*https?://([A-Za-z0-9-]+\.)*ubuntu\.com/' "$f"; then
+  if is_archive "$f"; then
     ln -s "$f" "$parts/$(basename "$f")"
     kept=$((kept + 1))
   fi
 done
-if [ -f "$etc/sources.list" ] && grep -Eq '^deb(-src)?[[:space:]].*https?://([A-Za-z0-9-]+\.)*ubuntu\.com/' "$etc/sources.list"; then
+if [ -f "$etc/sources.list" ] && is_archive "$etc/sources.list"; then
   main_list="$etc/sources.list"
   kept=$((kept + 1))
 else
