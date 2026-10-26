@@ -81,7 +81,7 @@ jobs:
       # than skipping binaries, so this is not an optimisation - a run without
       # it would measure the refusal path and nothing else.
       - name: Install the binary inspector
-        run: sudo apt-get update && sudo apt-get install -y libimage-exiftool-perl
+        run: bash -e "$GATES_DIR/run/apt-install.sh" libimage-exiftool-perl
 
       # .ci/test-watermark-scan-workflow.sh reads these two from this file and
       # fails unless both resolve inside the gates checkout.
