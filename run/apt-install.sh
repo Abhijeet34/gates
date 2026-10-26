@@ -6,6 +6,11 @@
 #
 #   run/apt-install.sh PACKAGE...
 #
+# A slow mirror is bounded too: 2026-10-26 one runner fetched the same 67.9 MB that
+# main fetched at 21 MB/s at about 150 kB/s, never idle long enough for apt's own
+# Timeout, so each update and download attempt is killed at APT_ATTEMPT_SECS and
+# retried; finished debs stay in apt's cache, so a retry resumes rather than restarts.
+#
 # APT_ETC, APT_GET and APT_SUDO exist for .ci/test-apt-install.sh.
 set -euo pipefail
 
@@ -50,5 +55,21 @@ fi
 
 opts=(-o "Dir::Etc::sourcelist=$main_list" -o "Dir::Etc::sourceparts=$parts"
   -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30)
-${sudo[@]+"${sudo[@]}"} "$apt" "${opts[@]}" update
-${sudo[@]+"${sudo[@]}"} "$apt" "${opts[@]}" install -y --no-install-recommends "$@"
+secs=${APT_ATTEMPT_SECS:-75}
+attempts=3
+# Only a timeout (124) is retried: any other failure already had apt's own retries.
+bounded() { # bounded <what> <apt-get args>...
+  local what=$1 i rc
+  shift
+  for ((i = 1; i <= attempts; i++)); do
+    rc=0
+    ${sudo[@]+"${sudo[@]}"} timeout -k 10 "$secs" "$apt" "${opts[@]}" "$@" || rc=$?
+    [ "$rc" -eq 124 ] || return "$rc"
+    [ "$i" -lt "$attempts" ] && echo "apt-install: $what attempt $i of $attempts exceeded ${secs}s, retrying" >&2
+  done
+  echo "apt-install: $what gave up after $attempts attempts of ${secs}s each; the archive mirror is too slow" >&2
+  return 124
+}
+bounded update update
+bounded download install -y --no-install-recommends --download-only "$@"
+${sudo[@]+"${sudo[@]}"} "$apt" "${opts[@]}" install -y --no-install-recommends --no-download "$@"

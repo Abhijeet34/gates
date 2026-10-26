@@ -6,7 +6,8 @@
 #   2. the Ubuntu archive sources are, and the install keeps --no-install-recommends,
 #   3. an archive source failing still fails the step,
 #   4. a host with no archive source refuses rather than updating nothing.
-#   5. lookalike hosts are refused and the retry and timeout options reach apt-get.
+#   5. lookalike hosts are refused and the retry and timeout options reach apt-get,
+#   6. a download slower than its bound is killed and retried, then gives up named.
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 
@@ -34,6 +35,12 @@ while [ "$#" -gt 0 ]; do
           exit 100
         fi
       done ;;
+    install)
+      # A trickling mirror: the first SLOW_ATTEMPTS downloads outlive their bound.
+      case " ${*} " in *" --no-download "*) ;; *)
+        n=$(($(cat "$STUB_STATE" 2>/dev/null || echo 0) + 1)); echo "$n" >"$STUB_STATE"
+        [ "$n" -gt "${SLOW_ATTEMPTS:-0}" ] || sleep 5 ;;
+      esac ;;
   esac
   shift
 done
@@ -50,18 +57,19 @@ mketc() {
 run() { # run <etc> -> sets rc, log
   : >"$workdir/log"
   rc=0
-  APT_ETC=$1 APT_GET="$workdir/apt-get" APT_SUDO='' STUB_LOG="$workdir/log" \
+  rm -f "$workdir/state"
+  APT_ETC=$1 APT_GET="$workdir/apt-get" APT_SUDO='' STUB_LOG="$workdir/log" STUB_STATE="$workdir/state" \
     bash -e run/apt-install.sh libimage-exiftool-perl >"$workdir/out" 2>&1 || rc=$?
 }
 
 mketc "$workdir/etc1"
 run "$workdir/etc1"
 [ "$rc" -eq 0 ] && pass "broken Microsoft source does not fail the install" || fail "install failed with only a third-party source broken: $(cat "$workdir/out")"
-grep -q 'update' "$workdir/log" && grep -q 'install -y --no-install-recommends libimage-exiftool-perl' "$workdir/log" \
+grep -q 'update' "$workdir/log" && grep -q 'install -y --no-install-recommends --no-download libimage-exiftool-perl' "$workdir/log" \
   && pass "update then a recommends-free install of the named package" || fail "unexpected apt-get calls: $(cat "$workdir/log")"
 
-[ "$(grep -c 'Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30' "$workdir/log")" -eq 2 ] \
-  && pass "retry and timeout options reach update and install" || fail "apt-get missed the retry/timeout options: $(cat "$workdir/log")"
+[ "$(grep -c 'Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30' "$workdir/log")" -eq 3 ] \
+  && pass "retry and timeout options reach update, download and install" || fail "apt-get missed the retry/timeout options: $(cat "$workdir/log")"
 
 # The archive source itself failing must still fail the job.
 export FAIL_ON='ubuntu\.com'; run "$workdir/etc1"; unset FAIL_ON
@@ -88,6 +96,18 @@ run "$etc5"
 [ "$rc" -eq 0 ] && pass "runner layout: archive via mirror list kept, Microsoft .list left out" || fail "runner layout failed: $(cat "$workdir/out")"
 FAIL_ON='mirror\+file'; export FAIL_ON; run "$etc5"; unset FAIL_ON
 [ "$rc" -ne 0 ] && pass "runner layout: the mirror-listed archive failing still fails" || fail "mirror archive failure was swallowed"
+
+# A slow mirror (2026-10-26: 67.9 MB at about 150 kB/s, where main fetched it at
+# 21 MB/s): each download is bounded, retried, and the install never downloads.
+export APT_ATTEMPT_SECS=1 SLOW_ATTEMPTS=1; run "$workdir/etc1"
+[ "$rc" -eq 0 ] && [ "$(grep -c 'install -y --no-install-recommends --download-only libimage-exiftool-perl' "$workdir/log")" -eq 2 ] \
+  && grep -q 'install -y --no-install-recommends --no-download libimage-exiftool-perl' "$workdir/log" \
+  && grep -q 'apt-install: download attempt 1 of 3 exceeded 1s, retrying' "$workdir/out" \
+  && pass "a slow download is killed at its bound and retried" || fail "slow download not bounded and retried (rc=$rc): $(cat "$workdir/out" "$workdir/log")"
+SLOW_ATTEMPTS=9; run "$workdir/etc1"; unset APT_ATTEMPT_SECS SLOW_ATTEMPTS
+[ "$rc" -ne 0 ] && grep -q 'apt-install: download gave up after 3 attempts of 1s each' "$workdir/out" \
+  && ! grep -q -- '--no-download' "$workdir/log" \
+  && pass "a mirror slow on every attempt fails named, not at the step timeout" || fail "persistently slow mirror (rc=$rc): $(cat "$workdir/out")"
 
 # Control: handing apt-get every source reproduces the original failure.
 mkdir -p "$workdir/etc3"; cp -R "$workdir/etc1/." "$workdir/etc3/"
