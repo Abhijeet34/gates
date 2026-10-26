@@ -1094,7 +1094,7 @@ python3 .ci/test-mutation.py --real
 
 **In CI.**
 `ci.yml`'s `shell` job installs Node 22 and cargo-mutants (the test installs Stryker with npm), and `check_shell` runs `python3 .ci/test-mutation.py --real` when `CI` is set: a SHA-pinned `actions/setup-node` for Node 22, and a step that downloads the cargo-mutants 27.1.0 tarball and refuses it unless it has the sha256 above.
-It runs on every pull request and push, over the fixtures only (2 to 13 s per case).
+It runs on every pull request, over the fixtures only (2 to 13 s per case).
 A full run over a real code base is not this job's: it costs 627 s on gh-axi and about 98 h on quoth, so by the maintainer's decision of 2026-10-21 a caller runs it on a weekly schedule, and at pull-request time a caller runs the diff the change touches.
 No workflow here calls `run/mutation.py` on a code base, since this repository has no Rust or TypeScript source to mutate.
 The stub keeps the cases whose answer the real tools cannot be made to give (a wrong version, a dirty tree, an exit status, the base comparison), and the gate registry's six mutation rows, which run in the `gates-proof` job where neither tool is installed.
