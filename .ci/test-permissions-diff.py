@@ -1174,9 +1174,7 @@ def keyed_by_base():
     for ref in ("base", "HEAD"):
         _, sha = run("git", "rev-parse", ref, cwd=repo)
         env = {**ENV, "GATES_DIR": str(ROOT), "BASE_SHA": sha.strip()}
-        _, out = run(
-            PYTHON, str(RUNNER), "key", "permissions-diff", cwd=repo, env=env
-        )
+        _, out = run(PYTHON, str(RUNNER), "key", "permissions-diff", cwd=repo, env=env)
         keys.add(out.strip())
     if len(keys) != 2:
         return f"the row's key did not change with its base: {keys}"
