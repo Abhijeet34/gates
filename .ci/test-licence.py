@@ -72,7 +72,6 @@ vendored = ["vendor/**"]
 """
 
 
-
 def lock(**licences):
     """A lockfileVersion 3 package-lock.json, one dependency per keyword."""
     packages = {"": {"name": "app", "version": "1.0.0", "license": "UNLICENSED"}}
@@ -187,9 +186,16 @@ def runner_tmp(repo):
 
 
 def run(
-    script, files, policy=POLICY, *, repo=None, executable=(), links=None, env=None,
+    script,
+    files,
+    policy=POLICY,
+    *,
+    repo=None,
+    executable=(),
+    links=None,
+    env=None,
     track_modules=False,
-):  # fmt: skip
+):
     """(exit status, output) of the row on a repository holding `files`, every one tracked.
 
     `links` maps a path in the repository to a directory it is a symlink to. A file
