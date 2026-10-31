@@ -129,6 +129,23 @@ GUARDED_REGISTRY = PROOF_REGISTRY + "".join(
 )
 
 
+# Rows naming the files they run: a protected one, and one on a surface the gate leaves alone.
+RAN_REGISTRY = """[[gate]]
+id = "secret-scan"
+surface = "Security"
+gates = ["run/secret-scan/tree.sh", ".github/workflows/ci.yml"]
+command = "run/secret-scan/verify.sh"
+red = "echo red"
+
+[[gate]]
+id = "lint"
+surface = "PR checks"
+gates = ["run/lint.sh"]
+command = "run/lint.sh"
+red = "echo red"
+"""
+
+
 def without_row(gid):
     rows = GUARDED_REGISTRY.split("\n\n")
     return "\n\n".join(r for r in rows if f'id = "{gid}"' not in r)
@@ -175,6 +192,13 @@ BASE = {
     "internal/adapter/claude/claude.go": CLAUDE_GO,
     "repos/depbase.go": DEPBASE_GO,
     "egress/egress_test.go": "package egress\n",
+}
+RAN_BASE = {
+    **BASE,
+    ".ci/gate-registry.toml": RAN_REGISTRY,
+    "run/secret-scan/tree.sh": "gitleaks dir .\n",
+    "run/secret-scan/verify.sh": "test -s report.json\n",
+    "run/lint.sh": "ruff check .\n",
 }
 
 workdir = Path(tempfile.mkdtemp())
@@ -712,6 +736,63 @@ CASES = [
         {"run/secret-scan.sh": "exit 0\n"},
         1,
         "permissions-diff: run/secret-scan.sh changes the secret scan",
+    ),
+    (
+        "a script a security row lists in its gates",
+        {"run/secret-scan/tree.sh": "exit 0\n"},
+        1,
+        "permissions-diff: run/secret-scan/tree.sh changes a file the gate proof's security row 'secret-scan' runs",
+        "base",
+        RAN_BASE,
+    ),
+    (
+        "the command a security row runs",
+        {"run/secret-scan/verify.sh": "exit 0\n"},
+        1,
+        "permissions-diff: run/secret-scan/verify.sh changes a file the gate proof's security row 'secret-scan' runs",
+        "base",
+        RAN_BASE,
+    ),
+    (
+        "a security row's workflow edited beside its permissions",
+        {
+            ".github/workflows/ci.yml": WORKFLOW.replace(
+                "run: echo hi", "run: echo skipped"
+            )
+        },
+        1,
+        "permissions-diff: .github/workflows/ci.yml changes a file the gate proof's security row 'secret-scan' runs",
+        "base",
+        RAN_BASE,
+    ),
+    (
+        "a security row's script, dropped from the row in the same change",
+        {
+            "run/secret-scan/tree.sh": "exit 0\n",
+            ".ci/gate-registry.toml": RAN_REGISTRY.replace(
+                '"run/secret-scan/tree.sh", ', ""
+            ),
+        },
+        1,
+        "permissions-diff: run/secret-scan/tree.sh changes a file the gate proof's security row 'secret-scan' runs",
+        "base",
+        RAN_BASE,
+    ),
+    (
+        "a script only an unprotected row runs",
+        {"run/lint.sh": "exit 0\n"},
+        0,
+        "permissions-diff: 1 changed path(s), none on the protected surface",
+        "base",
+        RAN_BASE,
+    ),
+    (
+        "a base gate registry that cannot be read",
+        {"README.md": "A fixture, edited.\n"},
+        2,
+        "permissions-diff: could not decide: .ci/gate-registry.toml cannot be read as TOML",
+        "base",
+        {**BASE, ".ci/gate-registry.toml": "[[gate]\n"},
     ),
     (
         "the secret scan's rules",
