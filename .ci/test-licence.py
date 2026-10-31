@@ -14,6 +14,7 @@ corpus the licence review is measured on.
 import datetime
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -32,11 +33,37 @@ PYTHON = (
     if os.access(sys.executable, os.X_OK)
     else shutil.which("python3") or sys.executable
 )
+workdir = Path(tempfile.mkdtemp())
+
+
+def real_git_path():
+    """PATH with the real git first, where `git` is macOS's xcrun shim.
+
+    The shim caches its lookup under TMPDIR, and every run of the row gets a fresh
+    TMPDIR, so each `git ls-files` it made would spend seconds in xcodebuild.
+    """
+    path = os.environ.get("PATH", "")
+    if not shutil.which("xcrun"):
+        return path
+    found = subprocess.run(["xcrun", "--find", "git"], capture_output=True, text=True)
+    if found.returncode or not os.access(found.stdout.strip(), os.X_OK):
+        return path
+    bin_dir = workdir / "bin"
+    bin_dir.mkdir()
+    # A wrapper, not a symlink: git finds its templates relative to the path it ran as.
+    (bin_dir / "git").write_text(
+        f'#!/bin/sh\nexec {shlex.quote(found.stdout.strip())} "$@"\n'
+    )
+    (bin_dir / "git").chmod(0o755)
+    return f"{bin_dir}{os.pathsep}{path}"
+
+
 ENV = {
     **{k: v for k, v in os.environ.items() if not k.startswith("GIT_")},
     "GIT_CONFIG_GLOBAL": "/dev/null",
     "GIT_CONFIG_SYSTEM": "/dev/null",
     "PYTHONDONTWRITEBYTECODE": "1",
+    "PATH": real_git_path(),
 }
 POLICY = """allowed = ["MIT", "Apache-2.0", "ISC"]
 review = ["MPL-2.0"]
@@ -44,7 +71,6 @@ refused = ["GPL-3.0-only", "AGPL-3.0-only"]
 vendored = ["vendor/**"]
 """
 
-workdir = Path(tempfile.mkdtemp())
 
 
 def lock(**licences):
