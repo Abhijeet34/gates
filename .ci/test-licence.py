@@ -25,6 +25,13 @@ ROOT = Path(__file__).resolve().parent.parent
 LICENCE = ROOT / "run/licence.py"
 RUNNER = ROOT / "run/gate.py"
 CORPUS = ROOT / "corpus/licence"
+# A sandbox can deny exec on the interpreter's symlinked path while allowing
+# the one on PATH, so the children run whichever of the two may be executed.
+PYTHON = (
+    sys.executable
+    if os.access(sys.executable, os.X_OK)
+    else shutil.which("python3") or sys.executable
+)
 ENV = {
     **{k: v for k, v in os.environ.items() if not k.startswith("GIT_")},
     "GIT_CONFIG_GLOBAL": "/dev/null",
@@ -177,7 +184,7 @@ def run(
         ["git", "-C", str(repo), "add", "-A", "--", ".", *keep], env=ENV, check=True
     )
     proc = subprocess.run(
-        [sys.executable, str(script), str(repo)],
+        [PYTHON, str(script), str(repo)],
         env={**ENV, **(env or {}), "TMPDIR": str(runner_tmp(repo))},
         capture_output=True,
         text=True,
@@ -639,7 +646,7 @@ def under_the_runner(script):
     out = ""
     for verb in ("run", "fold"):
         proc = subprocess.run(
-            [sys.executable, str(RUNNER), verb, "--base", "base", "--store", str(store)],
+            [PYTHON, str(RUNNER), verb, "--base", "base", "--store", str(store)],
             cwd=repo, env=env, capture_output=True, text=True,
         )  # fmt: skip
         out += proc.stdout + proc.stderr
@@ -650,7 +657,7 @@ def under_the_runner(script):
     (repo / "notes.txt").write_text("b\n")
     subprocess.run([*git, *ident, "commit", "-qam", "notes"], env=ENV, check=True)
     chosen = subprocess.run(
-        [sys.executable, str(RUNNER), "select", "--base", "HEAD~1"],
+        [PYTHON, str(RUNNER), "select", "--base", "HEAD~1"],
         cwd=repo, env=env, capture_output=True, text=True,
     ).stdout  # fmt: skip
     return (
