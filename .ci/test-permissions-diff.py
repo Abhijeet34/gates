@@ -19,6 +19,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 GATE = ROOT / "run/permissions-diff.py"
 RUNNER = ROOT / "run/gate.py"
+# The python3 on PATH, the one the suite is run as: a sandbox can refuse to
+# exec the opt symlink sys.executable names (measured 2026-10-31).
+PYTHON = shutil.which("python3") or sys.executable
 REFUSED = "an automatic change may not land them: size the change L and open a class-2 decision"
 
 SETTINGS = (
@@ -242,7 +245,7 @@ def fixture(change, base=BASE):
 
 def gate(change, base_ref="base", base=BASE):
     repo = fixture(change, base)
-    return run(sys.executable, str(GATE), "--base", base_ref, cwd=repo)
+    return run(PYTHON, str(GATE), "--base", base_ref, cwd=repo)
 
 
 def expect(name, change, rc, line, base_ref="base", base=BASE):
@@ -947,7 +950,7 @@ def ruleset_gate(change, policy, repo="Abhijeet34/fixture", base=RULESET_BASE):
         (gates / "policy/relaxations.toml").write_text(policy)
         env["GATES_DIR"] = str(gates)
     args = ["--base", "base"] + (["--repo", repo] if repo else [])
-    return run(sys.executable, str(GATE), *args, cwd=repo_dir, env=env)
+    return run(PYTHON, str(GATE), *args, cwd=repo_dir, env=env)
 
 
 RULESET_CASES = [
@@ -1112,7 +1115,7 @@ def merge_base():
     (repo / ".claude/settings.json").write_text("{}\n")
     run("git", "commit", "-qam", "base moves on", cwd=repo)
     run("git", "checkout", "-q", "main", cwd=repo)
-    rc, out = run(sys.executable, str(GATE), "--base", "later", cwd=repo)
+    rc, out = run(PYTHON, str(GATE), "--base", "later", cwd=repo)
     if rc != 0:
         return f"a protected change only on the base branch refused the head (exit {rc}):\n{out}"
     return None
@@ -1138,8 +1141,8 @@ def shadow(since):
     _, env["BASE_SHA"] = run("git", "rev-parse", "base", cwd=repo)
     env["BASE_SHA"] = env["BASE_SHA"].strip()
     args = ("--base", "base", "--store", str(store))
-    run_rc, _ = run(sys.executable, str(RUNNER), "run", *args, cwd=repo, env=env)
-    fold_rc, out = run(sys.executable, str(RUNNER), "fold", *args, cwd=repo, env=env)
+    run_rc, _ = run(PYTHON, str(RUNNER), "run", *args, cwd=repo, env=env)
+    fold_rc, out = run(PYTHON, str(RUNNER), "fold", *args, cwd=repo, env=env)
     logs = store / "logs"
     log = "".join(p.read_text() for p in logs.iterdir()) if logs.exists() else ""
     return run_rc, fold_rc, out, log
@@ -1172,7 +1175,7 @@ def keyed_by_base():
         _, sha = run("git", "rev-parse", ref, cwd=repo)
         env = {**ENV, "GATES_DIR": str(ROOT), "BASE_SHA": sha.strip()}
         _, out = run(
-            sys.executable, str(RUNNER), "key", "permissions-diff", cwd=repo, env=env
+            PYTHON, str(RUNNER), "key", "permissions-diff", cwd=repo, env=env
         )
         keys.add(out.strip())
     if len(keys) != 2:

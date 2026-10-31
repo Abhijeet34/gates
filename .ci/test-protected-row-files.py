@@ -22,6 +22,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 GATE = ROOT / "run/permissions-diff.py"
+# The python3 on PATH, the one the suite is run as: a sandbox can refuse to
+# exec the opt symlink sys.executable names (measured 2026-10-31).
+PYTHON = shutil.which("python3") or sys.executable
 REGISTRY = ".ci/gate-registry.toml"
 # Files the protected rows run that a hand-kept surface once let change, so a
 # registry the suite reads wrongly cannot pass it by naming nothing.
@@ -97,7 +100,7 @@ def main():
             with open(repo / path, "a") as f:
                 f.write("exit 0\n")
         run("git", "commit", "-qam", "change", cwd=repo)
-        rc, out = run(sys.executable, str(GATE), "--base", "HEAD~1", cwd=repo)
+        rc, out = run(PYTHON, str(GATE), "--base", "HEAD~1", cwd=repo)
     finally:
         shutil.rmtree(repo, ignore_errors=True)
     if rc != 1:
