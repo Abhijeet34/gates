@@ -154,11 +154,13 @@ def runner_tmp(repo):
 
 
 def run(
-    script, files, policy=POLICY, *, repo=None, executable=(), links=None, env=None
-):
+    script, files, policy=POLICY, *, repo=None, executable=(), links=None, env=None,
+    track_modules=False,
+):  # fmt: skip
     """(exit status, output) of the row on a repository holding `files`, every one tracked.
 
-    `links` maps a path in the repository to a directory it is a symlink to.
+    `links` maps a path in the repository to a directory it is a symlink to. A file
+    under node_modules is left untracked, as `pnpm install` leaves it, unless `track_modules`.
     """
     repo = repo or Path(tempfile.mkdtemp(dir=workdir))
     for rel, text in {".github/licence-policy.toml": policy, **files}.items():
@@ -170,7 +172,10 @@ def run(
         (repo / rel).parent.mkdir(parents=True, exist_ok=True)
         (repo / rel).symlink_to(target)
     subprocess.run(["git", "init", "-q", str(repo)], env=ENV, check=True)
-    subprocess.run(["git", "-C", str(repo), "add", "-A"], env=ENV, check=True)
+    keep = [] if track_modules else [":(exclude,glob)**/node_modules/**"]
+    subprocess.run(
+        ["git", "-C", str(repo), "add", "-A", "--", ".", *keep], env=ENV, check=True
+    )
     proc = subprocess.run(
         [sys.executable, str(script), str(repo)],
         env={**ENV, **(env or {}), "TMPDIR": str(runner_tmp(repo))},
@@ -492,6 +497,15 @@ def pnpm_peer_suffixed_directory_read(script):
     )  # fmt: skip
 
 
+def tracked_installed_manifest_is_refused(script):
+    files = pnpm_tree(PNPM9, gpl_lib=("1.0.0", "MIT"), scope__fmt=("2.0.0", "MIT"))
+    return expect(
+        "a change tracking the installed package.json it is judged by",
+        run(script, files, track_modules=True), 1,
+        "licence: refused: web/pnpm-lock.yaml: 2 tracked files under web/node_modules/",
+    )  # fmt: skip
+
+
 def lower_case_id_refused(script):
     got = run(script, {"package-lock.json": lock(gpl="gpl-3.0-only", ok="mit")})
     return expect(
@@ -676,6 +690,7 @@ CASES = [
     (pnpm_mismatched_manifest_not_read, "a manifest's own name and version matching the entry", "    if found == (name, ver):", "    if isinstance(data, dict):"),
     (pnpm_manifest_outside_tree_not_read, "a symlink in the manifest's path refused", "manifest.resolve() != manifest", "False"),
     (pnpm_peer_suffixed_directory_read, "a peer-suffixed store directory read", "or d.name.startswith(f\"{stem}_\")", "or False"),
+    (tracked_installed_manifest_is_refused, "a tracked installed tree refused", "            if supplied:\n", "            if False:\n"),
     (lower_case_id_refused, "a policy id stored folded", "named[fold(lid)] = k", "named[lid] = k"),
     (lower_case_policy_id_matches, "an id looked up by its folded form", "state = lists.get(fold(tok))", "state = lists.get(tok)"),
     (lists_differing_in_case_contradict, "a contradiction found across case", "if fold(lid) in named and named[fold(lid)] != k:", "if lid in named and named[lid] != k:"),
