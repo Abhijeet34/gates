@@ -1589,7 +1589,7 @@ finding = "mutation: src/lib.rs: asserts 3 -> 2: a test was deleted or weakened"
 [[gate]]
 id = "mutation-typescript"
 surface = "Test quality"
-gates = ["run/mutation.py"]
+gates = ["run/mutation.py", "run/mutation-judge/package.json", "run/mutation-judge/package-lock.json"]
 test = ".ci/test-mutation.py"
 suite = "shell"
 command = "run/mutation.py"

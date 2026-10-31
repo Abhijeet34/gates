@@ -3,7 +3,8 @@
 
     .ci/test-mutation.py            the tool is .ci/fixtures/mutation/stub-tool.py
     .ci/test-mutation.py --real     cargo-mutants 27.1.0 on PATH, and npm to install
-                                    Stryker 10.0.0 and vitest into a fixture package;
+                                    the judge (Stryker 10.0.0 and vitest) with `npm ci`
+                                    from run/mutation-judge/package-lock.json;
                                     ci.yml's `shell` job runs it (check_shell, under CI)
 
 Each case builds a repository from .ci/fixtures/mutation with a base and a change,
@@ -18,6 +19,7 @@ registry's mutation rows, which run where no tool is installed (README.md,
 """
 
 import datetime
+import json
 import os
 import shutil
 import subprocess
@@ -30,6 +32,7 @@ ROOT = Path(__file__).resolve().parent.parent
 GATE = ROOT / "run/mutation.py"
 RUNNER = ROOT / "run/gate.py"
 BUILD = ROOT / ".ci/fixtures/mutation/build.sh"
+JUDGE_LOCK = ROOT / "run/mutation-judge/package-lock.json"
 ENV = {
     **{k: v for k, v in os.environ.items() if not k.startswith(("GIT_", "STUB_"))},
     "GIT_CONFIG_GLOBAL": "/dev/null",
@@ -349,7 +352,36 @@ def refusals():
     )
     dirty = build("rust", "weak")
     (dirty / "src/lib.rs").write_text("pub fn changed() {}\n")
+    # npm's install record, as `npm ci` from the committed judge lock writes it, then
+    # the same record with Stryker resolved to a tarball the lock does not name.
+    locked = build("typescript", "weak")
+    drifted = build("typescript", "weak")
+    packages = json.loads(JUDGE_LOCK.read_text())["packages"]
+    record = {"name": "mutfix", "lockfileVersion": 3, "requires": True}
+    installed = {p: e for p, e in packages.items() if p}
+    (locked / "node_modules/.package-lock.json").write_text(
+        json.dumps({**record, "packages": installed})
+    )
+    core = "node_modules/@stryker-mutator/core"
+    tampered = {**installed, core: {**installed[core], "integrity": "sha512-drifted"}}
+    (drifted / "node_modules/.package-lock.json").write_text(
+        json.dumps({**record, "packages": tampered})
+    )
     return [
+        expect(
+            "typescript: an install that matches the committed judge lock",
+            gate("typescript", locked),
+            1,
+            SURVIVOR_TS,
+        ),
+        expect(
+            "typescript: an install whose integrity differs from the committed judge lock",
+            gate("typescript", drifted),
+            2,
+            refused("wrong-integrity")
+            + f" {core} resolved sha512-drifted, the committed lock has"
+            f" {installed[core]['integrity']}",
+        ),
         expect(
             "typescript: no Stryker",
             gate("typescript", bare),
@@ -493,13 +525,13 @@ def runner_cases():
 
 
 def node_modules():
-    """One installed copy of the fixture package's devDependencies, shared by every case."""
-    here = build("typescript", stub=False)
-    rc, out = run(
-        "npm", "install", "--no-audit", "--no-fund", "--ignore-scripts", cwd=here
-    )
+    """One install of the judge from its committed lock, shared by every case."""
+    here = Path(tempfile.mkdtemp(dir=workdir))
+    for name in ("package.json", "package-lock.json"):
+        shutil.copy(JUDGE_LOCK.parent / name, here)
+    rc, out = run("npm", "ci", "--no-audit", "--no-fund", "--ignore-scripts", cwd=here)
     if rc:
-        raise SystemExit(f"npm install failed:\n{out}")
+        raise SystemExit(f"npm ci failed:\n{out}")
     return here / "node_modules"
 
 
