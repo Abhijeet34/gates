@@ -99,6 +99,8 @@ check_shell() {
     python3 .ci/test-budget-monitor.py || rc=1
     # The protected surface of security design 7.2, and its row in shadow under the runner.
     python3 .ci/test-permissions-diff.py || rc=1
+    # Each of its repository-specific globs against that repository's tracked files.
+    python3 .ci/test-surface-paths.py || rc=1
     # The gate-weakening guard and the record it reads from policy/relaxations.toml.
     python3 .ci/test-weakening.py || rc=1
     # The maintainer's approving review a change to that record needs.
