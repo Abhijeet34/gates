@@ -856,6 +856,13 @@ def probed(probe):
     return f, result, f.verifier_saw()
 
 
+def attempt(command, marker):
+    """A probe printing `marker=open` when `command` succeeds, else `marker=denied`."""
+    # The quotes split each verdict word, so the command text shown to the
+    # verifier never contains the verdict it prints.
+    return f'{command} && echo "{marker}=""open" || echo "{marker}=""denied"; exit 1'
+
+
 def denied(result, seen, marker):
     """Why the probe was not confined: denied inside the sandbox, or never run outside it.
 
@@ -877,8 +884,7 @@ def denied(result, seen, marker):
 def pr60_reproduction_cannot_write_store():
     """A finding's reproducing command cannot append a forged pass to the verdict store."""
     f, result, seen = probed(
-        lambda f: f'echo forged >> "{f.store}/records.jsonl" && echo "store=""open"'
-        ' || echo "store=""denied"; exit 1'
+        lambda f: attempt(f'echo forged >> "{f.store}/records.jsonl"', "store")
     )
     records = f.store / "records.jsonl"
     if records.exists() and "forged" in records.read_text().splitlines():
@@ -897,9 +903,7 @@ def pr60_reproduction_has_no_network():
     port = server.getsockname()[1] if server else 1
     connect = f"import socket; socket.create_connection(('127.0.0.1', {port}), 5)"
     try:
-        _, result, seen = probed(
-            lambda f: f'python3 -c "{connect}" && echo "net=""open" || echo "net=""denied"; exit 1'
-        )
+        _, result, seen = probed(lambda f: attempt(f'python3 -c "{connect}"', "net"))
     finally:
         if server:
             server.close()
@@ -948,9 +952,7 @@ def pr63_reproduction_sees_no_sibling_temp():
     """A finding's reproducing command cannot read another run's temporary directory."""
     sibling = fresh()
     (sibling / "note").write_text(PLANTED)
-    _, result, seen = probed(
-        lambda f: f'cat "{sibling}/note" && echo "temp=""open" || echo "temp=""denied"; exit 1'
-    )
+    _, result, seen = probed(lambda f: attempt(f'cat "{sibling}/note"', "temp"))
     if PLANTED in seen:
         return (
             f"the reproducing command read a sibling temporary directory: {seen[-300:]}"
@@ -972,8 +974,7 @@ def pr63_reproduction_reaches_no_local_socket():
         server.listen()
         connect = "import socket; socket.socket(socket.AF_UNIX).connect('s')"
         _, result, seen = probed(
-            lambda f: f'cd "{here}" && python3 -c "{connect}" && echo "sock=""open"'
-            ' || echo "sock=""denied"; exit 1'
+            lambda f: attempt(f'cd "{here}" && python3 -c "{connect}"', "sock")
         )
     return denied(result, seen, "sock")
 
