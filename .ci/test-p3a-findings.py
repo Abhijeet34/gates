@@ -151,9 +151,7 @@ def tools(rcs, banner="stub output"):
 
 
 def tool_gate(check, files, env):
-    return run(
-        PYTHON, TOOL_GATES, check, tree(files), cwd=workdir, env={**ENV, **env}
-    )
+    return run(PYTHON, TOOL_GATES, check, tree(files), cwd=workdir, env={**ENV, **env})
 
 
 def lodash(version, resolved=True):
@@ -568,7 +566,11 @@ def pr58_pnpm_decoy_manifest_not_read():
             {
                 "web/pnpm-lock.yaml": PNPM9,
                 store: json.dumps(
-                    {"name": "gpl-lib", "version": "1.0.0", "license": "GPL-3.0-or-later"}
+                    {
+                        "name": "gpl-lib",
+                        "version": "1.0.0",
+                        "license": "GPL-3.0-or-later",
+                    }
                 ),
                 "web/node_modules/decoy/package.json": json.dumps(
                     {"name": "gpl-lib", "version": "1.0.0", "license": "MIT"}
@@ -706,9 +708,16 @@ def pr59_fake_freshness_read_at_base():
     )
     return expect(
         run(
-            PYTHON, RUN / "fakes.py", "stale", "--base", "base",
-            "--today", "2026-10-19", here, cwd=here,
-        ),  # fmt: skip
+            PYTHON,
+            RUN / "fakes.py",
+            "stale",
+            "--base",
+            "base",
+            "--today",
+            "2026-10-19",
+            here,
+            cwd=here,
+        ),
         1,
         "gh: recorded 2026-10-01, 18 days ago, past its 7-day freshness",
     )
@@ -718,9 +727,7 @@ def pr59_quoted_file_name_judged():
     """A changed file whose name holds a quote is still judged by the slop rows."""
     here = repo({"README.md": "x\n"}, {'say "hi".css': ".a { z-index: 9999; }\n"})
     return expect(
-        run(
-            PYTHON, RUN / "slop-rules.py", "z-index", "--base", "base", here, cwd=here
-        ),  # fmt: skip
+        run(PYTHON, RUN / "slop-rules.py", "z-index", "--base", "base", here, cwd=here),
         1,
         'slop-rules: z-index: say "hi".css:1:',
     )
@@ -730,9 +737,13 @@ def pr59_mutation_run_testing_nothing_refused():
     """Added code whose mutation run tests no mutant is not a pass."""
     here = fresh()
     got = run(
-        "bash", ROOT / ".ci/fixtures/mutation/build.sh", "--stub", "typescript", "strong",
+        "bash",
+        ROOT / ".ci/fixtures/mutation/build.sh",
+        "--stub",
+        "typescript",
+        "strong",
         cwd=here,
-    )  # fmt: skip
+    )
     if got[0]:
         return f"the mutation fixture did not build: {got[1]}"
     run("git", "tag", "-f", "base", cwd=here)
@@ -743,9 +754,15 @@ def pr59_mutation_run_testing_nothing_refused():
     env = {**ENV, "PATH": f"{here / '.stub'}:{ENV['PATH']}"}
     return expect(
         run(
-            PYTHON, RUN / "mutation.py", "typescript", "--base", "base", here,
-            cwd=workdir, env=env,
-        ),  # fmt: skip
+            PYTHON,
+            RUN / "mutation.py",
+            "typescript",
+            "--base",
+            "base",
+            here,
+            cwd=workdir,
+            env=env,
+        ),
         2,
         "mutation: refused (nothing-mutated):",
     )
@@ -774,9 +791,14 @@ class Review:
         self.repo, self.store = self.dir / "repo", self.dir / "store"
         self.repo.mkdir()
         rc, out = run(
-            "bash", REVIEW_FIXTURES / "build.sh", "--replies", "reproduced", "floor",
-            cwd=self.repo, env=REVIEW_ENV,
-        )  # fmt: skip
+            "bash",
+            REVIEW_FIXTURES / "build.sh",
+            "--replies",
+            "reproduced",
+            "floor",
+            cwd=self.repo,
+            env=REVIEW_ENV,
+        )
         if rc:
             raise RuntimeError(f"the review fixture did not build: {out}")
         self.stub = self.repo / ".stub"
@@ -792,10 +814,18 @@ class Review:
     def review(self, *which, **over):
         env = {**REVIEW_ENV, "PATH": f"{self.stub}:{REVIEW_ENV['PATH']}", **over}
         return run(
-            PYTHON, REVIEW, *(which or ("--gate", "code-review")), "--base", "base",
-            "--author", "claude-opus-5-5", "--store", self.store,
-            cwd=self.repo, env=env,
-        )  # fmt: skip
+            PYTHON,
+            REVIEW,
+            *(which or ("--gate", "code-review")),
+            "--base",
+            "base",
+            "--author",
+            "claude-opus-5-5",
+            "--store",
+            self.store,
+            cwd=self.repo,
+            env=env,
+        )
 
     def verifier_saw(self):
         log = self.stub / "calls.jsonl"
@@ -922,7 +952,9 @@ def pr63_reproduction_sees_no_sibling_temp():
         lambda f: f'cat "{sibling}/note" && echo "temp=""open" || echo "temp=""denied"; exit 1'
     )
     if PLANTED in seen:
-        return f"the reproducing command read a sibling temporary directory: {seen[-300:]}"
+        return (
+            f"the reproducing command read a sibling temporary directory: {seen[-300:]}"
+        )
     return denied(result, seen, "temp")
 
 
@@ -997,9 +1029,16 @@ class Runner:
 
     def gate(self, *args, store=None):
         return run(
-            PYTHON, GATE, *args, "--base", self.base, "--store", store or self.store,
-            cwd=self.repo, env=self.env,
-        )  # fmt: skip
+            PYTHON,
+            GATE,
+            *args,
+            "--base",
+            self.base,
+            "--store",
+            store or self.store,
+            cwd=self.repo,
+            env=self.env,
+        )
 
     def runs_of(self, gid):
         path = self.runs / gid
