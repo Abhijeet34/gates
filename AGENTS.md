@@ -44,6 +44,7 @@ This file is the project's committed home for project-intrinsic agent knowledge:
   Its fold never passes a selected blocking gate without a `pass` record for the head, and a shadow row blocks only once it meets the promotion rule in its docstring; `.ci/test-gate-runner.py` re-runs each case with its control removed, so moving a mutation's anchor text fails the suite until the anchor follows.
 - **`run/permissions-diff.py` refuses any change to security design 7.2's protected surface (bar a ruleset context rename a recorded policy covers), including its own `SURFACE`, a workflow's `permissions:` blocks and an existing `.ci/gate-registry.toml` row whose `surface` is in its `SECURITY_SURFACES` or whose id is in its `SECURITY_ROWS`; README.md, "The permissions-diff gate", owns the mapping and the paths 7.2 names that no longer exist.**
   Changing a Security row or a workflow token therefore needs a class-2 decision once a caller promotes the gate out of shadow.
+- **A `.ci` test that spawns a row or git must also pass under the macOS worker sandbox: spawn the interpreter through `.ci/test-licence.py`'s `PYTHON` (a sandbox can deny exec on `sys.executable`'s symlinked path) and put its `real_git_path()` first on `PATH` (the xcrun `git` shim re-resolves under each fresh `TMPDIR`), or the acceptance fails before its case runs.** (verified 2026-10-31; source: log seq 4605, 5448) (ladder: refusal:gate:acceptance:fix-sr2-12)
 
 ## Maintaining this file
 
