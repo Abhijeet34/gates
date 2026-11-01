@@ -7,8 +7,9 @@ Every tracked `package-lock.json`, `uv.lock`, `pnpm-lock.yaml` and `Cargo.lock`
 (none under node_modules) lists dependencies, and every tracked file under a
 `vendored` glob of the policy is copied code. Each gets a licence expression: an
 npm lockfile entry's `license`; a pnpm package's from its installed package.json, read only at the path its
-lock entry derives; a crate's from `cargo metadata --offline`, run from outside
-the tree so that none of the tree's cargo or toolchain configuration applies; for a uv.lock package, which records
+lock entry derives, and refused outright when the tree tracks any file under
+that node_modules, which `pnpm install` would leave in place; a crate's from
+`cargo metadata --offline`, run from outside the tree so that none of the tree's cargo or toolchain configuration applies; for a uv.lock package, which records
 none, the policy's `[declared]` entry; for a vendored file, its own
 `SPDX-License-Identifier` in its first 30 lines, else a `[declared]` path entry.
 README.md, "The licence row", owns the policy's shape.
@@ -459,6 +460,16 @@ def check(root, policy):
         name = rel.rsplit("/", 1)[-1]
         if name not in READERS or "node_modules/" in f"/{rel}":
             continue
+        if name == "pnpm-lock.yaml":
+            # A pnpm licence is read from the installed tree, so the change must not supply that tree.
+            modules = f"{rel[: -len(name)]}node_modules/"
+            supplied = [p for p in paths if p.startswith(modules)]
+            if supplied:
+                found.append(
+                    f"refused: {rel}: {len(supplied)} tracked files under {modules}, such as"
+                    f" {supplied[0]}; the licence is read from the installed tree, so untrack them"
+                )
+                continue
         text = (root / rel).read_text(errors="replace")
         for key, version, expr, missing in READERS[name](root, rel, text):
             judged += 1

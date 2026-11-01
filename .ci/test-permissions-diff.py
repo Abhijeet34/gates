@@ -14,11 +14,16 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 GATE = ROOT / "run/permissions-diff.py"
 RUNNER = ROOT / "run/gate.py"
+# The python3 on PATH, the one the suite is run as: a sandbox can refuse to
+# exec the opt symlink sys.executable names (measured 2026-10-31).
+PYTHON = shutil.which("python3") or sys.executable
 REFUSED = "an automatic change may not land them: size the change L and open a class-2 decision"
 
 SETTINGS = (
@@ -129,6 +134,23 @@ GUARDED_REGISTRY = PROOF_REGISTRY + "".join(
 )
 
 
+# Rows naming the files they run: a protected one, and one on a surface the gate leaves alone.
+RAN_REGISTRY = """[[gate]]
+id = "secret-scan"
+surface = "Security"
+gates = ["run/secret-scan/tree.sh", ".github/workflows/ci.yml"]
+command = "run/secret-scan/verify.sh"
+red = "echo red"
+
+[[gate]]
+id = "lint"
+surface = "PR checks"
+gates = ["run/lint.sh"]
+command = "run/lint.sh"
+red = "echo red"
+"""
+
+
 def without_row(gid):
     rows = GUARDED_REGISTRY.split("\n\n")
     return "\n\n".join(r for r in rows if f'id = "{gid}"' not in r)
@@ -176,6 +198,13 @@ BASE = {
     "repos/depbase.go": DEPBASE_GO,
     "egress/egress_test.go": "package egress\n",
 }
+RAN_BASE = {
+    **BASE,
+    ".ci/gate-registry.toml": RAN_REGISTRY,
+    "run/secret-scan/tree.sh": "gitleaks dir .\n",
+    "run/secret-scan/verify.sh": "test -s report.json\n",
+    "run/lint.sh": "ruff check .\n",
+}
 
 workdir = Path(tempfile.mkdtemp())
 ENV = {
@@ -197,28 +226,43 @@ def run(*args, cwd, env=ENV):
     return proc.returncode, proc.stdout + proc.stderr
 
 
+def commit(repo, files, message):
+    for rel, text in files.items():
+        path = repo / rel
+        if text is None:
+            path.unlink()
+            continue
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+    run("git", "add", "-A", cwd=repo)
+    run("git", "commit", "-qm", message, "--allow-empty", cwd=repo)
+
+
+bases = {}
+bases_lock = threading.Lock()
+
+
 def fixture(change, base=BASE):
     """A repository whose `base` tag holds `base` and whose HEAD applies `change`."""
-    repo = Path(tempfile.mkdtemp(dir=workdir))
-    run("git", "init", "-q", "--template=", "-b", "main", cwd=repo)
-    for files, tag in ((base, "base"), (change, None)):
-        for rel, text in files.items():
-            path = repo / rel
-            if text is None:
-                path.unlink()
-                continue
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(text)
-        run("git", "add", "-A", cwd=repo)
-        run("git", "commit", "-qm", tag or "change", "--allow-empty", cwd=repo)
-        if tag:
-            run("git", "tag", tag, cwd=repo)
+    # Most cases share a base, so each base is committed once and copied: the
+    # git processes, not the gate, were most of the suite's time.
+    key = tuple(sorted(base.items()))
+    with bases_lock:
+        if key not in bases:
+            template = Path(tempfile.mkdtemp(dir=workdir))
+            run("git", "init", "-q", "--template=", "-b", "main", cwd=template)
+            commit(template, base, "base")
+            run("git", "tag", "base", cwd=template)
+            bases[key] = template
+    repo = Path(tempfile.mkdtemp(dir=workdir)) / "repo"
+    shutil.copytree(bases[key], repo, symlinks=True)
+    commit(repo, change, "change")
     return repo
 
 
 def gate(change, base_ref="base", base=BASE):
     repo = fixture(change, base)
-    return run(sys.executable, str(GATE), "--base", base_ref, cwd=repo)
+    return run(PYTHON, str(GATE), "--base", base_ref, cwd=repo)
 
 
 def expect(name, change, rc, line, base_ref="base", base=BASE):
@@ -714,6 +758,63 @@ CASES = [
         "permissions-diff: run/secret-scan.sh changes the secret scan",
     ),
     (
+        "a script a security row lists in its gates",
+        {"run/secret-scan/tree.sh": "exit 0\n"},
+        1,
+        "permissions-diff: run/secret-scan/tree.sh changes a file the gate proof's security row 'secret-scan' runs",
+        "base",
+        RAN_BASE,
+    ),
+    (
+        "the command a security row runs",
+        {"run/secret-scan/verify.sh": "exit 0\n"},
+        1,
+        "permissions-diff: run/secret-scan/verify.sh changes a file the gate proof's security row 'secret-scan' runs",
+        "base",
+        RAN_BASE,
+    ),
+    (
+        "a security row's workflow edited beside its permissions",
+        {
+            ".github/workflows/ci.yml": WORKFLOW.replace(
+                "run: echo hi", "run: echo skipped"
+            )
+        },
+        1,
+        "permissions-diff: .github/workflows/ci.yml changes a file the gate proof's security row 'secret-scan' runs",
+        "base",
+        RAN_BASE,
+    ),
+    (
+        "a security row's script, dropped from the row in the same change",
+        {
+            "run/secret-scan/tree.sh": "exit 0\n",
+            ".ci/gate-registry.toml": RAN_REGISTRY.replace(
+                '"run/secret-scan/tree.sh", ', ""
+            ),
+        },
+        1,
+        "permissions-diff: run/secret-scan/tree.sh changes a file the gate proof's security row 'secret-scan' runs",
+        "base",
+        RAN_BASE,
+    ),
+    (
+        "a script only an unprotected row runs",
+        {"run/lint.sh": "exit 0\n"},
+        0,
+        "permissions-diff: 1 changed path(s), none on the protected surface",
+        "base",
+        RAN_BASE,
+    ),
+    (
+        "a base gate registry that cannot be read",
+        {"README.md": "A fixture, edited.\n"},
+        2,
+        "permissions-diff: could not decide: .ci/gate-registry.toml cannot be read as TOML",
+        "base",
+        {**BASE, ".ci/gate-registry.toml": "[[gate]\n"},
+    ),
+    (
         "the secret scan's rules",
         {".gitleaks.toml": "[allowlist]\npaths = ['.*']\n"},
         1,
@@ -866,7 +967,7 @@ def ruleset_gate(change, policy, repo="Abhijeet34/fixture", base=RULESET_BASE):
         (gates / "policy/relaxations.toml").write_text(policy)
         env["GATES_DIR"] = str(gates)
     args = ["--base", "base"] + (["--repo", repo] if repo else [])
-    return run(sys.executable, str(GATE), *args, cwd=repo_dir, env=env)
+    return run(PYTHON, str(GATE), *args, cwd=repo_dir, env=env)
 
 
 RULESET_CASES = [
@@ -1031,7 +1132,7 @@ def merge_base():
     (repo / ".claude/settings.json").write_text("{}\n")
     run("git", "commit", "-qam", "base moves on", cwd=repo)
     run("git", "checkout", "-q", "main", cwd=repo)
-    rc, out = run(sys.executable, str(GATE), "--base", "later", cwd=repo)
+    rc, out = run(PYTHON, str(GATE), "--base", "later", cwd=repo)
     if rc != 0:
         return f"a protected change only on the base branch refused the head (exit {rc}):\n{out}"
     return None
@@ -1057,8 +1158,8 @@ def shadow(since):
     _, env["BASE_SHA"] = run("git", "rev-parse", "base", cwd=repo)
     env["BASE_SHA"] = env["BASE_SHA"].strip()
     args = ("--base", "base", "--store", str(store))
-    run_rc, _ = run(sys.executable, str(RUNNER), "run", *args, cwd=repo, env=env)
-    fold_rc, out = run(sys.executable, str(RUNNER), "fold", *args, cwd=repo, env=env)
+    run_rc, _ = run(PYTHON, str(RUNNER), "run", *args, cwd=repo, env=env)
+    fold_rc, out = run(PYTHON, str(RUNNER), "fold", *args, cwd=repo, env=env)
     logs = store / "logs"
     log = "".join(p.read_text() for p in logs.iterdir()) if logs.exists() else ""
     return run_rc, fold_rc, out, log
@@ -1090,9 +1191,7 @@ def keyed_by_base():
     for ref in ("base", "HEAD"):
         _, sha = run("git", "rev-parse", ref, cwd=repo)
         env = {**ENV, "GATES_DIR": str(ROOT), "BASE_SHA": sha.strip()}
-        _, out = run(
-            sys.executable, str(RUNNER), "key", "permissions-diff", cwd=repo, env=env
-        )
+        _, out = run(PYTHON, str(RUNNER), "key", "permissions-diff", cwd=repo, env=env)
         keys.add(out.strip())
     if len(keys) != 2:
         return f"the row's key did not change with its base: {keys}"
@@ -1100,21 +1199,21 @@ def keyed_by_base():
 
 
 def main():
-    failures = [expect(*case) for case in CASES]
-    failures += [expect_ruleset(*case) for case in RULESET_CASES]
-    failures += [
-        f()
-        for f in (
-            no_base,
-            unknown_base,
-            merge_base,
-            in_shadow,
-            established_blocks,
-            keyed_by_base,
-            callers_own_record,
-        )
+    checks = [lambda case=case: expect(*case) for case in CASES]
+    checks += [lambda case=case: expect_ruleset(*case) for case in RULESET_CASES]
+    checks += [
+        no_base,
+        unknown_base,
+        merge_base,
+        in_shadow,
+        established_blocks,
+        keyed_by_base,
+        callers_own_record,
     ]
-    failures = [f for f in failures if f]
+    # Each case owns its fixture and spends its time waiting on git, so run in
+    # sequence the suite outlasted the gate's wall limit (measured 2026-11-01).
+    with ThreadPoolExecutor(max_workers=min(8, os.cpu_count() or 1)) as pool:
+        failures = [f for f in pool.map(lambda check: check(), checks) if f]
     total = len(CASES) + len(RULESET_CASES) + 7
     for f in failures:
         print(f"FAIL {f}", file=sys.stderr)

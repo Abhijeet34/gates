@@ -11,7 +11,9 @@ out). Most entries are read whole; a workflow is read only for its
 vendor may see which repository, a gate registry only for its existing
 rows, and a command, agent or skill only for the front matter keys that can
 grant it authority, so an edit beside them is not refused. A new registry row
-is not either.
+is not either. Every file a protected row of the base's .ci/gate-registry.toml
+lists in `gates` or runs as `command` is read whole, on SURFACE or not, so the
+scripts a security row runs are derived from the row rather than listed here.
 
 A workflow is read by lines, not parsed as YAML, so it fails closed: a changed
 line that spells `permissions` in any other form, opens a flow mapping or
@@ -356,6 +358,37 @@ SECURITY_ROWS = {
 }
 
 
+def protected(row):
+    return row.get("surface") in SECURITY_SURFACES or row.get("id") in SECURITY_ROWS
+
+
+REGISTRY = ".ci/gate-registry.toml"
+
+
+def row_files(text):
+    """Each file a protected row of a gate registry lists in `gates` or runs as `command`, with the first row naming it.
+
+    The base's registry is read, so a change cannot unprotect a file by editing
+    the row that names it; that edit is refused as a row change besides.
+    """
+    try:
+        gates = toml(text, REGISTRY).get("gate", [])
+    except Unreadable as e:
+        raise Undecided(str(e)) from e
+    if not isinstance(gates, list):
+        raise Undecided(f"{REGISTRY}: `gate` is not an array of tables")
+    files = {}
+    for row in gates:
+        if not isinstance(row, dict) or not protected(row):
+            continue
+        named = row.get("gates", [])
+        named = [*(named if isinstance(named, list) else [named]), row.get("command")]
+        for path in named:
+            if isinstance(path, str) and path:
+                files.setdefault(path, row.get("id"))
+    return files
+
+
 def go_declaration(text, name):
     """The top-level `var name` declaration in Go source, to the line closing its brackets."""
     m = re.search(rf"^var\s+{name}\b", text or "", re.M)
@@ -436,12 +469,7 @@ SURFACE = [
     (
         ".ci/gate-registry.toml",
         "the gate proof's security rows",
-        rows(
-            lambda row: (
-                row.get("surface") in SECURITY_SURFACES
-                or row.get("id") in SECURITY_ROWS
-            )
-        ),
+        rows(protected),
     ),
     ("policy/**", "the tool rows' ignore lists and the relaxation records", None),
     ("run/tool-gates.py", "the tool rows' pins and flags", None),
@@ -498,21 +526,28 @@ def findings(base, head):
         old = git("merge-base", base, head).decode().strip()
     out = git("diff", "--name-only", "--no-renames", "-z", old, head)
     changed = [p for p in out.decode().split("\0") if p]
+    ran = row_files(blob(old, REGISTRY))
     found = []
     for path in changed:
         entry = next((e for e in SURFACE if e[0].match(path)), None)
-        if entry is None:
-            continue
-        _, what, how = entry
-        if how is None:
-            found.append(f"{path} changes {what}")
-            continue
-        try:
-            details = how(path, blob(old, path), blob(head, path))
-        except Unreadable as e:
-            details = [str(e)]
-        if details:
-            found.append(f"{path} changes {what}: {'; '.join(details)}")
+        if entry is not None:
+            _, what, how = entry
+            if how is None:
+                found.append(f"{path} changes {what}")
+                continue
+            try:
+                details = how(path, blob(old, path), blob(head, path))
+            except Unreadable as e:
+                details = [str(e)]
+            if details:
+                found.append(f"{path} changes {what}: {'; '.join(details)}")
+                continue
+        # Read whole: a file a security row runs is the control that row proves,
+        # even where its SURFACE entry reads only part of it.
+        if path in ran:
+            found.append(
+                f"{path} changes a file the gate proof's security row {ran[path]!r} runs"
+            )
     return changed, found
 
 

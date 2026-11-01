@@ -14,6 +14,7 @@ corpus the licence review is measured on.
 import datetime
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -25,19 +26,50 @@ ROOT = Path(__file__).resolve().parent.parent
 LICENCE = ROOT / "run/licence.py"
 RUNNER = ROOT / "run/gate.py"
 CORPUS = ROOT / "corpus/licence"
+# A sandbox can deny exec on the interpreter's symlinked path while allowing
+# the one on PATH, so the children run whichever of the two may be executed.
+PYTHON = (
+    sys.executable
+    if os.access(sys.executable, os.X_OK)
+    else shutil.which("python3") or sys.executable
+)
+workdir = Path(tempfile.mkdtemp())
+
+
+def real_git_path():
+    """PATH with the real git first, where `git` is macOS's xcrun shim.
+
+    The shim caches its lookup under TMPDIR, and every run of the row gets a fresh
+    TMPDIR, so each `git ls-files` it made would spend seconds in xcodebuild.
+    """
+    path = os.environ.get("PATH", "")
+    if not shutil.which("xcrun"):
+        return path
+    found = subprocess.run(["xcrun", "--find", "git"], capture_output=True, text=True)
+    if found.returncode or not os.access(found.stdout.strip(), os.X_OK):
+        return path
+    bin_dir = workdir / "bin"
+    bin_dir.mkdir()
+    # A wrapper, not a symlink: git finds its templates relative to the path it ran as.
+    (bin_dir / "git").write_text(
+        f'#!/bin/sh\nexec {shlex.quote(found.stdout.strip())} "$@"\n'
+    )
+    (bin_dir / "git").chmod(0o755)
+    return f"{bin_dir}{os.pathsep}{path}"
+
+
 ENV = {
     **{k: v for k, v in os.environ.items() if not k.startswith("GIT_")},
     "GIT_CONFIG_GLOBAL": "/dev/null",
     "GIT_CONFIG_SYSTEM": "/dev/null",
     "PYTHONDONTWRITEBYTECODE": "1",
+    "PATH": real_git_path(),
 }
 POLICY = """allowed = ["MIT", "Apache-2.0", "ISC"]
 review = ["MPL-2.0"]
 refused = ["GPL-3.0-only", "AGPL-3.0-only"]
 vendored = ["vendor/**"]
 """
-
-workdir = Path(tempfile.mkdtemp())
 
 
 def lock(**licences):
@@ -154,11 +186,20 @@ def runner_tmp(repo):
 
 
 def run(
-    script, files, policy=POLICY, *, repo=None, executable=(), links=None, env=None
+    script,
+    files,
+    policy=POLICY,
+    *,
+    repo=None,
+    executable=(),
+    links=None,
+    env=None,
+    track_modules=False,
 ):
     """(exit status, output) of the row on a repository holding `files`, every one tracked.
 
-    `links` maps a path in the repository to a directory it is a symlink to.
+    `links` maps a path in the repository to a directory it is a symlink to. A file
+    under node_modules is left untracked, as `pnpm install` leaves it, unless `track_modules`.
     """
     repo = repo or Path(tempfile.mkdtemp(dir=workdir))
     for rel, text in {".github/licence-policy.toml": policy, **files}.items():
@@ -170,9 +211,12 @@ def run(
         (repo / rel).parent.mkdir(parents=True, exist_ok=True)
         (repo / rel).symlink_to(target)
     subprocess.run(["git", "init", "-q", str(repo)], env=ENV, check=True)
-    subprocess.run(["git", "-C", str(repo), "add", "-A"], env=ENV, check=True)
+    keep = [] if track_modules else [":(exclude,glob)**/node_modules/**"]
+    subprocess.run(
+        ["git", "-C", str(repo), "add", "-A", "--", ".", *keep], env=ENV, check=True
+    )
     proc = subprocess.run(
-        [sys.executable, str(script), str(repo)],
+        [PYTHON, str(script), str(repo)],
         env={**ENV, **(env or {}), "TMPDIR": str(runner_tmp(repo))},
         capture_output=True,
         text=True,
@@ -492,6 +536,15 @@ def pnpm_peer_suffixed_directory_read(script):
     )  # fmt: skip
 
 
+def tracked_installed_manifest_is_refused(script):
+    files = pnpm_tree(PNPM9, gpl_lib=("1.0.0", "MIT"), scope__fmt=("2.0.0", "MIT"))
+    return expect(
+        "a change tracking the installed package.json it is judged by",
+        run(script, files, track_modules=True), 1,
+        "licence: refused: web/pnpm-lock.yaml: 2 tracked files under web/node_modules/",
+    )  # fmt: skip
+
+
 def lower_case_id_refused(script):
     got = run(script, {"package-lock.json": lock(gpl="gpl-3.0-only", ok="mit")})
     return expect(
@@ -625,7 +678,7 @@ def under_the_runner(script):
     out = ""
     for verb in ("run", "fold"):
         proc = subprocess.run(
-            [sys.executable, str(RUNNER), verb, "--base", "base", "--store", str(store)],
+            [PYTHON, str(RUNNER), verb, "--base", "base", "--store", str(store)],
             cwd=repo, env=env, capture_output=True, text=True,
         )  # fmt: skip
         out += proc.stdout + proc.stderr
@@ -636,7 +689,7 @@ def under_the_runner(script):
     (repo / "notes.txt").write_text("b\n")
     subprocess.run([*git, *ident, "commit", "-qam", "notes"], env=ENV, check=True)
     chosen = subprocess.run(
-        [sys.executable, str(RUNNER), "select", "--base", "HEAD~1"],
+        [PYTHON, str(RUNNER), "select", "--base", "HEAD~1"],
         cwd=repo, env=env, capture_output=True, text=True,
     ).stdout  # fmt: skip
     return (
@@ -676,6 +729,7 @@ CASES = [
     (pnpm_mismatched_manifest_not_read, "a manifest's own name and version matching the entry", "    if found == (name, ver):", "    if isinstance(data, dict):"),
     (pnpm_manifest_outside_tree_not_read, "a symlink in the manifest's path refused", "manifest.resolve() != manifest", "False"),
     (pnpm_peer_suffixed_directory_read, "a peer-suffixed store directory read", "or d.name.startswith(f\"{stem}_\")", "or False"),
+    (tracked_installed_manifest_is_refused, "a tracked installed tree refused", "            if supplied:\n", "            if False:\n"),
     (lower_case_id_refused, "a policy id stored folded", "named[fold(lid)] = k", "named[lid] = k"),
     (lower_case_policy_id_matches, "an id looked up by its folded form", "state = lists.get(fold(tok))", "state = lists.get(tok)"),
     (lists_differing_in_case_contradict, "a contradiction found across case", "if fold(lid) in named and named[fold(lid)] != k:", "if lid in named and named[lid] != k:"),
