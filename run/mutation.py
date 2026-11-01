@@ -29,6 +29,10 @@ Exit status: 0 pass, 1 a mutant survived, 2 could not decide. Every exit 2 print
 missing-tool      cargo or cargo-mutants is not on PATH; the package at D has no
                   node_modules/.bin/stryker or vitest runner.
 wrong-version     the tool is not the version pinned in PINS.
+wrong-integrity   npm's record of the package's install (node_modules/.package-lock.json)
+                  holds a Stryker package, or a package Stryker needs, with an integrity
+                  other than run/mutation-judge/package-lock.json's, or not where that
+                  lock puts it.
 dirty-tree        tracked files under D differ from HEAD, so the tree the tool
                   mutates is not the change being judged.
 baseline-failed   the tests fail with no mutant applied, so no survivor means anything.
@@ -37,9 +41,11 @@ nothing-mutated   the change adds code the tool mutates (a line that is not blan
                   comment and, in Rust, not inside the `#[cfg(test)]` module) and it tested no
                   mutant, so no survivor means nothing.
 
-The pins live in PINS and nowhere else; a TypeScript package carries the same
-versions as exact devDependencies, because Stryker loads its runner and vitest
-from the package it runs in.
+The pins live in PINS; a TypeScript package carries the same versions as exact
+devDependencies, because Stryker loads its runner and vitest from the package it
+runs in. run/mutation-judge/package-lock.json is the reviewed resolution of those
+pins, with each package's integrity: `npm ci` from it installs the judge, and an
+npm install that resolved Stryker to anything else is refused rather than run.
 """
 
 import argparse
@@ -66,6 +72,9 @@ PINS = {
 }
 TIMEOUT = 3600
 INCREMENTAL = "node_modules/.cache/gates-mutation/stryker-incremental.json"
+JUDGE_LOCK = Path(__file__).resolve().parent / "mutation-judge/package-lock.json"
+# npm writes this record of every package it installed; pnpm and the stub tool do not.
+INSTALLED = "node_modules/.package-lock.json"
 SKIP_DIRS = {".git", "node_modules", "target", "vendor", ".venv", "__pycache__"}
 # The same test-file rule as run/slop-rules.py and run/fakes.py.
 TEST_NAME = re.compile(
@@ -185,7 +194,78 @@ def stryker(pkg):
             raise Refused(
                 "wrong-version", f"{name} is {version}, the pin is {PINS[name]}"
             )
+    integrity(pkg)
     return exe
+
+
+def lock_packages(path):
+    try:
+        return json.loads(path.read_text())["packages"]
+    except (OSError, ValueError, KeyError, TypeError) as e:
+        raise Refused("tool-error", f"{path}: {e}") from e
+
+
+def resolve(packages, at, name):
+    """The lock path npm loads `name` from when the package at `at` requires it."""
+    base = at
+    while True:
+        path = f"{base}/node_modules/{name}" if base else f"node_modules/{name}"
+        if path in packages:
+            return path
+        if not base:
+            return None
+        cut = base.rfind("/node_modules/")
+        base = base[:cut] if cut >= 0 else ""
+
+
+def judge_closure():
+    """The committed lock's entry for each Stryker package and every package it needs.
+
+    Peer dependencies are left out: vitest is the caller's own, as its tests import it."""
+    packages = lock_packages(JUDGE_LOCK)
+    closure = {}
+    todo = [("", name, False) for name in PINS if name.startswith("@stryker-mutator/")]
+    while todo:
+        at, name, optional = todo.pop()
+        path = resolve(packages, at, name)
+        if path is None:
+            if optional:
+                continue
+            raise Refused(
+                "tool-error",
+                f"{JUDGE_LOCK.name} resolves no {name} for {at or 'the judge'}",
+            )
+        if path in closure:
+            continue
+        entry = closure[path] = packages[path]
+        todo += [(path, dep, False) for dep in entry.get("dependencies", {})]
+        todo += [(path, dep, True) for dep in entry.get("optionalDependencies", {})]
+    return closure
+
+
+def integrity(pkg):
+    """Refuse an npm install whose Stryker differs from the committed judge lock."""
+    record = pkg / INSTALLED
+    if not record.exists():
+        return
+    installed = lock_packages(record)
+    for path, want in sorted(judge_closure().items()):
+        got = installed.get(path)
+        if got is None:
+            # An optional package for another platform is in the lock and not installed.
+            if want.get("optional"):
+                continue
+            raise Refused(
+                "wrong-integrity",
+                f"{path} is not installed where {JUDGE_LOCK.name} puts it;"
+                " install the judge with `npm ci` from run/mutation-judge",
+            )
+        if got.get("integrity") != want.get("integrity"):
+            raise Refused(
+                "wrong-integrity",
+                f"{path} resolved {got.get('integrity')}, the committed lock has"
+                f" {want.get('integrity')}",
+            )
 
 
 # --- the change -----------------------------------------------------------------
