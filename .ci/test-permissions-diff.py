@@ -14,6 +14,8 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -224,22 +226,37 @@ def run(*args, cwd, env=ENV):
     return proc.returncode, proc.stdout + proc.stderr
 
 
+def commit(repo, files, message):
+    for rel, text in files.items():
+        path = repo / rel
+        if text is None:
+            path.unlink()
+            continue
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+    run("git", "add", "-A", cwd=repo)
+    run("git", "commit", "-qm", message, "--allow-empty", cwd=repo)
+
+
+bases = {}
+bases_lock = threading.Lock()
+
+
 def fixture(change, base=BASE):
     """A repository whose `base` tag holds `base` and whose HEAD applies `change`."""
-    repo = Path(tempfile.mkdtemp(dir=workdir))
-    run("git", "init", "-q", "--template=", "-b", "main", cwd=repo)
-    for files, tag in ((base, "base"), (change, None)):
-        for rel, text in files.items():
-            path = repo / rel
-            if text is None:
-                path.unlink()
-                continue
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(text)
-        run("git", "add", "-A", cwd=repo)
-        run("git", "commit", "-qm", tag or "change", "--allow-empty", cwd=repo)
-        if tag:
-            run("git", "tag", tag, cwd=repo)
+    # Most cases share a base, so each base is committed once and copied: the
+    # git processes, not the gate, were most of the suite's time.
+    key = tuple(sorted(base.items()))
+    with bases_lock:
+        if key not in bases:
+            template = Path(tempfile.mkdtemp(dir=workdir))
+            run("git", "init", "-q", "--template=", "-b", "main", cwd=template)
+            commit(template, base, "base")
+            run("git", "tag", "base", cwd=template)
+            bases[key] = template
+    repo = Path(tempfile.mkdtemp(dir=workdir)) / "repo"
+    shutil.copytree(bases[key], repo, symlinks=True)
+    commit(repo, change, "change")
     return repo
 
 
@@ -1182,21 +1199,21 @@ def keyed_by_base():
 
 
 def main():
-    failures = [expect(*case) for case in CASES]
-    failures += [expect_ruleset(*case) for case in RULESET_CASES]
-    failures += [
-        f()
-        for f in (
-            no_base,
-            unknown_base,
-            merge_base,
-            in_shadow,
-            established_blocks,
-            keyed_by_base,
-            callers_own_record,
-        )
+    checks = [lambda case=case: expect(*case) for case in CASES]
+    checks += [lambda case=case: expect_ruleset(*case) for case in RULESET_CASES]
+    checks += [
+        no_base,
+        unknown_base,
+        merge_base,
+        in_shadow,
+        established_blocks,
+        keyed_by_base,
+        callers_own_record,
     ]
-    failures = [f for f in failures if f]
+    # Each case owns its fixture and spends its time waiting on git, so run in
+    # sequence the suite outlasted the gate's wall limit (measured 2026-11-01).
+    with ThreadPoolExecutor(max_workers=min(8, os.cpu_count() or 1)) as pool:
+        failures = [f for f in pool.map(lambda check: check(), checks) if f]
     total = len(CASES) + len(RULESET_CASES) + 7
     for f in failures:
         print(f"FAIL {f}", file=sys.stderr)
