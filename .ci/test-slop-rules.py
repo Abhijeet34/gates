@@ -544,6 +544,51 @@ SWEEPS = [
         0,
         None,
     ),
+    # --- in-place-write ---
+    (
+        "in-place-write: Go state written in place",
+        "in-place-write",
+        {
+            "study/study.go": "package study\n\nfunc Save(p string, b []byte) error {\n\treturn os.WriteFile(p, b, 0o644)\n}\n"
+        },
+        1,
+        "study/study.go:4: os.WriteFile writes the file in place",
+    ),
+    (
+        "in-place-write: Python and Node",
+        "in-place-write",
+        {"a.py": "Path(p).write_text(s)\n", "b.mjs": "fs.writeFileSync(p, s);\n"},
+        1,
+        "b.mjs:1: writeFileSync writes the file in place",
+    ),
+    (
+        "in-place-write: a write then a rename is the atomic helper",
+        "in-place-write",
+        {
+            "save.go": 'package s\n\nfunc save(p string, b []byte) error {\n\ttmp := p + ".tmp"\n\tif err := os.WriteFile(tmp, b, 0o600); err != nil {\n\t\treturn err\n\t}\n\treturn os.Rename(tmp, p)\n}\n'
+        },
+        0,
+        None,
+    ),
+    (
+        "in-place-write: a test writing its fixture is exempt",
+        "in-place-write",
+        {
+            "save_test.go": 'package s\n\nfunc f() { os.WriteFile("x", nil, 0o600) }\n',
+            "testdata/gen.py": "Path('x').write_text('y')\n",
+        },
+        0,
+        None,
+    ),
+    (
+        "in-place-write: a commented-out write is no write",
+        "in-place-write",
+        {
+            "a.go": "package a\n\n// os.WriteFile(p, b, 0o644) would truncate on a crash\n"
+        },
+        0,
+        None,
+    ),
     # --- reduced-motion ---
     (
         "reduced-motion: motion and no file honors it",
@@ -679,9 +724,11 @@ INPUTS = {
     "z-index": '["**/*.css"]',
     "em-dash": '["**/*.css"]',
     "reduced-motion": '["**/*.css"]',
+    "in-place-write": '["**/*.go"]',
 }
 RED = {
     "test_gate.py": BAD_PY,
+    "state.go": "package s\n\nfunc save(p string, b []byte) error { return os.WriteFile(p, b, 0o644) }\n",
     "README.md": "A stale `run/gone.py` line.\n",
     "a.css": (
         ".a { transition: 1s cubic-bezier(.34,1.56,.64,1); color: #888; background: #999; z-index: 9999; }\n"

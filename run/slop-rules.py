@@ -40,6 +40,14 @@ em-dash          U+2014 in a UI file, except under a `LOCAL FORK` header in its 
 reduced-motion   An added animation, transition or keyframes in a UI file when no file
                  of the tree names `prefers-reduced-motion` or a `motion-reduce:` or
                  `motion-safe:` variant. "Honor `prefers-reduced-motion` always."
+in-place-write   An added whole-file write in a source file that is not a test: Go
+                 `os.WriteFile`, Python `write_text`/`write_bytes`, Node `writeFile`
+                 or `writeFileSync`, Rust `fs::write`, unless a rename follows within
+                 RENAME_REACH lines, as in a write-then-rename helper. "Write a file
+                 another process or a later run reads ... to a temporary file in the
+                 same directory and rename it into place, never in place"
+                 (~/STANDARDS.md, "Coding style"). Whether another reader exists is
+                 not in the tree, so the row stays in shadow.
 
 README.md, "The slop rows", owns what each row leaves out and why. Every exit 2
 prints `slop-rules: refused (TYPE): ...`, and TYPE is `tool-error` (git failed).
@@ -741,6 +749,39 @@ def contrast(root, change):
     return found, "no added color and background pair is under its contrast floor"
 
 
+# --- in-place-write: a whole-file write with no rename after it --------------
+
+IN_PLACE = re.compile(
+    r"\bos\.WriteFile\(|\.write_(?:text|bytes)\(|\bwriteFile(?:Sync)?\(|\bfs::write\("
+)
+RENAMED = re.compile(
+    r"\bos\.Rename\(|\bos\.replace\(|\.replace\(|\.rename\(|\brename(?:Sync)?\(|\bfs::rename\("
+)
+RENAME_REACH = 10
+WRITE_EXT = (".go", ".py", ".js", ".mjs", ".cjs", ".ts", ".rs")
+
+
+def in_place_write(root, change):
+    found = []
+    for rel, text, added in texts(root, change, WRITE_EXT, is_source):
+        lines = text.splitlines()
+        for n, line in enumerate(lines, 1):
+            hit = IN_PLACE.search(line)
+            if (
+                not hit
+                or not is_added(added, n)
+                or line.lstrip().startswith(("//", "#"))
+            ):
+                continue
+            if any(RENAMED.search(after) for after in lines[n : n + RENAME_REACH]):
+                continue
+            found.append(
+                f"{rel}:{n}: {hit[0].rstrip('(')} writes the file in place; if another process "
+                "or a later run reads it, write a temporary file beside it and rename it into place"
+            )
+    return found, "no added whole-file write lacks a rename after it"
+
+
 ROWS = {
     "tests": tests,
     "symbols": symbols,
@@ -749,6 +790,7 @@ ROWS = {
     "z-index": z_index,
     "em-dash": em_dash,
     "reduced-motion": reduced_motion,
+    "in-place-write": in_place_write,
 }
 
 

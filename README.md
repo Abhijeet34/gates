@@ -19,7 +19,7 @@ The checks that stand between a commit and a public push: a gitleaks pre-push ho
 | `run/pr-text.py` | The pull request text scan over a title and body read as JSON on stdin; see "The text rows". |
 | `run/scratch-guard.py` | The scratch guard, which runs a gate or suite and refuses a file it left behind outside its own `TMPDIR`; see "The scratch rows". |
 | `run/change-gates.py` | The contract, migration and fact rows over a change, read from a caller's `.github/changes.toml`; see "The change rows". |
-| `run/slop-rules.py` | The shadow slop rows (source-text assertions, symbol truth and the deterministic UI rules of STANDARDS) over a change; see "The slop rows". |
+| `run/slop-rules.py` | The shadow slop rows (source-text assertions, symbol truth, whole-file writes in place and the deterministic UI rules of STANDARDS) over a change; see "The slop rows". |
 | `run/fakes.py` | The fake rows: test doubles a caller's `.github/fakes.toml` does not declare, declared fakes with no real counterpart, fakes past their freshness or drifted, and the GitHub record-and-compare and daily real smoke; see "The fake rows". |
 | `run/mutation.py` | The mutation rows: a mutant of a change's lines that no test kills, with a full run when the change deletes or weakens a test; see "The mutation rows". |
 | `run/review.py` | The review rows: a finder session on a model other than the author's, then a verifier pass that must reproduce each blocking finding before it blocks, each seat within its token and time budget, with a Haiku router checked by a rule floor and a veto rule that settles disagreement; see "The review rows". |
@@ -707,7 +707,7 @@ No workflow calls it: `BASE_SHA` and a `.github/changes.toml` come from a caller
 With `--base` a row judges what `git diff B...HEAD` added, so a stale line already on the base is not the change's; without it, every file under `root`.
 The changed paths come from `git diff --raw -z`, and the added lines from the patch, paired by order, because a patch header quotes a name with a quote or a backslash and pads one with a space; `run/fakes.py` and `run/mutation.py` read a change through the same function.
 Its docstring owns the rules and the exit statuses (0 nothing to name, 1 a finding, 2 could not decide), and each finding is one line, `slop-rules: tests: path:LINE: what`.
-Seven rows, each a registry entry and a row of a caller's `.github/gates.toml` in shadow and `scoped`, so that a change to a path the row does not name does not select it.
+Eight rows, each a registry entry and a row of a caller's `.github/gates.toml` in shadow and `scoped`, so that a change to a path the row does not name does not select it.
 
 **Source-text assertions (`tests`).**
 "A test asserts behaviour through the public entry point, never on source text" is a line of the maintainer's global agent instructions ("Building"), and the learning-loop report's generation-time list carries it as item 7.
@@ -723,6 +723,15 @@ The path half is `instruction-truth/path-truth.py`'s own resolution, moved from 
 Two further limits, both measured below: a path is judged only when it starts in a directory of this tree, because one that starts elsewhere (`internal/git/git.go`) is another repository's file, and a path that a script spells out (`REGISTRY = ".github/gates.toml"`) is a path the tree names.
 A flag or function resolves when some file has the word outside a backtick span, so a second doc quoting it proves nothing; Markdown contributes its fenced blocks only.
 A builtin needs no definition, and a bare file name is not judged, because on this tree it names another repository's file as often as a stale one.
+
+**Whole-file writes in place (`in-place-write`).**
+"Write a file another process or a later run reads (state, a record, a cache, a lockfile) to a temporary file in the same directory and rename it into place, never in place" is a line of `~/STANDARDS.md`, "Coding style" (automation pull request 452).
+It came from factory's review shadow: of the 28 escapes three Opus review passes never named, two were `os.WriteFile` on state read concurrently or on the next load (factory `phone/deltachat/dctest/dctest.go:129`, `study/study.go:123`).
+The row names an added Go `os.WriteFile`, Python `write_text` or `write_bytes`, Node `writeFile` or `writeFileSync`, or Rust `fs::write` in a source file that is not a test or a fixture, unless a rename (`os.Rename`, `os.replace`, `.replace(`, `.rename(`, `renameSync`, `fs::rename`) follows within ten lines, which is the write-then-rename helper itself.
+Not judged: Python `open(..., "w")`, which writes reports and outputs at least as often as state, and a shell redirect.
+Whether another process or a later run reads the file is not in the tree, so a write nobody else reads is a false alarm the row cannot tell apart; it stays in shadow until the window measures how often that is.
+Over factory's tracked tree on 2026-11-02 it named 103 writes; of every tenth (11), 2 are state a later run reads in place (`cmd/fac/lessonreplay.go:444` rewrites a file it appends to, `cmd/fac/setup.go:529` a launchd plist) and 9 are scratch, test-helper or one-shot outputs, so its precision there is about 2 in 11, and it is a prompt for the review to ask who reads the file, not a block.
+Requiring a read in the same file kept 82 of the 103 and 9 of the 11, so the row does not require one.
 
 **The impeccable rules, mapped to `~/STANDARDS.md`.**
 The sources name the linter (`npx impeccable detect --json`, "Frontend design defaults") and the seven rule families it reported over four trees (learning-loop report, 5.5); no source lists its other rules, and it is not installed here, so it was not run and no rule of it was copied.
@@ -787,9 +796,10 @@ shadow_since = 2026-10-19
 ```
 
 The other four UI rows (`contrast`, `z-index`, `em-dash`, `reduced-motion`) take the same shape with their name in `run`.
+`slop-in-place-write` takes it too, with `inputs = ["**/*.go", "**/*.py", "**/*.js", "**/*.mjs", "**/*.cjs", "**/*.ts", "**/*.rs"]` and `in-place-write` in `run`.
 `reduced-motion` reads the whole tree for a handler, so its `inputs` must also name the files that could hold one, or a change to the stylesheet that holds it would not re-run the row.
-`.ci/test-slop-rules.py` runs the rows through `run/gate.py`, folds each red one to `shadow`, and shows a change to an unrelated file leaves all seven unselected.
-Ten registry rows prove the script by execution (`slop-tests-source-text`, `slop-symbols-path`, `slop-symbols-function`, `slop-symbols-flag`, `ui-easing`, `ui-contrast`, `ui-z-index`, `ui-z-index-named-path`, `ui-em-dash`, `ui-reduced-motion`).
+`.ci/test-slop-rules.py` runs the rows through `run/gate.py`, folds each red one to `shadow`, and shows a change to an unrelated file leaves all eight unselected.
+Eleven registry rows prove the script by execution (`slop-tests-source-text`, `slop-symbols-path`, `slop-symbols-function`, `slop-symbols-flag`, `ui-easing`, `ui-contrast`, `ui-z-index`, `ui-z-index-named-path`, `ui-em-dash`, `slop-in-place-write`, `ui-reduced-motion`).
 No workflow calls it: `BASE_SHA` comes from a caller, and a step is the maintainer's weekly batch.
 
 ## The fake rows
