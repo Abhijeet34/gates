@@ -1384,6 +1384,18 @@ run = 'python3 "$GATE" em-dash .'
 finding = "a.html:1: carries an em dash"
 
 [[gate]]
+id = "slop-in-place-write"
+surface = "Coding style"
+gates = ["run/slop-rules.py"]
+test = ".ci/test-slop-rules.py"
+suite = "shell"
+command = "run/slop-rules.py"
+red = '''printf 'package s\n\nfunc save(p string, b []byte) error { return os.WriteFile(p, b, 0o644) }\n' > s.go'''
+clean = '''printf 'package s\n\nfunc save(p string, b []byte) error {\n\tif err := os.WriteFile(p+".tmp", b, 0o644); err != nil {\n\t\treturn err\n\t}\n\treturn os.Rename(p+".tmp", p)\n}\n' > s.go'''
+run = 'python3 "$GATE" in-place-write .'
+finding = "s.go:3: os.WriteFile writes the file in place"
+
+[[gate]]
 id = "ui-reduced-motion"
 surface = "UI standards"
 gates = ["run/slop-rules.py"]
