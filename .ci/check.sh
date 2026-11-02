@@ -150,6 +150,8 @@ check_shell() {
     # The critic lens's seat and its eval against recorded replies of the eval's live run.
     python3 .ci/test-critic.py || rc=1
     python3 .ci/test-critic-eval.py || rc=1
+    # The P3a review reproductions, each replayed against the row a PR fixed for it.
+    python3 .ci/test-p3a-findings.py || rc=1
     # The exposure and signature gates, through real pushes into throwaway repositories.
     bash system-maintenance/git-hooks/test-exposure-scan.sh || rc=1
     # The release-artifact scan, over fixture binaries planted at run time.
