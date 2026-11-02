@@ -2,8 +2,6 @@
 
 The checks that stand between a commit and a public push: a gitleaks pre-push hook and its rules, a scanner that refuses machine-detectable origin marks, the machine-wide git hooks that run both, and five reusable GitHub Actions workflows that re-check the same things in CI.
 
-Licensed under the Apache License 2.0; see `LICENSE` and `NOTICE`.
-
 ## What is here
 
 | Path | What it is |
@@ -35,7 +33,18 @@ Licensed under the Apache License 2.0; see `LICENSE` and `NOTICE`.
 | `bin/gates.py`, `bin/rollout.toml` | `gates bump` and `gates rollback`, which move callers' locks; see "Bumping". |
 | `.ci/` | The contract test for each gate script, the gitleaks rule and allowlist suites, and `check.sh`, which runs all of them. |
 
-## Calling a workflow
+## Install: using the hooks on a machine
+
+```bash
+system-maintenance/git-hooks/install.sh deploy   # this checkout -> ~/.git-hooks
+system-maintenance/git-hooks/install.sh check    # report drift, exit 1 if any
+.ci/gitleaks/sync.sh --check <clone>...          # drift in each clone's synced copies and core.hooksPath
+```
+
+Deploying is one way on purpose.
+`~/.git-hooks` runs on every commit and push, so nothing copies live content back into this repository.
+
+## Usage: calling a workflow
 
 ```yaml
 jobs:
@@ -963,7 +972,7 @@ Two registry rows prove it by execution through the same server: `fakes-compare`
 
 **The workflow** is `.github/workflows/shared-fakes-smoke.yml`: `on: workflow_call`, `permissions: contents: read`, one `ubuntu-latest` job with `timeout-minutes: 10`, the three bootstrap steps of `shared-guard-generated-files.yml`, then one step with `env: GITHUB_TOKEN: ${{ github.token }}` running the smoke command above.
 The `fakes-smoke-workflow` registry row proves the command it runs through the loopback server.
-A caller that declares a GitHub fake schedules it in `.github/workflows/fakes-smoke.yml`, pinned like every other call (see "Calling a workflow"), which needs a tagged commit that holds the workflow first:
+A caller that declares a GitHub fake schedules it in `.github/workflows/fakes-smoke.yml`, pinned like every other call (see "Usage: calling a workflow"), which needs a tagged commit that holds the workflow first:
 
 ```yaml
 on:
@@ -1565,17 +1574,6 @@ A required check cannot go red from this job in any case, because the ruleset re
 **Workflow files** (for the weekly batch): `.github/workflows/shared-gate-shadow.yml` and `.github/workflows/gate-shadow.yml`.
 The other seven repositories each add one caller workflow file and a `.github/gates.toml` as a follow-up; none is changed here.
 
-## Using the hooks on a machine
-
-```bash
-system-maintenance/git-hooks/install.sh deploy   # this checkout -> ~/.git-hooks
-system-maintenance/git-hooks/install.sh check    # report drift, exit 1 if any
-.ci/gitleaks/sync.sh --check <clone>...          # drift in each clone's synced copies and core.hooksPath
-```
-
-Deploying is one way on purpose.
-`~/.git-hooks` runs on every commit and push, so nothing copies live content back into this repository.
-
 ## Checks
 
 ```bash
@@ -1588,3 +1586,13 @@ Deploying is one way on purpose.
 It also fails on a workflow, hook or `.ci` script missing from the registry, and needs `gitleaks`, `exiftool`, `yq`, `jq` and `git-lfs` because the cases run the real gates.
 `secrets` needs `gitleaks`, `exiftool`, `qpdf`, `ffmpeg` and ImageMagick, and refuses rather than skipping when one is missing.
 A gate that skipped what it could not run would report a pass over something it never measured.
+
+## Contributing, security and support
+
+- [CONTRIBUTING.md](CONTRIBUTING.md) says how to propose a change, and [AGENTS.md](AGENTS.md) holds this project's own build, check and sharp-edge rules; "Checks" above is how to run them.
+- [SECURITY.md](SECURITY.md) gives the private route for reporting a vulnerability, never an issue.
+- [SUPPORT.md](SUPPORT.md) says where a bug report, a feature request or a question goes, and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) applies in every project space.
+
+## Licence
+
+Licensed under the Apache License 2.0; see `LICENSE` and `NOTICE`.
