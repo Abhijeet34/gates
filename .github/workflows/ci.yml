@@ -6,8 +6,7 @@ name: CI
 # `checks`, so jobs here can be added or renamed without touching branch
 # protection.
 #
-# Triggers are pull_request, pull_request_review, schedule and
-# workflow_dispatch only; .ci/test-workflow-policy.sh refuses the triggers that would run a fork's code
+# Triggers are pull_request, pull_request_review and workflow_dispatch only; .ci/test-workflow-policy.sh refuses the triggers that would run a fork's code
 # with this repository's token, and any runner that is not GitHub-hosted.
 on:
   pull_request:
@@ -15,16 +14,16 @@ on:
   # dismissal without a new push.
   pull_request_review:
     types: [submitted, dismissed]
-  # The full-history secret scan also runs weekly, so a gitleaks rule that
-  # starts firing on old history is seen without waiting for a commit.
-  schedule:
-    - cron: "17 6 * * 1"
   workflow_dispatch:
 
 # The ruleset's strict status policy makes the tree that lands on main the tree
-# its pull request run tested, so there is no push run to re-verify it; the
-# record that a merged commit was green is the pull request run on its head.
-# A superseded run of the same ref is noise; the scheduled one stays uncancelled.
+# its pull request run tested, so there is no push run to re-verify it. A
+# release commit is the exception: run/lock.sh needs a green `checks` run on the
+# commit itself, which a dispatched run gives it (README.md, "Pinning").
+# There is no schedule here either: a scheduled run posted a skipped `checks`,
+# and lock.sh reads only the latest one, so main's head that week stopped
+# counting as green. The weekly scan is weekly-secret-scan.yml.
+# A superseded run of the same ref is noise.
 concurrency:
   group: ci-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -37,7 +36,6 @@ permissions:
 jobs:
   shell:
     name: shell
-    if: github.event_name != 'schedule'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -106,7 +104,6 @@ jobs:
 
   python:
     name: python
-    if: github.event_name != 'schedule'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -168,7 +165,6 @@ jobs:
   # approving review at the head; README.md, "The record-approval check".
   record-approval:
     name: record approval
-    if: github.event_name != 'schedule'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
@@ -201,7 +197,7 @@ jobs:
   checks:
     name: checks
     needs: [shell, python, secrets, gates-proof, record-approval]
-    if: ${{ always() && github.event_name != 'schedule' }}
+    if: ${{ always() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:

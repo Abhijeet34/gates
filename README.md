@@ -79,7 +79,9 @@ A caller at `@main` with no lock therefore runs exactly what it ran before the s
 ```
 
 The pin is a commit with a `# vN` comment, because Dependabot's `github-actions` updater proposes a new commit and rewrites the comment from the `vN` tags this repository cuts.
-A release is a tag on a commit of `main` whose `checks` run is green: `gh release create vN --target <main commit> --generate-notes`.
+A release is a tag on a commit of `main` whose `checks` run is green.
+A pull request's run posts `checks` on its own head, not on the commit the merge makes, so a merge commit has none until CI is dispatched on it: `gh workflow run ci.yml --ref main`, then, once that run's `checks` passes on the commit `main` held, `gh release create vN --target <that commit> --generate-notes`.
+`run/lock.sh` reads only the latest `checks` run, so nothing scheduled may post one: `ci.yml` has no schedule, and the weekly full-history scan is `weekly-secret-scan.yml`.
 Nothing ancestry-checks the bootstrap pin itself, so a tag that moved would have Dependabot propose an arbitrary commit; tags are never moved.
 
 `run/lock.sh` decides whether the commit may run, before anything from it does, and refuses:
