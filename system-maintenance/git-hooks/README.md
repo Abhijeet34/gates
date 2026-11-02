@@ -388,6 +388,7 @@ That backstop is a detector, not a gate.
 The secret scan, the watermark gate, the exposure gate and the signature check read the same buffered ref list and do not depend on one another, so the dispatcher starts all four at once and waits for them.
 Run one after another, a 223-commit first push took 29.1 s (gitleaks 11.96 s, watermark 10.78 s, exposure 5.78 s); together it takes about the slowest of them.
 `check-orphan-dirs` and `git lfs pre-push` stay after them, in order, because git-lfs uploads objects: a refused push must not have uploaded anything.
+`git lfs pre-push` runs only for a repository that holds `lfs/objects` or whose pushed tips' `.gitattributes` name `filter=lfs`: it cost about 0.9 s a push with nothing to send (measured 2026-11-02), and no gated clone tracked an LFS file; `test-global-hooks.sh` section 6 pins all three cases.
 
 Each gate writes to its own file, and the dispatcher prints each file whole, in a fixed order (gitleaks, watermark, exposure, signature), as that gate finishes.
 Two failures therefore read as two intact blocks and never as interleaved lines.

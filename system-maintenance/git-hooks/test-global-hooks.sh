@@ -266,22 +266,34 @@ git -C "$TMP/plain" push origin main >/dev/null 2>&1
 check "unscanned repo: an orphan directory still blocks the push" refuse $?
 
 # ==============================================================================
-# 6. git lfs pre-push still receives the ref list - on BOTH paths, because the
-#    scanned one hands it a buffered copy and the unscanned one an untouched pipe.
-#    A starved consumer is silent, so this asserts on what the stub actually read.
+# 6. git lfs pre-push runs only where LFS is used, and then receives the ref
+#    list. A starved consumer is silent, so this asserts on what the stub read,
+#    and a skipped one leaves no stdin file at all.
 # ==============================================================================
 /bin/rm -rf "$TMP/plain/orphan"
-: > "$TMP/lfs-stdin"
+/bin/rm -f "$TMP/lfs-stdin"
 echo "print('p2')" > "$TMP/plain/p2.py"
 git -C "$TMP/plain" add -A && git -C "$TMP/plain" commit --quiet -m p2
 GIT_EXEC_PATH="$TMP/exec" git -C "$TMP/plain" push --quiet origin main >/dev/null 2>&1
-grep -q "refs/heads/main" "$TMP/lfs-stdin" || fail "unscanned path: git-lfs got no ref list on stdin"
+check "repo without LFS: the push lands" pass $?
+[ -e "$TMP/lfs-stdin" ] && fail "repo without LFS: git-lfs ran"
 
-: > "$TMP/lfs-stdin"
-echo "print('c6')" > "$TMP/fresh/clean6.py"
-git -C "$TMP/fresh" add -A && git -C "$TMP/fresh" commit --quiet -m clean6
+/bin/rm -f "$TMP/lfs-stdin"
+echo '*.bin filter=lfs diff=lfs merge=lfs -text' > "$TMP/fresh/.gitattributes"
+git -C "$TMP/fresh" add -A && git -C "$TMP/fresh" commit --quiet -m lfs-attrs
 GIT_EXEC_PATH="$TMP/exec" git -C "$TMP/fresh" push --quiet origin main >/dev/null 2>&1
-grep -q "refs/heads/main" "$TMP/lfs-stdin" || fail "scanned path: git-lfs got no ref list on stdin"
+check "repo whose pushed tip names the LFS filter: the push lands" pass $?
+grep -q "refs/heads/main" "$TMP/lfs-stdin" 2>/dev/null || fail "LFS attributes: git-lfs got no ref list on stdin"
+git -C "$TMP/fresh" rm --quiet .gitattributes && git -C "$TMP/fresh" commit --quiet -m no-lfs-attrs
+
+/bin/rm -f "$TMP/lfs-stdin"
+mkdir -p "$TMP/plain/.git/lfs/objects"
+echo "print('p3')" > "$TMP/plain/p3.py"
+git -C "$TMP/plain" add -A && git -C "$TMP/plain" commit --quiet -m p3
+GIT_EXEC_PATH="$TMP/exec" git -C "$TMP/plain" push --quiet origin main >/dev/null 2>&1
+check "repo holding LFS objects: the push lands" pass $?
+grep -q "refs/heads/main" "$TMP/lfs-stdin" 2>/dev/null || fail "LFS objects: git-lfs got no ref list on stdin"
+/bin/rm -rf "$TMP/plain/.git/lfs"
 
 # ==============================================================================
 # 7. A repository whose own core.hooksPath already ran the canonical scanner is
@@ -512,6 +524,8 @@ cat >/dev/null
 exit 0
 STUB
 chmod +x "$TMP/agent-bin/gh" "$TMP/exec-gh/git-lfs"
+# git-lfs runs only where LFS is used (section 6), so this repository holds objects.
+mkdir -p "$TMP/exposed/.git/lfs/objects"
 git -C "$TMP/exposed" commit --quiet --allow-empty -m "path case"
 PATH="$TMP/agent-bin:$PATH" GIT_EXEC_PATH="$TMP/exec-gh" git -C "$TMP/exposed" push --quiet target main >/dev/null 2>&1
 check "the push behind the PATH case lands" pass $?
