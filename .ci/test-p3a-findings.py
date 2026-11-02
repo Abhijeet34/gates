@@ -525,6 +525,9 @@ snapshots:
 def licence(files, policy=POLICY):
     here = tree({".github/licence-policy.toml": policy, **files})
     run("git", "init", "-q", cwd=here)
+    # node_modules is installed, never tracked: the row refuses a tree that supplies it.
+    (here / ".git/info").mkdir(exist_ok=True)
+    (here / ".git/info/exclude").write_text("node_modules/\n")
     run("git", "add", "-A", cwd=here)
     return run(PYTHON, LICENCE, here, cwd=here, env={**ENV, "TMPDIR": str(fresh())})
 
