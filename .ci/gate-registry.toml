@@ -130,8 +130,7 @@ finding = ".githooks/pre-push has DRIFTED from gates' canonical copy"
 [[gate]]
 id = "secret-scan-history"
 surface = "Security"
-# weekly-secret-scan.yml is the weekly bootstrap of this suite over gates itself.
-gates = ["run/secret-scan/history.sh", "run/secret-scan/tree.sh", ".github/workflows/weekly-secret-scan.yml"]
+gates = ["run/secret-scan/history.sh", "run/secret-scan/tree.sh"]
 test = ".ci/test-secret-scan.sh"
 suite = "secrets"
 command = "run/secret-scan/history.sh"
