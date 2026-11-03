@@ -24,7 +24,7 @@ name = "fleet"
 hold_days = 5
 repos = [
   "papertrace", "foliot", "foliot-bench-corpus", "halderworks-design", "halderworks-site",
-  "fleet-records", "chrome-devtools-axi", "gh-axi", "quota-axi", "tasks-axi",
+  "fleet-records", "chrome-devtools-axi", "gh-axi", "quota-axi", "tasks-axi", "ops",
 ]
 
 [[stage]]
