@@ -22,7 +22,7 @@ on:
 # commit itself, which a dispatched run gives it (README.md, "Pinning").
 # There is no schedule here either: a scheduled run posted a skipped `checks`,
 # and lock.sh reads only the latest one, so main's head that week stopped
-# counting as green. The weekly scan is weekly-secret-scan.yml.
+# counting as green.
 # A superseded run of the same ref is noise.
 concurrency:
   group: ci-${{ github.event_name }}-${{ github.ref }}
