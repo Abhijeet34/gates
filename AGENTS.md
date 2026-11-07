@@ -44,6 +44,7 @@ This file is the project's committed home for project-intrinsic agent knowledge:
   Its fold never passes a selected blocking gate without a `pass` record for the head, and a shadow row blocks only once it meets the promotion rule in its docstring; `.ci/test-gate-runner.py` re-runs each case with its control removed, so moving a mutation's anchor text fails the suite until the anchor follows.
 - **`run/permissions-diff.py` refuses any change to security design 7.2's protected surface (bar a ruleset context rename a recorded policy covers), including its own `SURFACE`, a workflow's `permissions:` blocks and an existing `.ci/gate-registry.toml` row whose `surface` is in its `SECURITY_SURFACES` or whose id is in its `SECURITY_ROWS`; README.md, "The permissions-diff gate", owns the mapping and the paths 7.2 names that no longer exist.**
   Changing a Security row or a workflow token therefore needs a class-2 decision once a caller promotes the gate out of shadow.
+- **`README.md`, `.ci/gate-registry.toml` and `.ci/check.sh` change in almost every pull request, so a branch that re-wraps, reorders or appends at their end goes red on a merge conflict: add a row or section beside its relatives and touch no line you need not.** (verified 2026-11-07; source: log seq 5836, 5956) (ladder: ci-red-not-about-code)
 
 ## Maintaining this file
 
