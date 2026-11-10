@@ -11,6 +11,7 @@ that would pass without its control is itself refused.
 """
 
 import datetime
+import importlib.util
 import json
 import os
 import shutil
@@ -837,24 +838,79 @@ CASES = [
 DARWIN_ONLY_CONTROLS = {renamed_ancestor_forges_nothing}
 
 
-def main():
+# Cases that need run/gate.py to reuse a verdict, which it does only when
+# confinement() can start a sandbox. A sandbox cannot be nested (macOS refuses
+# sandbox-exec inside another one), so there they are skipped, never passed.
+REUSE_CASES = {
+    readme_change_reuses_rust_verdict,
+    planted_pass_is_never_reused,
+    renamed_ancestor_forges_nothing,
+    unconfined_record_is_never_reused,
+    unconfined_run_taints_the_store,
+}
+
+
+def confinement_available():
+    spec = importlib.util.spec_from_file_location("gate_under_test", RUNNER)
+    gate = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(gate)
+    return bool(gate.confinement(tempfile.mkdtemp(dir=workdir)))
+
+
+def skip_only_without_confinement():
+    """Why the skip rule is wrong, or None: it skips only a reuse case, only with no confinement, and says why."""
+
+    def reuse_like(runner):
+        return "boom"
+
+    def other(runner):
+        return "boom"
+
+    mutation = ("elif wide is None and not hits:", "elif False:")
+    cases = [(c, c.__name__, *mutation) for c in (reuse_like, other)]
+    for confined in (False, True):
+        lines = []
+        rc = main(confined, cases, {reuse_like}, lines.append)
+        text = "\n".join(lines)
+        skipped = "skip reuse_like: " in text
+        ran = "FAIL reuse_like: boom" in text
+        if skipped == confined or ran != confined:
+            return f"confined={confined}: reuse_like skipped={skipped} ran={ran}: {text}"
+        if "FAIL other: boom" not in text or rc != 1:
+            return f"confined={confined}: a case outside the reuse set was skipped or its failure hidden (exit {rc}): {text}"
+    return None
+
+
+def main(confined=None, cases=None, reuse_cases=REUSE_CASES, out=print):
     failed = 0
     source = RUNNER.read_text()
-    for case, control, old, new in CASES:
+    if confined is None:
+        why = skip_only_without_confinement()
+        if why:
+            out(f"FAIL skip_only_without_confinement: {why}")
+            return 1
+        out("ok   skip_only_without_confinement")
+        confined = confinement_available()
+    for case, control, old, new in CASES if cases is None else cases:
+        if case in reuse_cases and not confined:
+            out(
+                f"skip {case.__name__}: no sandbox can start here (nested?), so run/gate.py reuses nothing"
+            )
+            continue
         why = case(RUNNER)
         if why:
             failed = 1
-            print(f"FAIL {case.__name__}: {why}")
+            out(f"FAIL {case.__name__}: {why}")
             continue
-        print(f"ok   {case.__name__}")
+        out(f"ok   {case.__name__}")
         if case in DARWIN_ONLY_CONTROLS and sys.platform != "darwin":
-            print(
+            out(
                 f"skip without {control}: the rule exists only in the macOS sandbox profile"
             )
             continue
         if source.count(old) != 1:
             failed = 1
-            print(
+            out(
                 f"FAIL without {control}: the mutation matches {source.count(old)} places in run/gate.py, not 1"
             )
             continue
@@ -863,13 +919,13 @@ def main():
         why = case(mutant)
         if why:
             quoted = " | ".join(why.splitlines())
-            print(f"ok   without {control}, {case.__name__} goes red: {quoted}")
+            out(f"ok   without {control}, {case.__name__} goes red: {quoted}")
         else:
             failed = 1
-            print(
+            out(
                 f"FAIL without {control}, {case.__name__} still passes, so the case does not prove it"
             )
-    print("\ngate runner tests " + ("FAILED" if failed else "passed"))
+    out("\ngate runner tests " + ("FAILED" if failed else "passed"))
     return failed
 
 
