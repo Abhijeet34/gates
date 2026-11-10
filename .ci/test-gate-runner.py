@@ -853,6 +853,8 @@ REUSE_CASES = {
 def confinement_available():
     spec = importlib.util.spec_from_file_location("gate_under_test", RUNNER)
     gate = importlib.util.module_from_spec(spec)
+    # The lint step refuses bytecode left beside run/gate.py.
+    sys.dont_write_bytecode = True
     spec.loader.exec_module(gate)
     return bool(gate.confinement(tempfile.mkdtemp(dir=workdir)))
 
@@ -875,7 +877,9 @@ def skip_only_without_confinement():
         skipped = "skip reuse_like: " in text
         ran = "FAIL reuse_like: boom" in text
         if skipped == confined or ran != confined:
-            return f"confined={confined}: reuse_like skipped={skipped} ran={ran}: {text}"
+            return (
+                f"confined={confined}: reuse_like skipped={skipped} ran={ran}: {text}"
+            )
         if "FAIL other: boom" not in text or rc != 1:
             return f"confined={confined}: a case outside the reuse set was skipped or its failure hidden (exit {rc}): {text}"
     return None
