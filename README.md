@@ -2,8 +2,6 @@
 
 The checks that stand between a commit and a public push: a gitleaks pre-push hook and its rules, a scanner that refuses machine-detectable origin marks, the machine-wide git hooks that run both, and five reusable GitHub Actions workflows that re-check the same things in CI.
 
-Licensed under the Apache License 2.0; see `LICENSE` and `NOTICE`.
-
 ## What is here
 
 | Path | What it is |
@@ -21,7 +19,7 @@ Licensed under the Apache License 2.0; see `LICENSE` and `NOTICE`.
 | `run/pr-text.py` | The pull request text scan over a title and body read as JSON on stdin; see "The text rows". |
 | `run/scratch-guard.py` | The scratch guard, which runs a gate or suite and refuses a file it left behind outside its own `TMPDIR`; see "The scratch rows". |
 | `run/change-gates.py` | The contract, migration and fact rows over a change, read from a caller's `.github/changes.toml`; see "The change rows". |
-| `run/slop-rules.py` | The shadow slop rows (source-text assertions, symbol truth and the deterministic UI rules of STANDARDS) over a change; see "The slop rows". |
+| `run/slop-rules.py` | The shadow slop rows (source-text assertions, symbol truth, whole-file writes in place and the deterministic UI rules of STANDARDS) over a change; see "The slop rows". |
 | `run/fakes.py` | The fake rows: test doubles a caller's `.github/fakes.toml` does not declare, declared fakes with no real counterpart, fakes past their freshness or drifted, and the GitHub record-and-compare and daily real smoke; see "The fake rows". |
 | `run/mutation.py` | The mutation rows: a mutant of a change's lines that no test kills, with a full run when the change deletes or weakens a test; see "The mutation rows". |
 | `run/review.py` | The review rows: a finder session on a model other than the author's, then a verifier pass that must reproduce each blocking finding before it blocks, each seat within its token and time budget, with a Haiku router checked by a rule floor and a veto rule that settles disagreement; see "The review rows". |
@@ -35,7 +33,18 @@ Licensed under the Apache License 2.0; see `LICENSE` and `NOTICE`.
 | `bin/gates.py`, `bin/rollout.toml` | `gates bump` and `gates rollback`, which move callers' locks; see "Bumping". |
 | `.ci/` | The contract test for each gate script, the gitleaks rule and allowlist suites, and `check.sh`, which runs all of them. |
 
-## Calling a workflow
+## Install: using the hooks on a machine
+
+```bash
+system-maintenance/git-hooks/install.sh deploy   # this checkout -> ~/.git-hooks
+system-maintenance/git-hooks/install.sh check    # report drift, exit 1 if any
+.ci/gitleaks/sync.sh --check <clone>...          # drift in each clone's synced copies and core.hooksPath
+```
+
+Deploying is one way on purpose.
+`~/.git-hooks` runs on every commit and push, so nothing copies live content back into this repository.
+
+## Usage: calling a workflow
 
 ```yaml
 jobs:
@@ -70,7 +79,10 @@ A caller at `@main` with no lock therefore runs exactly what it ran before the s
 ```
 
 The pin is a commit with a `# vN` comment, because Dependabot's `github-actions` updater proposes a new commit and rewrites the comment from the `vN` tags this repository cuts.
-A release is a tag on a commit of `main` whose `checks` run is green: `gh release create vN --target <main commit> --generate-notes`.
+A release is a tag on a commit of `main` whose `checks` run is green.
+A pull request's run posts `checks` on its own head, not on the commit the merge makes, so a merge commit has none until CI is dispatched on it: `gh workflow run ci.yml --ref main`, then, once that run's `checks` passes on the commit `main` held, `gh release create vN --target <that commit> --generate-notes`.
+`run/lock.sh` reads only the latest `checks` run, so nothing scheduled may post one, and `ci.yml` has no schedule.
+There is no weekly secret scan either: `ci.yml`'s `secrets` job scans the full history with the pinned gitleaks and `.gitleaks.toml` on every pull request, and only a pull request can change any of the three, so a scheduled rerun could only repeat its answer.
 Nothing ancestry-checks the bootstrap pin itself, so a tag that moved would have Dependabot propose an arbitrary commit; tags are never moved.
 
 `run/lock.sh` decides whether the commit may run, before anything from it does, and refuses:
@@ -696,7 +708,7 @@ No workflow calls it: `BASE_SHA` and a `.github/changes.toml` come from a caller
 With `--base` a row judges what `git diff B...HEAD` added, so a stale line already on the base is not the change's; without it, every file under `root`.
 The changed paths come from `git diff --raw -z`, and the added lines from the patch, paired by order, because a patch header quotes a name with a quote or a backslash and pads one with a space; `run/fakes.py` and `run/mutation.py` read a change through the same function.
 Its docstring owns the rules and the exit statuses (0 nothing to name, 1 a finding, 2 could not decide), and each finding is one line, `slop-rules: tests: path:LINE: what`.
-Seven rows, each a registry entry and a row of a caller's `.github/gates.toml` in shadow and `scoped`, so that a change to a path the row does not name does not select it.
+Eight rows, each a registry entry and a row of a caller's `.github/gates.toml` in shadow and `scoped`, so that a change to a path the row does not name does not select it.
 
 **Source-text assertions (`tests`).**
 "A test asserts behaviour through the public entry point, never on source text" is a line of the maintainer's global agent instructions ("Building"), and the learning-loop report's generation-time list carries it as item 7.
@@ -712,6 +724,15 @@ The path half is `instruction-truth/path-truth.py`'s own resolution, moved from 
 Two further limits, both measured below: a path is judged only when it starts in a directory of this tree, because one that starts elsewhere (`internal/git/git.go`) is another repository's file, and a path that a script spells out (`REGISTRY = ".github/gates.toml"`) is a path the tree names.
 A flag or function resolves when some file has the word outside a backtick span, so a second doc quoting it proves nothing; Markdown contributes its fenced blocks only.
 A builtin needs no definition, and a bare file name is not judged, because on this tree it names another repository's file as often as a stale one.
+
+**Whole-file writes in place (`in-place-write`).**
+"Write a file another process or a later run reads (state, a record, a cache, a lockfile) to a temporary file in the same directory and rename it into place, never in place" is a line of `~/STANDARDS.md`, "Coding style" (automation pull request 452).
+It came from factory's review shadow: of the 28 escapes three Opus review passes never named, two were `os.WriteFile` on state read concurrently or on the next load (factory `phone/deltachat/dctest/dctest.go:129`, `study/study.go:123`).
+The row names an added Go `os.WriteFile`, Python `write_text` or `write_bytes`, Node `writeFile` or `writeFileSync`, or Rust `fs::write` in a source file that is not a test or a fixture, unless a rename (`os.Rename`, `os.replace`, `.replace(`, `.rename(`, `renameSync`, `fs::rename`) follows within ten lines, which is the write-then-rename helper itself.
+Not judged: Python `open(..., "w")`, which writes reports and outputs at least as often as state, and a shell redirect.
+Whether another process or a later run reads the file is not in the tree, so a write nobody else reads is a false alarm the row cannot tell apart; it stays in shadow until the window measures how often that is.
+Over factory's tracked tree on 2026-11-02 it named 103 writes; of every tenth (11), 2 are state a later run reads in place (`cmd/fac/lessonreplay.go:444` rewrites a file it appends to, `cmd/fac/setup.go:529` a launchd plist) and 9 are scratch, test-helper or one-shot outputs, so its precision there is about 2 in 11, and it is a prompt for the review to ask who reads the file, not a block.
+Requiring a read in the same file kept 82 of the 103 and 9 of the 11, so the row does not require one.
 
 **The impeccable rules, mapped to `~/STANDARDS.md`.**
 The sources name the linter (`npx impeccable detect --json`, "Frontend design defaults") and the seven rule families it reported over four trees (learning-loop report, 5.5); no source lists its other rules, and it is not installed here, so it was not run and no rule of it was copied.
@@ -776,9 +797,10 @@ shadow_since = 2026-10-19
 ```
 
 The other four UI rows (`contrast`, `z-index`, `em-dash`, `reduced-motion`) take the same shape with their name in `run`.
+`slop-in-place-write` takes it too, with `inputs = ["**/*.go", "**/*.py", "**/*.js", "**/*.mjs", "**/*.cjs", "**/*.ts", "**/*.rs"]` and `in-place-write` in `run`.
 `reduced-motion` reads the whole tree for a handler, so its `inputs` must also name the files that could hold one, or a change to the stylesheet that holds it would not re-run the row.
-`.ci/test-slop-rules.py` runs the rows through `run/gate.py`, folds each red one to `shadow`, and shows a change to an unrelated file leaves all seven unselected.
-Ten registry rows prove the script by execution (`slop-tests-source-text`, `slop-symbols-path`, `slop-symbols-function`, `slop-symbols-flag`, `ui-easing`, `ui-contrast`, `ui-z-index`, `ui-z-index-named-path`, `ui-em-dash`, `ui-reduced-motion`).
+`.ci/test-slop-rules.py` runs the rows through `run/gate.py`, folds each red one to `shadow`, and shows a change to an unrelated file leaves all eight unselected.
+Eleven registry rows prove the script by execution (`slop-tests-source-text`, `slop-symbols-path`, `slop-symbols-function`, `slop-symbols-flag`, `ui-easing`, `ui-contrast`, `ui-z-index`, `ui-z-index-named-path`, `ui-em-dash`, `slop-in-place-write`, `ui-reduced-motion`).
 No workflow calls it: `BASE_SHA` comes from a caller, and a step is the maintainer's weekly batch.
 
 ## The fake rows
@@ -963,7 +985,7 @@ Two registry rows prove it by execution through the same server: `fakes-compare`
 
 **The workflow** is `.github/workflows/shared-fakes-smoke.yml`: `on: workflow_call`, `permissions: contents: read`, one `ubuntu-latest` job with `timeout-minutes: 10`, the three bootstrap steps of `shared-guard-generated-files.yml`, then one step with `env: GITHUB_TOKEN: ${{ github.token }}` running the smoke command above.
 The `fakes-smoke-workflow` registry row proves the command it runs through the loopback server.
-A caller that declares a GitHub fake schedules it in `.github/workflows/fakes-smoke.yml`, pinned like every other call (see "Calling a workflow"), which needs a tagged commit that holds the workflow first:
+A caller that declares a GitHub fake schedules it in `.github/workflows/fakes-smoke.yml`, pinned like every other call (see "Usage: calling a workflow"), which needs a tagged commit that holds the workflow first:
 
 ```yaml
 on:
@@ -1565,17 +1587,6 @@ A required check cannot go red from this job in any case, because the ruleset re
 **Workflow files** (for the weekly batch): `.github/workflows/shared-gate-shadow.yml` and `.github/workflows/gate-shadow.yml`.
 The other seven repositories each add one caller workflow file and a `.github/gates.toml` as a follow-up; none is changed here.
 
-## Using the hooks on a machine
-
-```bash
-system-maintenance/git-hooks/install.sh deploy   # this checkout -> ~/.git-hooks
-system-maintenance/git-hooks/install.sh check    # report drift, exit 1 if any
-.ci/gitleaks/sync.sh --check <clone>...          # drift in each clone's synced copies and core.hooksPath
-```
-
-Deploying is one way on purpose.
-`~/.git-hooks` runs on every commit and push, so nothing copies live content back into this repository.
-
 ## Checks
 
 ```bash
@@ -1588,3 +1599,13 @@ Deploying is one way on purpose.
 It also fails on a workflow, hook or `.ci` script missing from the registry, and needs `gitleaks`, `exiftool`, `yq`, `jq` and `git-lfs` because the cases run the real gates.
 `secrets` needs `gitleaks`, `exiftool`, `qpdf`, `ffmpeg` and ImageMagick, and refuses rather than skipping when one is missing.
 A gate that skipped what it could not run would report a pass over something it never measured.
+
+## Contributing, security and support
+
+- [CONTRIBUTING.md](CONTRIBUTING.md) says how to propose a change, and [AGENTS.md](AGENTS.md) holds this project's own build, check and sharp-edge rules; "Checks" above is how to run them.
+- [SECURITY.md](SECURITY.md) gives the private route for reporting a vulnerability, never an issue.
+- [SUPPORT.md](SUPPORT.md) says where a bug report, a feature request or a question goes, and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) applies in every project space.
+
+## Licence
+
+Licensed under the Apache License 2.0; see `LICENSE` and `NOTICE`.

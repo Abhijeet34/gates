@@ -124,7 +124,7 @@ check_shell() {
     python3 .ci/test-ui-gates.py || rc=1
     # The contract, migration and fact rows over a change, and their scoped shadow rows under the runner.
     python3 .ci/test-change-gates.py || rc=1
-    # The slop rows (source-text assertions, symbol truth, the UI rules of ~/STANDARDS.md), and their scoped shadow rows under the runner.
+    # The slop rows (source-text assertions, symbol truth, whole-file writes in place, the UI rules of ~/STANDARDS.md), and their scoped shadow rows under the runner.
     python3 .ci/test-slop-rules.py || rc=1
     # The fake rows (undeclared doubles, counterparts, freshness), and their scoped shadow rows under the runner.
     python3 .ci/test-fakes.py || rc=1
