@@ -6,10 +6,11 @@ name: shared dependency advisories
 # so one implementation covers npm, pip, cargo and Go modules at once and
 # inherits GitHub's own severity and scope labels instead of re-deriving them.
 #
-# Why not the ecosystem's own auditor, which is the obvious reach: a production
-# filter is actively wrong here. A package whose build script bundles its
+# Why not the ecosystem's own auditor, which is the obvious reach: its production
+# filter is fixed per tool. A package whose build script bundles its
 # devDependencies into the published dist ships every one of them to anyone who
-# installs it, and `pnpm audit --prod` calls that tree clean. And the callers
+# installs it, and `pnpm audit --prod` calls that tree clean, where here the
+# caller sets `fail_on_development` for exactly that repository. And the callers
 # span JavaScript, Python, Go, Rust and Shell, so a per-ecosystem route is four
 # implementations to keep in step.
 #
@@ -67,14 +68,13 @@ on:
       fail_on_development:
         description: >-
           Whether an alert GitHub labels development scope can fail the job.
-          Default true. Most high and critical alerts GitHub reports are
-          labelled `development`, so a lenient caller can report entirely CLEAN
-          while carrying critical advisories. The label is also wrong about
-          what ships: a build that bundles devDependencies into the published
-          dist ships them. The failure this check exists for was a scope label
-          being trusted.
+          Default false: a development-scoped alert is counted and reported
+          with a 30-day limit instead (maintainer decision D1, 2026-11-10), so
+          dev tools that never ship do not block a push. Set it true in a
+          repository whose build bundles devDependencies into the published
+          dist, which ships them. An unlabelled scope is never exempt.
         type: boolean
-        default: true
+        default: false
       deferrals_path:
         description: Path to the deferral list in the calling repository.
         type: string

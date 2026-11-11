@@ -15,7 +15,9 @@
 #   5. a malformed or mis-keyed deferral list REFUSES rather than reading empty,
 #   6. on a pull request, an alert the pull request's own dependency diff fixes
 #      PASSES, one it leaves or re-adds FAILS, and a diff that could not be read
-#      FAILS with the API's message whenever an alert depends on it.
+#      FAILS with the API's message whenever an alert depends on it,
+#   7. with the workflow's defaults only a shipped high or critical blocks, and
+#      every other alert is counted and warned on past 30 days.
 #
 # (4) has the teeth. A visibility gate that goes quiet when it cannot see is the
 # defect the workflow exists to prevent, so the read is driven against a stub
@@ -153,8 +155,9 @@ judge 'no advisory at or above the floor passes' 0 "$MEDIUM_ONLY" /nonexistent.y
 said  '  and still inventories the medium and low ones' '| medium |' out
 judge 'a repository with no open alerts at all passes' 0 "$EMPTY" /nonexistent.yml
 
-# Whether development-scoped alerts can fail, answered strict and pinned both ways.
-judge 'development scope fails by default' nonzero "$HIGH_DEV" /nonexistent.yml high true
+# Whether development-scoped alerts can fail, pinned both ways; the default is
+# pinned through the entry point under "the default policy".
+judge 'fail_on_development=true makes development scope fail' nonzero "$HIGH_DEV" /nonexistent.yml high true
 judge 'fail_on_development=false exempts it' 0 "$HIGH_DEV" /nonexistent.yml high false
 
 # A null scope is unknown, not development: GitHub omits the label when it
@@ -563,6 +566,96 @@ s=$(scenario 200 "$(jq '.changes' "$FIXES")")
 compare_step 'an empty snapshot-warnings header, as GitHub sends it, is no warning' "$s" 0 0 \
     'x-github-dependency-graph-snapshot-warnings: '
 said '  and the changes are recorded' '"changes"' record
+
+# --- the default policy, through the entry point ------------------------------
+#
+# Maintainer decision D1 (2026-11-10): with the workflow's own input defaults, a
+# high or critical alert blocks only outside development scope; everything else
+# is counted, and warned on once open past 30 days. The defaults are read from
+# the workflow's declared inputs, so a caller that sets nothing is what runs.
+
+echo '--- the default policy ---'
+
+WF=.github/workflows/shared-dependency-advisories.yml
+DEFAULT_FLOOR=$(yq '.on.workflow_call.inputs.severity_floor.default' "$WF")
+DEFAULT_FAILDEV=$(yq '.on.workflow_call.inputs.fail_on_development.default' "$WF")
+ENTRY="$PWD/run/dependency-advisories.sh"
+
+dated() { # days-ago, stdin: one alert -> the alert opened that many days ago
+    jq --arg d "$(jq -nr --argjson n "$1" 'now - $n * 86400 | todate')" '. + {created_at: $d}'
+}
+
+gate() { # label expected-exit alerts-json [faildev]
+    local label="$1" want="$2" rc s
+    s=$(scenario 200 "$(cat "$3")")
+    (
+        cd "$workdir" || exit 127
+        PATH="$curlbin:$PATH" STUB_DIR="$s" STUB_CURL_RC=0 \
+        GITHUB_TOKEN=stub GITHUB_REPOSITORY=Abhijeet34/stub \
+        GITHUB_API_URL=https://api.invalid RUNNER_TEMP="$s/tmp" \
+        ALERTS_JSON="$s/tmp/alerts.json" EVENT_NAME=push DEFERRALS_PATH=/nonexistent.yml \
+        SEVERITY_FLOOR="$DEFAULT_FLOOR" FAIL_ON_DEVELOPMENT="${4:-$DEFAULT_FAILDEV}" \
+        GITHUB_STEP_SUMMARY=/dev/null \
+            bash -e "$ENTRY"
+    ) >"$workdir/out" 2>"$workdir/err"
+    rc=$?
+    if { [ "$want" = nonzero ] && [ "$rc" -ne 0 ]; } || [ "$rc" = "$want" ]; then
+        printf 'ok   %s\n' "$label"
+    else
+        printf 'FAIL %s: expected exit %s, got %d\n' "$label" "$want" "$rc"
+        sed 's/^/       /' "$workdir/out" "$workdir/err" | head -20
+        failed=1
+    fi
+}
+unsaid() { # label substring [stream]
+    if grep -qF -- "$2" "$workdir/${3:-err}"; then
+        printf 'FAIL %s: it said %s\n' "$1" "$2"; failed=1
+    else
+        printf 'ok   %s\n' "$1"
+    fi
+}
+
+D_SHIPPED_HIGH="$workdir/d-shipped-high.json"
+alert high runtime GHSA-gfr2-rv44-r23c markdown-it package-lock.json | dated 2 | inventory >"$D_SHIPPED_HIGH"
+D_SHIPPED_CRIT="$workdir/d-shipped-critical.json"
+alert critical runtime GHSA-gfr2-rv44-r23c markdown-it package-lock.json | dated 2 | inventory >"$D_SHIPPED_CRIT"
+D_DEV_HIGH="$workdir/d-dev-high.json"
+alert high development GHSA-2v37-7h3g-55p8 nanoid package-lock.json | dated 2 | inventory >"$D_DEV_HIGH"
+D_SHIPPED_MED="$workdir/d-shipped-medium.json"
+alert medium runtime GHSA-2v8p-3f2j-5mp7 mermaid package-lock.json | dated 2 | inventory >"$D_SHIPPED_MED"
+D_OVERDUE="$workdir/d-overdue.json"
+{ alert medium runtime GHSA-2v8p-3f2j-5mp7 mermaid package-lock.json | dated 31
+  alert high development GHSA-2v37-7h3g-55p8 nanoid package-lock.json | dated 45
+  alert low runtime GHSA-c4c3-pg64-4m4v mermaid package-lock.json | dated 30; } | inventory >"$D_OVERDUE"
+D_UNDATED="$workdir/d-undated.json"
+{ alert medium runtime GHSA-2v8p-3f2j-5mp7 mermaid package-lock.json
+  alert low runtime GHSA-c4c3-pg64-4m4v mermaid package-lock.json | jq '. + {created_at: "yesterday"}'; } \
+    | inventory >"$D_UNDATED"
+# The same advisory in a shipped and a development manifest: the shipped copy
+# blocks, and the development copy is still counted rather than hidden by it.
+D_SPLIT="$workdir/d-split.json"
+{ alert high runtime GHSA-2v37-7h3g-55p8 nanoid package-lock.json | dated 2
+  alert high development GHSA-2v37-7h3g-55p8 nanoid site/package-lock.json | dated 2; } | inventory >"$D_SPLIT"
+
+gate 'a shipped high advisory blocks' nonzero "$D_SHIPPED_HIGH"
+said '  and names it' 'high advisory in markdown-it (runtime scope'
+gate 'a shipped critical advisory blocks' nonzero "$D_SHIPPED_CRIT"
+gate 'a development-only high advisory does not block' 0 "$D_DEV_HIGH"
+said '  and is counted with its age' 'high nanoid GHSA-2v37-7h3g-55p8 (development scope, package-lock.json), open 2 day(s)' out
+unsaid '  and is not warned on inside the limit' 'past the 30-day limit'
+gate 'a shipped medium advisory is counted, not blocking' 0 "$D_SHIPPED_MED"
+said '  and is listed as counted' '1 advisory(ies) are counted, not blocking' out
+gate 'fail_on_development=true makes a development high block' nonzero "$D_DEV_HIGH" true
+said '  and names its scope' 'high advisory in nanoid (development scope'
+gate 'counted advisories past 30 days warn but do not block' 0 "$D_OVERDUE"
+said '  and the 31-day medium is past the limit' 'mermaid (runtime scope, package-lock.json) is past the 30-day limit (open 31 days)'
+said '  and the 45-day development high is past it' 'nanoid (development scope, package-lock.json) is past the 30-day limit (open 45 days)'
+unsaid '  and the 30-day low is not yet' 'GHSA-c4c3-pg64-4m4v https'
+gate 'a counted alert with no readable opening date warns rather than passing quietly' 0 "$D_UNDATED"
+said '  and says the date is missing' 'no readable opening date'
+said '  and an unparseable date is warned on too' 'past the 30-day limit (its alert has no readable opening date): GHSA-c4c3-pg64-4m4v'
+gate 'a shipped copy blocks though a development copy of the same advisory exists' nonzero "$D_SPLIT"
+said '  and the development copy is still counted' 'nanoid GHSA-2v37-7h3g-55p8 (development scope, site/package-lock.json)' out
 
 # --- mutations: each property, shown having teeth ----------------------------
 #
