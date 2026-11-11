@@ -230,3 +230,19 @@ paths = [
 ]
 regexes = ['''^\s*"analyticsToken"\s*:\s*"[0-9a-f]{32}"\s*,?\s*$''']
 regexTarget = "line"
+
+# An append-only record log: one JSON object per line, in files named by a
+# 20-digit sequence number. Its decision records carry a `key` field naming what
+# was decided, and generic-api-key reads `key":"<value>` as an assignment. Only
+# the two shapes those names take are excused - words ending in a number, and a
+# CI run's owner/repo/runs/<id> path - so a random-looking value in the same
+# field of the same file is still reported.
+[[allowlists]]
+description = "Decision names in an append-only record log's `key` field (`stopped-returns-2968`, `owner/repo/runs/40330983490`): identifiers of what was decided, not credentials."
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = [
+    '''^log/[0-9]{20}\.jsonl$''',
+]
+regexes = ['''^key":"(?:[a-z]+(?:-[a-z]+)*-[0-9]+|[A-Za-z0-9-]+/[A-Za-z0-9._-]+/runs/[0-9]+)"$''']
+regexTarget = "match"

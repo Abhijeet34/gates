@@ -38,7 +38,7 @@ needs() {
     printf '%s}' "${out%,}"
 }
 
-ALL_SUITES=(shell=success python=success secrets=success gates-proof=success)
+ALL_SUITES=(shell=success python=success secrets=success gates-proof=success record-approval=success)
 
 # Every job runs on every pull request now that the conditional macOS job is
 # gone, so this is the only shape a green run takes.
@@ -46,7 +46,7 @@ expect 'pull request, every job ran' 0 "$(needs "${ALL_SUITES[@]}")"
 
 # The false green this file exists to pin.
 expect 'all skipped' 1 \
-    "$(needs shell=skipped python=skipped secrets=skipped gates-proof=skipped)"
+    "$(needs shell=skipped python=skipped secrets=skipped gates-proof=skipped record-approval=skipped)"
 
 # No suite has a legitimate skip any more, so one skipping means the gate
 # silently stopped covering it.
@@ -88,6 +88,17 @@ else
         failed=1
     else
         printf 'ok   every job in ci.yml is listed in checks.needs\n'
+    fi
+    # The cases above are graded against ALL_SUITES, so that list and the live
+    # `needs` must be the same set, or the verdict is tested on jobs CI no longer
+    # runs - or a job added to both halves of ci.yml goes untested.
+    expected=$(printf '%s\n' "${ALL_SUITES[@]%%=*}" | sort)
+    if [ -n "${gated:-}" ] && [ "$expected" != "$gated" ]; then
+        printf 'FAIL needs-pinned: checks.needs is not [%s]\n' "$(printf '%s' "$expected" | paste -sd, -)"
+        diff <(printf '%s\n' "$expected") <(printf '%s\n' "$gated") | sed 's/^/     /'
+        failed=1
+    elif [ -n "${gated:-}" ]; then
+        printf 'ok   checks.needs is exactly [%s]\n' "$(printf '%s' "$expected" | paste -sd, -)"
     fi
 fi
 

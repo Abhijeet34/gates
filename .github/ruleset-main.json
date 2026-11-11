@@ -30,7 +30,7 @@
         "do_not_enforce_on_create": false,
         "required_status_checks": [
           { "context": "checks", "integration_id": 15368 },
-          { "context": "watermark / watermark scan" }
+          { "context": "watermark / watermark scan", "integration_id": 15368 }
         ]
       }
     }
