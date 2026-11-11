@@ -234,7 +234,7 @@ compare_error=$(get '.compare_error // empty')
 if [ "$failing_n" = 0 ]; then
   [ -z "$compare_error" ] \
     || echo "::warning::the dependency compare for this pull request could not be read, and no alert needed it: $compare_error"
-  echo "no open advisory at or above \`$SEVERITY_FLOOR\` is undeferred; $(get '.open | length') open alert(s) inventoried"
+  echo "no blocking advisory is undeferred; $(get '.open | length') open alert(s) inventoried, $counted_n of them counted"
   exit 0
 fi
 
