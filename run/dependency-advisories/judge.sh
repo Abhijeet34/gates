@@ -3,6 +3,9 @@
 set -uo pipefail
 
 refuse() { echo "::error::$1" >&2; exit 1; }
+# D1 of the fleet package-lifecycle plan: a finding that does not block is
+# reported, and one open past this many days is warned on every run.
+LIMIT_DAYS=30
 
 case "$SEVERITY_FLOOR" in
   critical | high | medium | low) ;;
@@ -137,7 +140,10 @@ verdict=$(jq -n \
       scope: (.dependency.scope // "unknown"),
       pkg: .dependency.package.name,
       manifest: (.dependency.manifest_path // "?"),
-      url: (.html_url // "")
+      url: (.html_url // ""),
+      # Null when GitHub gave no parseable date, which is reported as unknown
+      # rather than read as inside the limit.
+      age: (try ((now - (.created_at | fromdateiso8601)) / 86400 | floor) catch null)
     }) | map(. + {fixed: fixed($chg; .)})) as $open
   | ($open | map(select((.sev | rank) >= ($floor | rank))
                         | select($faildev or .scope != "development"))) as $atfloor
@@ -150,6 +156,9 @@ verdict=$(jq -n \
       deferred: ($atfloor | map(select(.ghsa as $g | $dghsa | index($g)))),
       fixed: ($open | map(select(.fixed))),
       failing: ($undeferred | map(select(.fixed | not))),
+      # Below the floor, or development scope while it is exempt: never
+      # blocking, but held to the limit below so it is fixed, not ignored.
+      counted: ($open | map(. as $x | select((.fixed | not) and (any($atfloor[]; . == $x) | not)))),
       compare_error: $cerr,
       # A deferral naming a GHSA with no open alert is dead text, not a
       # false verdict: it is keyed on the exact advisory, so it can
@@ -172,7 +181,7 @@ verdict=$(jq -n \
 # The path is passed as data, never spliced into jq program text: a
 # `"` in it broke the program, and a `::` or newline in a workflow
 # command property is read as the command's own syntax.
-get() { printf '%s' "$verdict" | jq -r --arg file "$DEFERRALS_FILE_PROP" "$1"; }
+get() { printf '%s' "$verdict" | jq -r --arg file "$DEFERRALS_FILE_PROP" --argjson limit "$LIMIT_DAYS" "$1"; }
 
 # The standing count, in the log and in the run summary, so low and
 # medium are visible as a trend rather than invisible until one of
@@ -180,7 +189,7 @@ get() { printf '%s' "$verdict" | jq -r --arg file "$DEFERRALS_FILE_PROP" "$1"; }
 {
   echo "### Dependency advisories"
   echo
-  echo "Floor \`$SEVERITY_FLOOR\`; development-scoped alerts $([ "$FAIL_ON_DEVELOPMENT" = true ] && echo 'can fail' || echo 'are exempt')."
+  echo "Floor \`$SEVERITY_FLOOR\`: an alert at or above it blocks in $([ "$FAIL_ON_DEVELOPMENT" = true ] && echo 'any scope' || echo 'any scope but development'); every other alert is counted, not blocking, and must be fixed within $LIMIT_DAYS days."
   echo
   echo "| severity | open |"
   echo "| --- | --- |"
@@ -210,6 +219,14 @@ if [ "$deferred_n" != 0 ]; then
   echo "$deferred_n advisory(ies) at or above \`$SEVERITY_FLOOR\` are deferred by $DEFERRALS_PATH:"
   get '.deferred[] as $x | .reasons[$x.ghsa] as $r
        | "  \($x.sev) \($x.pkg) \($x.ghsa)\n    reason: \($r.reason | gsub("\\s+"; " "))\n    until:  \($r.until | gsub("\\s+"; " "))"'
+fi
+
+counted_n=$(get '.counted | length')
+if [ "$counted_n" != 0 ]; then
+  echo "$counted_n advisory(ies) are counted, not blocking, and must be fixed within $LIMIT_DAYS days of the alert opening:"
+  get '.counted[] | "  \(.sev) \(.pkg) \(.ghsa) (\(.scope) scope, \(.manifest)), open \(if .age == null then "for an unknown time" else "\(.age) day(s)" end)"'
+  get '.counted[] | select(.age == null or .age > $limit)
+       | "::warning::\(.sev) advisory in \(.pkg) (\(.scope) scope, \(.manifest)) is past the \($limit)-day limit (\(if .age == null then "its alert has no readable opening date" else "open \(.age) days" end)): \(.ghsa) \(.url)"' >&2
 fi
 
 failing_n=$(get '.failing | length')
