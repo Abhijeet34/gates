@@ -31,6 +31,9 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
+      # The judge reads the head's workflow runs, their jobs and its check runs.
+      actions: read
+      checks: read
     outputs:
       verdict: ${{ steps.judge.outputs.verdict }}
       summary: ${{ steps.judge.outputs.summary }}
