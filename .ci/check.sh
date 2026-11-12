@@ -79,7 +79,6 @@ check_shell() {
     bash .ci/test-guard-generated-files.sh || rc=1
     bash .ci/test-dependency-advisories.sh || rc=1
     bash .ci/gitleaks/test-sync.sh || rc=1
-    bash .ci/test-no-mistakes-required.sh || rc=1
     bash .ci/test-instruction-path-truth.sh || rc=1
     python3 run/instruction-truth/path-truth.py . || rc=1
     bash .ci/test-instruction-size-limit.sh || rc=1

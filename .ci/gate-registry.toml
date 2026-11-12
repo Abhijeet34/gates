@@ -86,29 +86,6 @@ run = 'BASE_SHA=$(git rev-parse base) HEAD_SHA=$(git rev-parse HEAD) ALLOW_FIRST
 finding = "This PR modifies release-please-generated files: CHANGELOG.md"
 
 [[gate]]
-id = "no-mistakes-required"
-surface = "PR checks"
-gates = [".github/workflows/shared-no-mistakes-required.yml", "run/no-mistakes-required.sh"]
-test = ".ci/test-no-mistakes-required.sh"
-suite = "shell"
-command = "run/no-mistakes-required.sh"
-# `gh` serves the body the step reads live; `sleep` is stubbed so the retries are instant.
-red = '''
-mkdir bin && printf '#!/bin/sh\nexit 0\n' > bin/sleep
-printf '#!/bin/sh\necho "A pull request opened by hand."\n' > bin/gh && chmod +x bin/*
-'''
-clean = '''
-mkdir bin && printf '#!/bin/sh\nexit 0\n' > bin/sleep
-printf '#!/bin/sh\necho "Updates from [git push no-mistakes](https://github.com/Abhijeet34/no-mistakes)"\n' > bin/gh
-chmod +x bin/*
-'''
-run = '''
-PATH="$PWD/bin:$PATH" GH_TOKEN=stub PR_REPO=o/r PR_AUTHOR=someone PR_NUMBER=1 \
-  PIPELINE_STEPS=review bash -e "$GATE"
-'''
-finding = "This PR was not raised through no-mistakes."
-
-[[gate]]
 id = "secret-scan-workflow"
 surface = "Security"
 gates = [".github/workflows/shared-secret-scan.yml", "run/secret-scan.sh", "run/secret-scan/verify.sh"]
