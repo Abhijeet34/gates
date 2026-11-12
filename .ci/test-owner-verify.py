@@ -4,8 +4,10 @@
     .ci/test-owner-verify.py
 
 Each case serves a pull request, its files, the base's tier list and
-CODEOWNERS, and the owner's reviews through a stub `gh` on PATH, runs the judge
+CODEOWNERS, the owner's reviews, and the head's workflow runs, their jobs and
+its check runs named `checks` through a stub `gh` on PATH, runs the judge
 against a fixture git tree, and requires its exit status and a line of its output.
+A case that names no CI is served one green pull_request run of the base's CI.
 """
 
 import base64
@@ -56,6 +58,50 @@ CODEOWNERS = """\
 /.github/owner-verify.toml  @Abhijeet34
 /home/                      @Abhijeet34
 """
+CI = ".github/workflows/ci.yml"
+ACTIONS = {"id": 15368, "slug": "github-actions"}
+
+
+def ci_run(number, event="pull_request", path=CI, attempt=1):
+    return {
+        "id": number,
+        "event": event,
+        "path": path,
+        "head_sha": "HEAD",
+        "run_attempt": attempt,
+        "status": "completed",
+    }
+
+
+def job(number, conclusion="success", attempt=1, name="checks", status="completed"):
+    return {
+        "id": number,
+        "name": name,
+        "run_attempt": attempt,
+        "status": status,
+        "conclusion": conclusion if status == "completed" else None,
+        "check_run_url": f"https://api.github.com/repos/{REPO}/check-runs/{number}",
+    }
+
+
+def check_run(number, conclusion="success", app=ACTIONS):
+    return {
+        "id": number,
+        "name": "checks",
+        "status": "completed",
+        "conclusion": conclusion,
+        "app": app,
+    }
+
+
+# The pull_request run of the base's CI whose `checks` job is the one check run named checks.
+GREEN = {
+    "runs": [ci_run(11)],
+    "jobs": {11: [job(1100, name="shell"), job(1101)]},
+    "check_runs": [check_run(1101)],
+}
+# A check run named `checks`, success, from GitHub Actions, posted by a run of no workflow the base has.
+FORGED = check_run(9001)
 
 
 def git(tree, *args):
@@ -138,6 +184,26 @@ def run(case):
         page(f"repos/{REPO}/commits/{head}/pulls", case.get("pulls", [pr]))
         for number, reviews in case.get("reviews", {7: []}).items():
             page(f"repos/{REPO}/pulls/{number}/reviews", reviews)
+        ci = resolve({**GREEN, **{k: case[k] for k in GREEN if k in case}}, head)
+        ci_file = case.get("ci_file", file_page("on: pull_request\n"))
+        if ci_file is not None:
+            page(f"repos/{REPO}/contents/{case.get('ci_path', CI)}?ref={base}", ci_file)
+        page(
+            f"repos/{REPO}/actions/runs?head_sha={head}&per_page=100",
+            {
+                "total_count": case.get("runs_total", len(ci["runs"])),
+                "workflow_runs": ci["runs"],
+            },
+        )
+        for number, jobs in ci["jobs"].items():
+            page(
+                f"repos/{REPO}/actions/runs/{number}/jobs?filter=all&per_page=100",
+                {"total_count": len(jobs), "jobs": jobs},
+            )
+        page(
+            f"repos/{REPO}/commits/{head}/check-runs?check_name=checks&filter=all&per_page=100",
+            {"total_count": len(ci["check_runs"]), "check_runs": ci["check_runs"]},
+        )
         argv = [
             sys.executable,
             str(JUDGE),
@@ -494,6 +560,175 @@ def cases():
             ),
             2,
             "holds a non-ASCII byte",
+        ),
+        (
+            "a forged success check run named checks with no workflow run refuses",
+            dict(files=[{"filename": "README.md"}], runs=[], jobs={}, check_runs=[FORGED]),
+            1,
+            "owner-verify: ci: no pull_request run of .github/workflows/ci.yml at the head",
+        ),
+        (
+            "the owner's approval does not pass a head CI did not run for",
+            dict(
+                files=HOME, reviews=approved(), runs=[], jobs={}, check_runs=[FORGED]
+            ),
+            1,
+            "owner-verify: refused: the head's tests are not shown to have run",
+        ),
+        (
+            "a forged check run beside a green run refuses",
+            dict(
+                files=[{"filename": "README.md"}],
+                check_runs=[check_run(1101), FORGED],
+            ),
+            1,
+            "owner-verify: ci: check run 9001 named checks from github-actions (app 15368) is not",
+        ),
+        (
+            "a checks run from another app beside a green run refuses",
+            dict(
+                files=[{"filename": "README.md"}],
+                check_runs=[check_run(1101), check_run(9002, app={"id": 77, "slug": "x"})],
+            ),
+            1,
+            "check run 9002 named checks from x (app 77) is not",
+        ),
+        (
+            "a run of a workflow the base does not name does not count",
+            dict(
+                files=[{"filename": "README.md"}],
+                runs=[ci_run(12, path=".github/workflows/forge.yml")],
+                jobs={12: [job(1201)]},
+                check_runs=[check_run(1201)],
+            ),
+            1,
+            "ci: no pull_request run of .github/workflows/ci.yml at the head",
+        ),
+        (
+            "a push run of the base's workflow does not count",
+            dict(
+                files=[{"filename": "README.md"}],
+                runs=[ci_run(12, event="push")],
+                jobs={12: [job(1201)]},
+                check_runs=[check_run(1201)],
+            ),
+            1,
+            "ci: no pull_request run of .github/workflows/ci.yml at the head",
+        ),
+        (
+            "a run for another head does not count",
+            dict(
+                files=[{"filename": "README.md"}],
+                runs=[{**ci_run(11), "head_sha": OLD}],
+            ),
+            1,
+            "ci: no pull_request run of .github/workflows/ci.yml at the head",
+        ),
+        (
+            "a checks job that failed refuses",
+            dict(
+                files=[{"filename": "README.md"}],
+                jobs={11: [job(1101, conclusion="failure")]},
+                check_runs=[check_run(1101, conclusion="failure")],
+            ),
+            1,
+            "ci: the checks job of run 11 (attempt 1) concluded failure",
+        ),
+        (
+            "a checks job still running refuses",
+            dict(
+                files=[{"filename": "README.md"}],
+                jobs={11: [job(1101, status="in_progress")]},
+                check_runs=[{**check_run(1101), "status": "in_progress"}],
+            ),
+            1,
+            "ci: the checks job of run 11 (attempt 1) is in_progress",
+        ),
+        (
+            "a run with no checks job refuses",
+            dict(
+                files=[{"filename": "README.md"}],
+                jobs={11: [job(1100, name="shell")]},
+                check_runs=[],
+            ),
+            1,
+            "ci: run 11 (attempt 1) has no job named checks",
+        ),
+        (
+            "a re-run's latest attempt decides, and its earlier check run is its own",
+            dict(
+                files=[{"filename": "README.md"}],
+                runs=[ci_run(11, attempt=2)],
+                jobs={11: [job(1101, "failure"), job(1102, attempt=2)]},
+                check_runs=[check_run(1101, "failure"), check_run(1102)],
+            ),
+            0,
+            "owner-verify: ci: run 11 (attempt 2) of .github/workflows/ci.yml: checks concluded success",
+        ),
+        (
+            "a re-run that failed refuses although an earlier attempt passed",
+            dict(
+                files=[{"filename": "README.md"}],
+                runs=[ci_run(11, attempt=2)],
+                jobs={11: [job(1101), job(1102, "failure", attempt=2)]},
+                check_runs=[check_run(1101), check_run(1102, "failure")],
+            ),
+            1,
+            "ci: the checks job of run 11 (attempt 2) concluded failure",
+        ),
+        (
+            "the newest pull_request run decides",
+            dict(
+                files=[{"filename": "README.md"}],
+                runs=[ci_run(12), ci_run(11)],
+                jobs={11: [job(1101)], 12: [job(1201, "failure")]},
+                check_runs=[check_run(1101), check_run(1201, "failure")],
+            ),
+            1,
+            "ci: the checks job of run 12 (attempt 1) concluded failure",
+        ),
+        (
+            "a review run of the base's workflow is not another check",
+            dict(
+                files=[{"filename": "README.md"}],
+                runs=[ci_run(12, event="pull_request_review"), ci_run(11)],
+                jobs={11: [job(1101)], 12: [job(1201)]},
+                check_runs=[check_run(1201), check_run(1101)],
+            ),
+            0,
+            "owner-verify: pass:",
+        ),
+        (
+            "a tier list naming another CI workflow reads that one",
+            dict(
+                files=[{"filename": "README.md"}],
+                tiers=file_page(TIERS + 'ci = ".github/workflows/test.yml"\n'),
+                ci_path=".github/workflows/test.yml",
+                runs=[ci_run(11, path=".github/workflows/test.yml")],
+            ),
+            0,
+            "run 11 (attempt 1) of .github/workflows/test.yml: checks concluded success",
+        ),
+        (
+            "a tier list CI path with a glob cannot decide",
+            dict(
+                files=[],
+                tiers=file_page(TIERS + 'ci = ".github/workflows/*.yml"\n'),
+            ),
+            2,
+            "is not a literal repository path",
+        ),
+        (
+            "a base without the CI workflow cannot decide",
+            dict(files=[{"filename": "README.md"}], ci_file=None),
+            2,
+            "gh api repos/Abhijeet34/fixture/contents/.github/workflows/ci.yml",
+        ),
+        (
+            "a run list shorter than its total cannot decide",
+            dict(files=[{"filename": "README.md"}], runs_total=1001),
+            2,
+            "listed 1 of 1001 workflow_runs",
         ),
     ]
 
