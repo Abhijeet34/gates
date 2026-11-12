@@ -563,15 +563,15 @@ def cases():
         ),
         (
             "a forged success check run named checks with no workflow run refuses",
-            dict(files=[{"filename": "README.md"}], runs=[], jobs={}, check_runs=[FORGED]),
+            dict(
+                files=[{"filename": "README.md"}], runs=[], jobs={}, check_runs=[FORGED]
+            ),
             1,
             "owner-verify: ci: no pull_request run of .github/workflows/ci.yml at the head",
         ),
         (
             "the owner's approval does not pass a head CI did not run for",
-            dict(
-                files=HOME, reviews=approved(), runs=[], jobs={}, check_runs=[FORGED]
-            ),
+            dict(files=HOME, reviews=approved(), runs=[], jobs={}, check_runs=[FORGED]),
             1,
             "owner-verify: refused: the head's tests are not shown to have run",
         ),
@@ -588,7 +588,10 @@ def cases():
             "a checks run from another app beside a green run refuses",
             dict(
                 files=[{"filename": "README.md"}],
-                check_runs=[check_run(1101), check_run(9002, app={"id": 77, "slug": "x"})],
+                check_runs=[
+                    check_run(1101),
+                    check_run(9002, app={"id": 77, "slug": "x"}),
+                ],
             ),
             1,
             "check run 9002 named checks from x (app 77) is not",

@@ -4,8 +4,9 @@
 Usage: owner-verify.py --repo OWNER/NAME --pr N --head SHA --base SHA --tree DIR [--review FILE]
 
 Reads the pull request, its files, the base's `.github/owner-verify.toml` and
-`.github/CODEOWNERS`, and the owner's reviews live through `gh api`; never a
-file of the head. DIR is a git directory holding the base and head commits,
+`.github/CODEOWNERS`, the owner's reviews, and the head's workflow runs, their
+jobs and its check runs named `checks` live through `gh api`; never a file of
+the head. DIR is a git directory holding the base and head commits,
 which run/weakening.py reads beside this script; nothing of the head runs.
 FILE is the review leg's verdict, `{"head": SHA, "blocking": N}`.
 
@@ -20,6 +21,16 @@ tier list that covers it, in this order:
   (unlisted)  passes
 
 A weakening that run/weakening.py finds unmatched refuses the whole change.
+
+The head's tests must be shown to have run, and no approval replaces that: the
+newest run at the head with event pull_request of the workflow at the path the
+base's tier list names in `ci` (default .github/workflows/ci.yml, which the base
+must hold) has, in its latest attempt, a job `checks` that concluded success;
+and every check run named `checks` on the head, from any app, is the check run
+of a `checks` job of a pull_request or pull_request_review run of that
+workflow at the head. Anyone with a write token can post a check run named
+`checks`, so its name and app prove nothing.
+
 The owner's approval at the head passes every route: it counts when the
 owner's latest approving, changes-requested or dismissed review on some pull
 request at that head into the default branch is APPROVED on that commit, so
@@ -43,6 +54,10 @@ HERE = Path(__file__).resolve().parent
 TIERS = ".github/owner-verify.toml"
 OWNERS = ".github/CODEOWNERS"
 ROUTES = ("maintainer", "workflow", "verified", "checked")
+CI = ".github/workflows/ci.yml"
+CI_JOB = "checks"
+# The runs of the base's CI at a head whose `checks` job is its genuine verdict.
+CI_EVENTS = ("pull_request", "pull_request_review")
 # Both lists name what could switch the verifier off, so neither may leave it.
 SELF_OWNED = (TIERS, OWNERS)
 # A COMMENTED review leaves GitHub's approval state as it was.
@@ -56,8 +71,8 @@ class Undecided(Exception):
     pass
 
 
-def api(path):
-    """Every page of `gh api --paginate path`, as one list for an array endpoint."""
+def pages(path):
+    """Every page of `gh api --paginate path`, each as its parsed JSON."""
     proc = subprocess.run(
         ["gh", "api", "--paginate", path], stdin=subprocess.DEVNULL, capture_output=True
     )
@@ -65,21 +80,42 @@ def api(path):
         err = proc.stderr.decode(errors="replace").strip()
         raise Undecided(f"gh api {path}: {err}")
     # --paginate prints each page's JSON one after another, not one document.
-    text, decoder, pages, i = proc.stdout.decode(), json.JSONDecoder(), [], 0
+    text, decoder, got, i = proc.stdout.decode(), json.JSONDecoder(), [], 0
     try:
         while i < len(text):
             if text[i].isspace():
                 i += 1
                 continue
             page, i = decoder.raw_decode(text, i)
-            pages.append(page)
+            got.append(page)
     except json.JSONDecodeError as e:
         raise Undecided(f"gh api {path}: not JSON ({e})") from e
-    if len(pages) == 1 and isinstance(pages[0], dict):
-        return pages[0]
-    if not all(isinstance(p, list) for p in pages):
+    return got
+
+
+def api(path):
+    """Every page of `gh api --paginate path`, as one list for an array endpoint."""
+    got = pages(path)
+    if len(got) == 1 and isinstance(got[0], dict):
+        return got[0]
+    if not all(isinstance(p, list) for p in got):
         raise Undecided(f"gh api {path}: unexpected response shape")
-    return [item for page in pages for item in page]
+    return [item for page in got for item in page]
+
+
+def listed(path, key):
+    """Every item under key across the pages of an endpoint that wraps its list in an object."""
+    got = pages(path)
+    if not got or not all(
+        isinstance(p, dict) and isinstance(p.get(key), list) for p in got
+    ):
+        raise Undecided(f"gh api {path}: no {key} list")
+    items = [item for page in got for item in page[key]]
+    total = got[0].get("total_count", len(items))
+    # The runs endpoint stops at 1000 results, so a shorter list would be a guess.
+    if type(total) is not int or len(items) < total:
+        raise Undecided(f"gh api {path}: listed {len(items)} of {total} {key}")
+    return items
 
 
 def blob(repo, path, ref):
@@ -104,7 +140,7 @@ def load_tiers(raw):
         data = tomllib.loads(text)
     except (UnicodeDecodeError, tomllib.TOMLDecodeError) as e:
         raise Undecided(f"{TIERS} at the base: {e}") from e
-    unknown = set(data) - {"owner", *ROUTES}
+    unknown = set(data) - {"owner", "ci", *ROUTES}
     if unknown:
         raise Undecided(f"{TIERS} at the base: unknown key {sorted(unknown)[0]}")
     owner = data.get("owner")
@@ -127,6 +163,9 @@ def load_tiers(raw):
             if e in seen:
                 raise Undecided(f"{TIERS} at the base: {e} is listed twice")
             seen.add(e)
+    tiers["ci"] = literal_path(data.get("ci", CI), f"{TIERS} ci")
+    if tiers["ci"].endswith("/"):
+        raise Undecided(f"{TIERS} at the base: ci names a directory, not a workflow")
     for must in SELF_OWNED:
         if must not in tiers["maintainer"]:
             raise Undecided(f"{TIERS} at the base: maintainer must list {must}")
@@ -157,6 +196,69 @@ def check_owners(raw, owner, maintainer):
             f"{OWNERS} and the maintainer list of {TIERS} differ at the base"
             f" (only in the list: {missing}; only in {OWNERS}: {extra})"
         )
+
+
+def check_run_id(job):
+    url = job.get("check_run_url")
+    tail = url.rsplit("/", 1)[-1] if isinstance(url, str) else ""
+    if not tail.isdigit():
+        raise Undecided(f"job {job.get('id')} names no check run")
+    return int(tail)
+
+
+def ci_ran(repo, head, base, path):
+    """(notes, failures): whether the base's CI ran at head, and is all that is named checks there."""
+    blob(repo, path, base)
+    runs = [
+        r
+        for r in listed(
+            f"repos/{repo}/actions/runs?head_sha={head}&per_page=100", "workflow_runs"
+        )
+        if r["head_sha"] == head and r["path"] == path and r["event"] in CI_EVENTS
+    ]
+    jobs = {
+        r["id"]: listed(
+            f"repos/{repo}/actions/runs/{r['id']}/jobs?filter=all&per_page=100", "jobs"
+        )
+        for r in runs
+    }
+    notes, failures = [], []
+    pr_runs = [r for r in runs if r["event"] == "pull_request"]
+    if not pr_runs:
+        failures.append(f"ci: no pull_request run of {path} at the head")
+    else:
+        run = max(pr_runs, key=lambda r: r["id"])
+        which = f"run {run['id']} (attempt {run['run_attempt']})"
+        mine = [
+            j
+            for j in jobs[run["id"]]
+            if j["name"] == CI_JOB and j["run_attempt"] == run["run_attempt"]
+        ]
+        if len(mine) != 1:
+            many = f"{len(mine)} jobs" if mine else "no job"
+            failures.append(f"ci: {which} has {many} named {CI_JOB}")
+        elif mine[0]["status"] != "completed":
+            failures.append(
+                f"ci: the {CI_JOB} job of {which} is {mine[0]['status']}; it is judged again once it ends"
+            )
+        elif mine[0]["conclusion"] != "success":
+            failures.append(
+                f"ci: the {CI_JOB} job of {which} concluded {mine[0]['conclusion']}"
+            )
+        else:
+            notes.append(f"ci: {which} of {path}: {CI_JOB} concluded success")
+    ours = {check_run_id(j) for js in jobs.values() for j in js if j["name"] == CI_JOB}
+    for c in listed(
+        f"repos/{repo}/commits/{head}/check-runs?check_name={CI_JOB}&filter=all&per_page=100",
+        "check_runs",
+    ):
+        if c["name"] == CI_JOB and c["id"] not in ours:
+            app = c.get("app") or {}
+            failures.append(
+                f"ci: check run {c['id']} named {CI_JOB} from {app.get('slug')} (app {app.get('id')})"
+                f" is not the {CI_JOB} job of a run of {path} at the head"
+            )
+    return notes, failures
 
 
 def route_of(path, tiers):
@@ -241,6 +343,7 @@ def decide(args):
         ]
     owner, tiers = load_tiers(blob(repo, TIERS, base))
     check_owners(blob(repo, OWNERS, base), owner, tiers["maintainer"])
+    ci_notes, ci_failures = ci_ran(repo, head, base, tiers["ci"])
     files = api(f"repos/{repo}/pulls/{args.pr}/files")
     if len(files) < pr["changed_files"]:
         # The files endpoint stops at 3000, so an unlisted verdict would be a guess.
@@ -291,6 +394,15 @@ def decide(args):
                 f"verified {p}: the review holds no blocking finding" for p in verified
             ]
 
+    notes.extend(ci_notes)
+    if ci_failures:
+        # No approval stands in for tests that did not run.
+        return 1, [
+            *notes,
+            *held,
+            *ci_failures,
+            f"refused: the head's tests are not shown to have run at {head[:12]}",
+        ]
     if not held:
         return 0, [*notes, f"pass: {head[:12]} needs nothing more"]
     number = owner_approved(repo, head, default, owner)
