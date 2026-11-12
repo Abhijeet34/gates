@@ -737,6 +737,19 @@ clean = '''head -c 8000 /dev/zero | tr '\0' x > AGENTS.md'''
 run = 'python3 "$GATE" budget .'
 finding = "AGENTS.md: 8001 bytes, over the 8000-byte budget"
 
+# Each document holds its kind's template, read from policy/docs beside the gate.
+[[gate]]
+id = "docs-shape"
+surface = "Documentation"
+gates = ["run/docs-truth.py"]
+test = ".ci/test-docs-truth.py"
+suite = "shell"
+command = "run/docs-truth.py"
+red = '''mkdir -p docs/how-to && printf '# Do x\n\n## Before you start\n\n## Check it worked\n' > docs/how-to/x.md'''
+clean = '''mkdir -p docs/how-to && printf '# Do x\n\n## Before you start\n\n## Steps\n\n## Check it worked\n' > docs/how-to/x.md'''
+run = 'python3 "$GATE" shape .'
+finding = "docs/how-to/x.md: missing the heading `## Steps` that howto 1 requires"
+
 # External tools pinned and run offline; README.md, "The tool rows". Each stub exits 99
 # unless it is called with the flags that keep the tree's own configuration out. The inputs build
 # stub tools on a PATH of their own, because the proof runs where none of the real

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regression tests for run/docs-truth.py, and its four rows in shadow under run/gate.py.
+"""Regression tests for run/docs-truth.py and policy/docs, and its five rows in shadow under run/gate.py.
 
     .ci/test-docs-truth.py
 
@@ -9,6 +9,7 @@ for a refusal, a line of its output. A file whose text is a tuple is executable.
 
 import datetime
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -65,6 +66,32 @@ def doc(*lines, lang="bash"):
 
 LISTED = manifest(("AGENTS.md", "maintainer", "agents"))
 SCRIPT = ("#!/bin/sh\n",)
+
+
+def classify(path, kind):
+    return f'\n[[doc]]\npath = "{path}"\nkind = "{kind}"\n'
+
+
+HOWTO = "# Do x\n\n## Before you start\n\n## Steps: on macOS\n\n## Check it worked\n"
+RUNBOOK = "# Operating x\n\n## What it runs on\n\n## Deploy\n\n## Check a deploy\n\n## Roll back\n\n## When to stop and ask\n"
+ARCHITECTURE = "# Architecture\n\n## Context\n\n## Parts\n\n## Known limits\n"
+EXPLANATION = "# Cache\n\nWhat it is.\n\n## Known limits\n"
+REFERENCED = {
+    "docs/reference/cli.md": "# CLI reference\n",
+    ".github/changes.toml": '[[contract]]\nid = "cli"\nsnapshot = "docs/reference/cli.md"\ncommand = "x --help"\n',
+}
+GREEN = {
+    ".github/docs.toml": 'surfaces = ["cli", "site"]\n'
+    + classify("notes/*.md", "explanation"),
+    "docs/README.md": "# Docs\n",
+    "docs/how-to/x.md": HOWTO,
+    "docs/operations.md": RUNBOOK,
+    "docs/architecture.md": ARCHITECTURE.replace(
+        "## Parts", "## Context: the fleet\n\n## Parts"
+    ),
+    "notes/cache.md": EXPLANATION,
+    **REFERENCED,
+}
 
 # (name, check, files, want exit, a line the output must carry)
 CASES = [
@@ -408,6 +435,162 @@ CASES = [
         1,
         "README.md:1: carries an em dash",
     ),
+    (
+        "a row that only classifies documents by a glob names no owner and passes",
+        "owner",
+        {
+            "AGENTS.md": "x\n",
+            "docs/a.md": "# A\n",
+            ".github/docs.toml": LISTED
+            + '\n[[doc]]\npath = "docs/*.md"\nkind = "explanation"\n',
+        },
+        0,
+        None,
+    ),
+    (
+        "a glob that matches nothing is refused",
+        "owner",
+        {
+            "AGENTS.md": "x\n",
+            ".github/docs.toml": LISTED
+            + '\n[[doc]]\npath = "notes/*.md"\nkind = "explanation"\n',
+        },
+        1,
+        "notes/*.md: matches nothing",
+    ),
+    ("shape: a tree that follows every template passes", "shape", GREEN, 0, None),
+    (
+        "shape 1: an unknown surface is refused",
+        "shape",
+        {".github/docs.toml": 'surfaces = ["cli", "kiosk"]\n', **REFERENCED},
+        1,
+        "unknown surface 'kiosk'",
+    ),
+    (
+        "shape 1: an unknown key is refused",
+        "shape",
+        {".github/docs.toml": 'surface = ["cli"]\n'},
+        1,
+        "unknown key 'surface'",
+    ),
+    (
+        "shape 1: an unknown kind is refused",
+        "shape",
+        {"NOTES.md": "# Notes\n", ".github/docs.toml": classify("NOTES.md", "notes")},
+        1,
+        "NOTES.md: unknown kind 'notes'",
+    ),
+    (
+        "shape 1: a path that matches nothing is refused",
+        "shape",
+        {".github/docs.toml": classify("notes/*.md", "explanation")},
+        1,
+        "notes/*.md: matches nothing",
+    ),
+    (
+        "shape 1: a template number with no file is refused",
+        "shape",
+        {
+            "docs/how-to/x.md": HOWTO,
+            ".github/docs.toml": '[[doc]]\npath = "docs/how-to/x.md"\ntemplate = 9\n',
+        },
+        1,
+        "howto 9 has no template policy/docs/howto.9.md",
+    ),
+    (
+        "shape 2: a document under docs/ with no kind is refused",
+        "shape",
+        {"docs/notes.md": "# Notes\n", "docs/README.md": "# Docs\n"},
+        1,
+        "docs/notes.md: unclassified",
+    ),
+    (
+        "shape 3: a missing required heading is refused, naming it",
+        "shape",
+        {"docs/how-to/x.md": HOWTO.replace("## Steps: on macOS", "## Doing it")},
+        1,
+        "docs/how-to/x.md: missing the heading `## Steps` that howto 1 requires",
+    ),
+    (
+        "shape 3: required headings out of order are refused",
+        "shape",
+        {
+            "docs/how-to/x.md": "# Do x\n\n## Steps\n\n## Before you start\n\n## Check it worked\n"
+        },
+        1,
+        "`## Steps` must come after `## Before you start`",
+    ),
+    (
+        "shape 3: a tutorial without a numbered step is refused",
+        "shape",
+        {
+            "docs/getting-started.md": "# Getting started\n\n## What you need\n\n## Install\n\n## Where to go next\n"
+        },
+        1,
+        "missing the heading `## 1. ...` that tutorial 1 requires",
+    ),
+    (
+        "shape 4: a [[FILL: placeholder in prose is refused",
+        "shape",
+        {"docs/how-to/x.md": HOWTO + "\n[[FILL: the port]]\n"},
+        1,
+        "docs/how-to/x.md:9: a placeholder is left in prose",
+    ),
+    (
+        "shape 4: a <!-- fill: placeholder in prose is refused",
+        "shape",
+        {"docs/how-to/x.md": HOWTO + "\n<!-- fill: the port -->\n"},
+        1,
+        "docs/how-to/x.md:9: a placeholder is left in prose",
+    ),
+    (
+        "shape 4: a placeholder inside a fence or a code span is not prose",
+        "shape",
+        {
+            "docs/how-to/x.md": HOWTO
+            + "\nWrite `[[FILL: x]]`.\n\n```text\n<!-- fill: x -->\n```\n"
+        },
+        0,
+        None,
+    ),
+    (
+        "shape 5: a document the surfaces require that is missing is refused",
+        "shape",
+        {".github/docs.toml": 'surfaces = ["site"]\n'},
+        1,
+        "surface 'site' requires a runbook document (docs/operations.md) and there is none",
+    ),
+    (
+        "shape 5: a service needs its threat model by name",
+        "shape",
+        {
+            ".github/docs.toml": 'surfaces = ["service"]\n',
+            "docs/operations.md": RUNBOOK,
+            "docs/architecture.md": ARCHITECTURE,
+            "docs/explanation/cache.md": EXPLANATION,
+            **REFERENCED,
+        },
+        1,
+        "surface 'service' requires threat-model.md (docs/explanation/threat-model.md)",
+    ),
+    (
+        "shape 6: a reference document no contract names is refused",
+        "shape",
+        {"docs/reference/cli.md": "# CLI reference\n"},
+        1,
+        "docs/reference/cli.md: no [[contract]] in .github/changes.toml names it as its snapshot",
+    ),
+    (
+        "shape: a document classified twice is refused",
+        "shape",
+        {
+            "docs/a.md": EXPLANATION,
+            ".github/docs.toml": classify("docs/*.md", "explanation")
+            + classify("docs/a.md", "explanation"),
+        },
+        1,
+        "docs/a.md: classified by both docs/*.md and docs/a.md",
+    ),
 ]
 
 
@@ -440,23 +623,30 @@ run = 'python3 "$GATES_DIR/run/docs-truth.py" budget .'
 id = "docs-no-em-dash"
 inputs = ["**/*.md"]
 run = 'python3 "$GATES_DIR/run/docs-truth.py" emdash .'
+{shadow}
+[[gate]]
+id = "docs-shape"
+inputs = ["**/*.md", ".github/docs.toml", ".github/changes.toml"]
+run = 'python3 "$GATES_DIR/run/docs-truth.py" shape .'
 {shadow}"""
 IDS = (
     "docs-owner-reader",
     "docs-commands-run",
     "docs-agents-budget",
     "docs-no-em-dash",
+    "docs-shape",
 )
 
 
 def shadow(since):
-    """(run's exit, fold's exit, fold's output) for a tree that breaks all four rules under gate.py."""
+    """(run's exit, fold's exit, fold's output) for a tree that breaks all five rules under gate.py."""
     registry = ROWS.format(shadow=f"shadow_since = {since}\n" if since else "")
     repo = tree(
         {
             "AGENTS.md": "x" * 8001,
             "README.md": doc("./gone.sh"),
             "NOTES.md": f"one {DASH} two\n",
+            "docs/notes.md": "# Notes\n",
             ".github/gates.toml": registry,
         }
     )
@@ -494,11 +684,115 @@ def established_blocks():
     return None
 
 
+TEMPLATES = ROOT / "policy/docs"
+KINDS = {
+    "tutorial": "docs/getting-started.md",
+    "howto": "docs/how-to/x.md",
+    "reference": "docs/reference/cli.md",
+    "explanation": "docs/explanation/x.md",
+    "architecture": "docs/architecture.md",
+    "decision": "docs/decisions/0001-x.md",
+    "spec": "docs/spec/x.md",
+    "runbook": "docs/operations.md",
+    "postmortem": "docs/postmortems/2026-11-12-x.md",
+}
+FILL = re.compile(r"<!-- fill: .*? -->")
+
+
+def every_template():
+    """Each kind has a version 1 template; a copy is refused for its placeholders and passes once they are answered."""
+    found = sorted(p.name for p in TEMPLATES.glob("*.md"))
+    wanted = sorted(f"{k}.1.md" for k in KINDS)
+    if found != wanted:
+        return f"templates: wanted {wanted}, found {found}"
+    for kind, place in KINDS.items():
+        text = (TEMPLATES / f"{kind}.1.md").read_text()
+        extra = {".github/changes.toml": REFERENCED[".github/changes.toml"]}
+        rc, out = run(
+            sys.executable,
+            str(GATE),
+            "shape",
+            str(tree({place: text, **extra})),
+            cwd=workdir,
+        )
+        if rc != 1 or "a placeholder is left in prose" not in out:
+            return f"template {kind}: a verbatim copy should be refused for its placeholders, got {rc}:\n{out}"
+        answered = FILL.sub("Answered", text).replace(" <!-- optional -->", "")
+        rc, out = run(
+            sys.executable,
+            str(GATE),
+            "shape",
+            str(tree({place: answered, **extra})),
+            cwd=workdir,
+        )
+        if rc:
+            return f"template {kind}: an answered copy should pass, got {rc}:\n{out}"
+    return None
+
+
+def outdated():
+    """A gates tree holding howto 1 and 2: a doc on 1 prints `outdated` at exit 0; with 1 gone it is refused."""
+    gates = Path(tempfile.mkdtemp(dir=workdir))
+    (gates / "run").mkdir()
+    for name in ("docs-truth.py", "gate.py"):
+        shutil.copy(ROOT / "run" / name, gates / "run" / name)
+    (gates / "policy/docs").mkdir(parents=True)
+    howto = (TEMPLATES / "howto.1.md").read_text()
+    (gates / "policy/docs/howto.1.md").write_text(howto)
+    (gates / "policy/docs/howto.2.md").write_text(howto + "\n## Clean up\n")
+    copy = str(gates / "run/docs-truth.py")
+    repo = tree({"docs/how-to/x.md": HOWTO})
+    rc, out = run(sys.executable, copy, "shape", str(repo), cwd=workdir)
+    if rc or "outdated: docs/how-to/x.md follows howto 1, newest is 2" not in out:
+        return f"outdated: wanted exit 0 with the outdated line, got {rc}:\n{out}"
+    on_two = tree(
+        {
+            "docs/how-to/x.md": HOWTO + "\n## Clean up\n",
+            ".github/docs.toml": '[[doc]]\npath = "docs/how-to/x.md"\ntemplate = 2\n',
+        }
+    )
+    rc, out = run(sys.executable, copy, "shape", str(on_two), cwd=workdir)
+    if rc or "outdated" in out:
+        return f"outdated: a doc on the newest version should pass silently, got {rc}:\n{out}"
+    (gates / "policy/docs/howto.1.md").unlink()
+    rc, out = run(sys.executable, copy, "shape", str(repo), cwd=workdir)
+    if (
+        rc != 1
+        or "howto 1 has no template policy/docs/howto.1.md; set template = 2" not in out
+    ):
+        return (
+            f"outdated: a doc on a deleted version should be refused, got {rc}:\n{out}"
+        )
+    return None
+
+
+def mdcheck():
+    """Every template passes mdcheck.py --strict; skipped, and said so, where the md skill is not installed."""
+    script = Path(
+        os.environ.get("MDCHECK", Path.home() / ".claude/skills/md/scripts/mdcheck.py")
+    )
+    if not script.is_file():
+        print(f"test-docs-truth: SKIP mdcheck: {script} is not installed here")
+        return None
+    rc, out = run(
+        sys.executable,
+        str(script),
+        "--strict",
+        *map(str, sorted(TEMPLATES.glob("*.md"))),
+        cwd=workdir,
+    )
+    return (
+        f"mdcheck: the templates should pass --strict, got {rc}:\n{out}" if rc else None
+    )
+
+
 def main():
     failures = [expect(*case) for case in CASES]
-    failures += [f() for f in (in_shadow, established_blocks)]
+    failures += [
+        f() for f in (in_shadow, established_blocks, every_template, outdated, mdcheck)
+    ]
     failures = [f for f in failures if f]
-    total = len(CASES) + 2
+    total = len(CASES) + 5
     for f in failures:
         print(f"FAIL {f}", file=sys.stderr)
     print(f"test-docs-truth: {total - len(failures)} of {total} cases passed")

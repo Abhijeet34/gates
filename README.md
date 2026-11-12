@@ -13,7 +13,7 @@ The checks that stand between a commit and a public push: a gitleaks pre-push ho
 | `run/gate.py` | The gate runner: selects a repository's gates from its `.github/gates.toml` and the diff, keys each verdict by the gate's inputs, records verdicts and folds them with review and docs verdicts, and keeps a shadow row from blocking until it earns promotion; its docstring owns the contract. `gate-shadow.yml` runs it in shadow on this repository; see "The shadow job". |
 | `run/gate-shadow.sh` | The shadow job's script: runs the runner and its fold on the caller's checkout, writes `shadow-verdict.txt`, and exits 0 whatever the gates decided; see "The shadow job". |
 | `run/permissions-diff.py` | The permissions-diff gate over the protected surface; see "The permissions-diff gate". |
-| `run/docs-truth.py`, `.github/docs.toml` | The four document rules (owner and reader, commands, byte budget, em dash) and this repository's own owner and reader list; see "The documentation rows". |
+| `run/docs-truth.py`, `.github/docs.toml`, `policy/docs/` | The five document rules (owner and reader, commands, byte budget, em dash, shape), the template of each doc kind that `shape` reads, and this repository's own owner and reader list; see "The documentation rows". |
 | `run/tool-gates.py`, `policy/` | The pinned-tool gates (zizmor, actionlint, offline OSV-Scanner) and the gates-owned configuration they read instead of the tree's; see "The tool rows". |
 | `run/ui-gates.py`, `run/ui-gates.mjs` | The UI rows: axe accessibility and Linux pixel baselines in a pinned Chromium; see "The UI rows". |
 | `run/pr-text.py` | The pull request text scan over a title and body read as JSON on stdin; see "The text rows". |
@@ -283,7 +283,7 @@ The job runs the base commit's copy of the script, so a pull request cannot pass
 
 ## The documentation rows
 
-`run/docs-truth.py owner|commands|budget|emdash [root]` answers four rules from the tree alone; its docstring owns the exact scope.
+`run/docs-truth.py owner|commands|budget|emdash|shape [root]` answers five rules from the tree alone; its docstring owns the exact scope.
 Path truth (`run/instruction-truth/path-truth.py`) and the instruction size caps (`run/instruction-truth/size-limit.py`) already exist and are not repeated: this script judges what they skip.
 
 - **`owner`**: every `AGENTS.md` and `CLAUDE.md` is listed in `.github/docs.toml` with a non-empty `owner` and a `reader` of `agents`, `compliance` or `clients` (report 7.3's three readers). Any other Markdown file is judged only when it is listed.
@@ -336,10 +336,76 @@ id = "docs-no-em-dash"
 inputs = ["**/*.md"]
 run = 'python3 "$GATES_DIR/run/docs-truth.py" emdash .'
 shadow_since = 2026-10-19
+
+[[gate]]
+id = "docs-shape"
+inputs = ["**/*.md", ".github/docs.toml", ".github/changes.toml"]
+run = 'python3 "$GATES_DIR/run/docs-truth.py" shape .'
+shadow_since = 2026-11-12
 ```
 
-`.ci/test-docs-truth.py` runs the cases of all four rules and runs these rows through `run/gate.py`, which folds each to `shadow` with a `shadow_since` and refuses without one. No workflow calls the script: a step in `shared-instruction-truth.yml` is the maintainer's to add in the weekly batch.
-`.ci/check.sh` runs `owner`, `commands` and `emdash` on this tree and not yet `budget`, though this tree's own `AGENTS.md` now fits it.
+`.ci/test-docs-truth.py` runs the cases of all five rules and runs these rows through `run/gate.py`, which folds each to `shadow` with a `shadow_since` and refuses without one. No workflow calls the script: a step in `shared-instruction-truth.yml` is the maintainer's to add in the weekly batch.
+`.ci/check.sh` runs `owner`, `commands`, `emdash` and `shape` on this tree and not yet `budget`, though this tree's own `AGENTS.md` now fits it.
+
+### The `shape` rule and the templates
+
+`shape` holds every document below the root files to the template of its kind.
+The templates are `policy/docs/<kind>.<n>.md`, one per kind, read from the gates tree the script runs from, never from the caller.
+Each is a heading skeleton: its `##` headings are required in order, other sections may sit between them, and a document's heading may extend the template's after a colon (`## Steps: on macOS`), the rule `repo-standard` applies to READMEs.
+A heading marked `<!-- optional -->` is not required, and a heading holding a placeholder fixes only the text before it, so a tutorial's `## 1. <!-- fill: ... -->` asks for some heading starting `1.`.
+
+| Kind | Template | Place that gives the kind |
+| --- | --- | --- |
+| `tutorial` | `tutorial.1.md` | `docs/getting-started.md` |
+| `howto` | `howto.1.md` | `docs/how-to/` |
+| `reference` | `reference.1.md` (no required headings) | `docs/reference/` |
+| `explanation` | `explanation.1.md` | `docs/explanation/` |
+| `architecture` | `architecture.1.md` | `docs/architecture.md` |
+| `decision` | `decision.1.md` | `docs/decisions/` |
+| `spec` | `spec.1.md` | `docs/spec/` |
+| `runbook` | `runbook.1.md` | `docs/operations.md` |
+| `postmortem` | `postmortem.1.md` | `docs/postmortems/` |
+
+`readme` and `agents` are accepted as kinds and judged by `repo-standard check`, not here, and `docs/README.md` is the index and has no kind.
+A document anywhere else takes its kind from a row of `.github/docs.toml`, whose `path` may be a glob; such a row needs no `owner` or `reader`, and `owner` skips it:
+
+```toml
+surfaces = ["cli", "site"]
+
+[[doc]]
+path = "docs/*.md"
+kind = "explanation"
+
+[[doc]]
+path = "docs/operations.md"
+template = 2
+```
+
+`shape` refuses, each with a line naming the file:
+
+1. a manifest key, surface or kind it does not know, a `path` that matches nothing, a document two rows classify, or a `template` number with no file;
+2. a `.md` under `docs/` with no kind (`unclassified`);
+3. a document missing a required heading of its template version, naming the heading, or carrying them out of order;
+4. a placeholder (`[[FILL:` or `<!-- fill:`) left in prose, outside a fence or code span;
+5. a document the `surfaces` require that does not exist;
+6. a `reference` document that no `[[contract]]` of `.github/changes.toml` names as its `snapshot`, so the `contracts` row of `run/change-gates.py` keeps it true.
+
+The surfaces are `cli`, `plugin`, `library`, `service`, `site` and `app`, and each requires these documents; a document required only once something happens (a second process, a first incident) is the reviewer's to ask for, because no tree shows the trigger:
+
+| Surface | Required |
+| --- | --- |
+| `cli`, `plugin`, `library` | a reference |
+| `service` | a reference, the architecture, `docs/explanation/threat-model.md`, the runbook |
+| `site` | the runbook |
+| `app` | a reference, the tutorial, a how-to, the architecture, the threat model, the runbook, a spec |
+
+A template never changes its required headings in place, because a lock bump would then turn every caller red at once.
+A changed shape is a new file, `runbook.2.md` beside `runbook.1.md`, and a document is held to the version its row names (absent means 1), so after the bump `shape` prints `outdated: docs/operations.md follows runbook 1, newest is 2` and exits 0.
+A docs task per repository reshapes the document and sets `template = 2`; once no caller prints the line, `runbook.1.md` is deleted and a document still on 1 is refused under rule 1.
+A wording-only change, such as guidance text or an optional heading, edits the file in place.
+
+`.ci/test-docs-truth.py` holds a red case for each refusal and a green tree, runs `outdated` against a copy of the script beside a two-version template set, requires a verbatim copy of each template to be refused for its placeholders and an answered copy to pass, and runs `mdcheck.py --strict` over the templates where the `md` skill is installed (it is not on a CI runner, and the suite says it skipped).
+`.ci/gate-registry.toml` proves the row `docs-shape`.
 
 ## The budget monitor
 
