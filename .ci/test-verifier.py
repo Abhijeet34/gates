@@ -284,7 +284,12 @@ def classify_cases(tmp):
         }
         proc = sh("bash", "-e", kernel / "classify.sh", env=e)
         got = outputs(out) if out.exists() else {}
-        summary = base64.b64decode((got.get("summary") or [""])[0]).decode()
+        try:
+            summary = base64.b64decode(
+                (got.get("summary") or [""])[0], validate=True
+            ).decode()
+        except ValueError:
+            summary = "(summary is not one base64 line)"
         ok = (
             proc.returncode == 0
             and got.get("verdict") == [want]
