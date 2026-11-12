@@ -1,0 +1,12 @@
+# The files of the `verifier` branch, as `<path at the gates commit> <path on the branch>`.
+# verifier/activate.sh writes exactly these, plus gates/COMMIT, and nothing else.
+verifier/.github/workflows/owner-verify.yml .github/workflows/owner-verify.yml
+verifier/classify.sh classify.sh
+verifier/post.sh post.sh
+verifier/activate.sh activate.sh
+verifier/ruleset-read.sh ruleset-read.sh
+verifier/kernel.txt kernel.txt
+run/owner-verify.py gates/run/owner-verify.py
+run/weakening.py gates/run/weakening.py
+run/gate.py gates/run/gate.py
+policy/relaxations.toml gates/policy/relaxations.toml
