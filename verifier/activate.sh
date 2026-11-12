@@ -73,6 +73,6 @@ git commit -qm "verifier: the kernel at gates ${commit:0:12}"
 cat <<EOF
 
 Committed $(git rev-parse --short=12 HEAD); read it whole with: git show HEAD
-Then publish it to each repository, which only a repository admin can do:
-  for r in factory automation gates; do git push "https://github.com/Abhijeet34/\$r.git" verifier:refs/heads/verifier; done
+Then publish it to each repository that runs the verifier, which only a repository admin can do:
+  git push https://github.com/OWNER/REPOSITORY.git verifier:refs/heads/verifier
 EOF

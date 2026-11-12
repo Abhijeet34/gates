@@ -18,7 +18,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 JUDGE = ROOT / "run/owner-verify.py"
-REPO = "Abhijeet34/factory"
+REPO = "Abhijeet34/fixture"
 OWNER = {"login": "Abhijeet34", "id": 101}
 BUILDER = {"login": "hw-bodhi[bot]", "id": 202}
 OLD = "a" * 40
@@ -334,7 +334,7 @@ def cases():
             "a head from a fork gets the deterministic verdict alone",
             dict(
                 files=PERMIT,
-                head_repo="someone/factory",
+                head_repo="someone/fixture",
                 review={"head": "HEAD", "blocking": 0},
             ),
             1,
@@ -394,7 +394,7 @@ def cases():
             "a base with no tier list cannot decide",
             dict(files=[], tiers=None),
             2,
-            "gh api repos/Abhijeet34/factory/contents/.github/owner-verify.toml",
+            "gh api repos/Abhijeet34/fixture/contents/.github/owner-verify.toml",
         ),
         (
             "a tier list with an unknown key cannot decide",
