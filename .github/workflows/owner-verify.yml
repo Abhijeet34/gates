@@ -1,0 +1,35 @@
+name: owner verify
+
+# The stub on the default branch. It hands a pull request's number, head and
+# base to the verifier's kernel, the workflow of this name on the admin-only
+# branch `verifier`, and does nothing else: it checks out nothing and runs
+# nothing of the pull request. The kernel trusts none of the three and holds
+# them to the pull request's own; gates README.md, "The verifier branch", owns
+# the design. A review re-dispatches, so an approval re-judges the head.
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, ready_for_review, edited]
+  pull_request_review:
+    types: [submitted, dismissed]
+
+permissions: {}
+
+jobs:
+  dispatch:
+    name: dispatch
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: write
+    steps:
+      # The ref is named in full, so a tag called `verifier` is never the one run.
+      - name: Dispatch the kernel at refs/heads/verifier
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          jq -n --arg pr "$PR" --arg head "$HEAD_SHA" --arg base "$BASE_SHA" \
+            '{ref: "refs/heads/verifier", inputs: {pr: $pr, head: $head, base: $base}}' \
+            | gh api -X POST "repos/$GITHUB_REPOSITORY/actions/workflows/owner-verify.yml/dispatches" --input -
