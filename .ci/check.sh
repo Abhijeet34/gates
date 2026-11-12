@@ -106,6 +106,8 @@ check_shell() {
     python3 .ci/test-weakening.py || rc=1
     # The maintainer's approving review a change to that record needs.
     python3 .ci/test-record-approval.py || rc=1
+    # The verifier's judge: the base's tier list, the owner's approval at the head, the weakening guard.
+    python3 .ci/test-owner-verify.py || rc=1
     # The document rules, their shadow rows under the runner, and all but the budget on this tree.
     # The budget is not run here yet, though this tree's AGENTS.md now fits it.
     python3 .ci/test-docs-truth.py || rc=1

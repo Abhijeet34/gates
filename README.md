@@ -28,6 +28,7 @@ The checks that stand between a commit and a public push: a gitleaks pre-push ho
 | `run/critic.py`, `run/critic-eval.py`, `corpus/critic/` | The critic lens: one seat on another model writes the strongest counter-case to a decision request or a study and re-derives two numbers it rests on, and the gate holds it when a number does not survive; the eval measures each seat on planted wrong numbers, planted one-sided requests and their clean twins; see "The critic lens". |
 | `run/weakening.py`, `policy/relaxations.toml` | The weakening guard: a change that relaxes its tests, workflows or branch rulesets against the base, unless a recorded policy covers it; see "The weakening guard". |
 | `run/record-approval.py` | The record-approval check: a change to `policy/relaxations.toml` passes only with the maintainer's approving review at its head; see "The record-approval check". |
+| `run/owner-verify.py`, `verifier/` | The verifier's judge, which decides `owner-verify` from the base's tier list, and the content of the admin-only `verifier` branch that runs it with the verifier App's key; see "The owner-verify judge" and "The verifier branch". |
 | `run/licence.py` | The licence row: dependency and vendored-file licences against a caller's `.github/licence-policy.toml`; see "The licence row". |
 | `run/budget-monitor.py` | The gate budget monitor: prints each budgeted step's weekly p50/p95, the alarm and the fix task text; see "The budget monitor". |
 | `bin/gates.py`, `bin/rollout.toml` | `gates bump` and `gates rollback`, which move callers' locks; see "Bumping". |
@@ -280,6 +281,40 @@ The job runs the base commit's copy of the script, so a pull request cannot pass
 
 `.ci/test-record-approval.py` serves each case through a stub `gh`: approved at the head, approved at an older commit, changes requested, no review, opened by the approver, the file left alone, another user's approval, a later change request, a dismissal, a comment after the approval, a second page of reviews, a rename away from the file, a truncated file list and a stale head.
 `.ci/gate-registry.toml` proves the row `record-approval`.
+
+## The owner-verify judge
+
+`run/owner-verify.py --repo OWNER/NAME --pr N --head SHA --base SHA --tree DIR [--review FILE]` decides the `owner-verify` check the verifier App posts.
+It reads the pull request, its files, the base's `.github/owner-verify.toml` and `.github/CODEOWNERS`, and the owner's reviews through `gh api`, and runs `run/weakening.py` beside it over `DIR`, a git directory holding both commits; no file of the head is executed.
+It exits 0 to pass, 1 to refuse and 2 when it cannot decide, which the verifier posts as a failure.
+
+The tier list, read from the base and never from the head:
+
+```toml
+owner = { login = "Abhijeet34", id = 27002551 }
+maintainer = [".github/CODEOWNERS", ".github/owner-verify.toml", "home/"]  # equals CODEOWNERS
+workflow = [".github/workflows/"]
+verified = ["internal/domain/permit/"]
+checked = [".github/gates.lock"]
+```
+
+| Each changed path, by both names on a rename, in the first list that covers it | Verdict |
+| --- | --- |
+| `maintainer` | passes only with the owner's approval at the head |
+| `workflow` | held until its privilege reader, canary and review are built |
+| `verified` | passes on a review verdict `{"head": SHA, "blocking": 0}` for this head, never for a head outside the repository |
+| `checked`, or no list | passes |
+| any path, when `run/weakening.py` finds a weakening no record covers | refuses |
+
+The owner's approval at the head passes every row: it is the owner's latest approving, changes-requested or dismissed review, matched by numeric id, being `APPROVED` on the head commit, on any pull request at that head into the default branch.
+So the verdict belongs to the commit, which is what GitHub attaches a check run to, and a second pull request at a green commit inherits a verdict that is true of it.
+A pull request opened under the owner's login cannot carry that approval, which closes the owner-authored bypass; its refusal says to reopen it as the builder App.
+
+It refuses a pull request into any branch but the default, and a run whose head or base is no longer the pull request's.
+It cannot decide when an input is not digits or 40 hex, a list holds an unknown key, a path twice, a glob, `..` or a non-ASCII byte, `maintainer` omits either list file, `CODEOWNERS` has a line other than `/<path> @<owner>` or differs from `maintainer`, either file is a link or over 1 MB, the file list is shorter than the change, or any read fails.
+
+`.ci/test-owner-verify.py` serves each case through a stub `gh` against fixture git trees, one per row above and per refusal, including six CODEOWNERS disguises and a duplicated list, recorded 2026-11-12.
+`.ci/gate-registry.toml` proves the row `owner-verify`.
 
 ## The documentation rows
 
