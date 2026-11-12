@@ -113,6 +113,7 @@ check_shell() {
     python3 run/docs-truth.py owner . || rc=1
     python3 run/docs-truth.py commands . || rc=1
     python3 run/docs-truth.py emdash . || rc=1
+    python3 run/docs-truth.py shape . || rc=1
     # The pull request text scan, and the guard that a run leaves no scratch behind.
     python3 .ci/test-pr-text.py || rc=1
     python3 .ci/test-scratch-guard.py || rc=1
