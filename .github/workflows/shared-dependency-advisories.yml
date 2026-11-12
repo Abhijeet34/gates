@@ -42,8 +42,7 @@ name: shared dependency advisories
 # THE CALLER MUST GRANT `vulnerability-alerts: read` ITSELF. A called workflow
 # can narrow the caller's GITHUB_TOKEN but never widen it, so a caller that
 # omits it fails the run outright with GitHub's unhelpful "workflow file issue"
-# annotation - the same trap shared-no-mistakes-required.yml's callers hit over
-# `pull-requests: read` (.ci/shared-workflows.md).
+# annotation (.ci/shared-workflows.md).
 #
 # run/dependency-advisories.sh is the gate, and .ci/test-dependency-advisories.sh
 # its contract test. Nothing here is a synced copy: the deferral list is the
