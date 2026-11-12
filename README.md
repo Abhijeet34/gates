@@ -316,6 +316,41 @@ It cannot decide when an input is not digits or 40 hex, a list holds an unknown 
 `.ci/test-owner-verify.py` serves each case through a stub `gh` against fixture git trees, one per row above and per refusal, including six CODEOWNERS disguises and a duplicated list, recorded 2026-11-12.
 `.ci/gate-registry.toml` proves the row `owner-verify`.
 
+## The verifier branch
+
+`verifier/` is the content of a branch `verifier` in each repository that runs the verifier, the only ref its `verify` and `review` environments admit; a ruleset lets only a repository admin create, update or delete it.
+So no merged change, on `main` or on a builder's branch, runs with the verifier App's key, and a workflow change on `main` cannot reach it.
+`main` carries a stub of the same file name that dispatches the workflow at `refs/heads/verifier` with the pull request, its head and its base.
+
+| On the branch | From | What it does |
+| --- | --- | --- |
+| `.github/workflows/owner-verify.yml` | `verifier/.github/workflows/owner-verify.yml` | `classify` judges the head with no environment; `post`, in `verify`, posts `owner-verify (shadow)`, or the name the environment's `VERIFIER_CHECK_NAME` gives |
+| `classify.sh` | `verifier/classify.sh` | refuses an input that is not digits or 40 hex, fetches the base and head into a bare repository, runs the judge, and hands its verdict on as one base64 job output |
+| `post.sh` | `verifier/post.sh` | refuses a re-run, a ref other than `verifier` and a kernel that is not the branch's tip; signs a JWT with the key from the environment, mints a token for `checks: write` on this repository alone, posts the check run and revokes the token |
+| `activate.sh` | `verifier/activate.sh` | moves the branch to one gates commit that `main` contains and whose `checks` run is green, writing exactly the files `kernel.txt` names; pushes nothing |
+| `ruleset-read.sh` | `verifier/ruleset-read.sh` | prints a ruleset file against the live ruleset before the maintainer applies it |
+| `gates/run/owner-verify.py`, `gates/run/weakening.py`, `gates/run/gate.py`, `gates/policy/relaxations.toml`, `gates/COMMIT` | that gates commit | the judge and what it reads, and which commit they came from |
+
+The ten invariants, which must hold from the first push because a run of an old kernel cannot be patched afterwards:
+
+| # | Invariant | Where |
+| --- | --- | --- |
+| 1 | the verdict depends on the head, the base and the owner's approval at that head, never on which pull request asked | `run/owner-verify.py` |
+| 2 | the diff is against the default branch; a pull request into another base is refused | `run/owner-verify.py` |
+| 3 | `post` refuses unless its commit is the live tip of `refs/heads/verifier` and it is the run's first attempt | `post.sh` |
+| 4 | the dispatch's inputs are checked as digits or 40 hex and passed through `env:`; the judge requires them to equal the pull request's, and `post` posts on that head alone | `classify.sh`, `run/owner-verify.py`, `post.sh` |
+| 5 | no job uses an action, a cache or an artifact; the verdict travels as a job output | the workflow |
+| 6 | nothing of the head runs: it is fetched as objects into a bare repository and read with git | `classify.sh` |
+| 7 | the stub triggers on `pull_request_target` and `pull_request_review`, so an approval re-judges the head | the stub on `main`, not here |
+| 8 | setup order: the ruleset, the branch, the environments, the secrets; the dispatch names `refs/heads/verifier` in full | the maintainer's setup and the stub |
+| 9 | what the maintainer runs for the kernel is read from the branch: `activate.sh`, `ruleset-read.sh` | the branch |
+| 10 | a head from a fork gets the deterministic verdict alone, so no review runs for a stranger | `run/owner-verify.py` |
+
+The first commit is `activate.sh --init <gates commit>` in an empty directory, run from that commit's copy; each later one is `./activate.sh <gates commit>` in a checkout of the branch, and a rollback is the same with the earlier commit.
+Not built yet: the review job that writes `--review`, the workflow route's privilege reader and canary, and the activation digest; until then a `verified` or `workflow` path needs the owner's approval.
+
+`.ci/test-verifier.py` reads the workflow for invariants 3 to 6 and shows each refusing a planted line, then runs `classify.sh`, `post.sh`, `activate.sh` and `ruleset-read.sh` against stub programs, fixture repositories over `file://` and an RSA key made for the run.
+
 ## The documentation rows
 
 `run/docs-truth.py owner|commands|budget|emdash|shape [root]` answers five rules from the tree alone; its docstring owns the exact scope.
