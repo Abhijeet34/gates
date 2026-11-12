@@ -574,6 +574,51 @@ chmod +x bin/gh
 run = 'PATH="$PWD/bin:$PATH" python3 "$GATE" --repo o/r --pr 7 --head bbbb'
 finding = "record-approval: refused: Abhijeet34 approved aaaa, not the head bbbb"
 
+# A change to a path the base's .github/owner-verify.toml keeps the maintainer's,
+# with no approving review from the owner at its head; README.md, "The owner-verify judge".
+# `gh` serves the pull request and the base's two lists.
+[[gate]]
+id = "owner-verify"
+surface = "Security"
+gates = ["run/owner-verify.py"]
+test = ".ci/test-owner-verify.py"
+suite = "shell"
+command = "run/owner-verify.py"
+red = '''
+git init -q -b main tree && echo a > tree/README.md && mkdir tree/home && echo a > tree/home/q.toml
+git -C tree add -A && git -C tree commit -qm base && git -C tree rev-parse HEAD > base
+echo b > tree/home/q.toml && git -C tree commit -qam head && git -C tree rev-parse HEAD > head
+b=$(cat base) h=$(cat head)
+mkdir pages bin && printf '#!/bin/sh\nf="%s/pages/$(printf %%s "$3" | tr "/?=" "___")"\n[ -f "$f" ] || { echo "gh: Not Found (HTTP 404)" >&2; exit 1; }\ncat "$f"\n' "$PWD" > bin/gh && chmod +x bin/gh
+p() { printf '%s' "$2" > "pages/$(printf %s "$1" | tr '/?=' '___')"; }
+blob() { printf '{"type": "file", "encoding": "base64", "content": "%s"}' "$(printf "$1" | base64 | tr -d '\n')"; }
+p repos/o/r '{"default_branch": "main"}'
+p repos/o/r/pulls/7 "{\"user\": {\"id\": 2}, \"head\": {\"sha\": \"$h\", \"repo\": {\"full_name\": \"o/r\"}}, \"base\": {\"ref\": \"main\", \"sha\": \"$b\"}, \"changed_files\": 1}"
+p repos/o/r/pulls/7/files '[{"filename": "home/q.toml"}]'
+p "repos/o/r/contents/.github/owner-verify.toml?ref=$b" "$(blob 'owner = { login = "Abhijeet34", id = 1 }\nmaintainer = [".github/CODEOWNERS", ".github/owner-verify.toml", "home/"]\n')"
+p "repos/o/r/contents/.github/CODEOWNERS?ref=$b" "$(blob '/.github/CODEOWNERS @Abhijeet34\n/.github/owner-verify.toml @Abhijeet34\n/home/ @Abhijeet34\n')"
+p "repos/o/r/commits/$h/pulls" "[{\"number\": 7, \"head\": {\"sha\": \"$h\"}, \"base\": {\"ref\": \"main\"}}]"
+p repos/o/r/pulls/7/reviews "[{\"user\": {\"id\": 1}, \"state\": \"APPROVED\", \"commit_id\": \"$b\"}]"
+'''
+clean = '''
+git init -q -b main tree && echo a > tree/README.md && mkdir tree/home && echo a > tree/home/q.toml
+git -C tree add -A && git -C tree commit -qm base && git -C tree rev-parse HEAD > base
+echo b > tree/home/q.toml && git -C tree commit -qam head && git -C tree rev-parse HEAD > head
+b=$(cat base) h=$(cat head)
+mkdir pages bin && printf '#!/bin/sh\nf="%s/pages/$(printf %%s "$3" | tr "/?=" "___")"\n[ -f "$f" ] || { echo "gh: Not Found (HTTP 404)" >&2; exit 1; }\ncat "$f"\n' "$PWD" > bin/gh && chmod +x bin/gh
+p() { printf '%s' "$2" > "pages/$(printf %s "$1" | tr '/?=' '___')"; }
+blob() { printf '{"type": "file", "encoding": "base64", "content": "%s"}' "$(printf "$1" | base64 | tr -d '\n')"; }
+p repos/o/r '{"default_branch": "main"}'
+p repos/o/r/pulls/7 "{\"user\": {\"id\": 2}, \"head\": {\"sha\": \"$h\", \"repo\": {\"full_name\": \"o/r\"}}, \"base\": {\"ref\": \"main\", \"sha\": \"$b\"}, \"changed_files\": 1}"
+p repos/o/r/pulls/7/files '[{"filename": "home/q.toml"}]'
+p "repos/o/r/contents/.github/owner-verify.toml?ref=$b" "$(blob 'owner = { login = "Abhijeet34", id = 1 }\nmaintainer = [".github/CODEOWNERS", ".github/owner-verify.toml", "home/"]\n')"
+p "repos/o/r/contents/.github/CODEOWNERS?ref=$b" "$(blob '/.github/CODEOWNERS @Abhijeet34\n/.github/owner-verify.toml @Abhijeet34\n/home/ @Abhijeet34\n')"
+p "repos/o/r/commits/$h/pulls" "[{\"number\": 7, \"head\": {\"sha\": \"$h\"}, \"base\": {\"ref\": \"main\"}}]"
+p repos/o/r/pulls/7/reviews "[{\"user\": {\"id\": 1}, \"state\": \"APPROVED\", \"commit_id\": \"$h\"}]"
+'''
+run = 'PATH="$PWD/bin:$PATH" python3 "$GATE" --repo o/r --pr 7 --head "$(cat head)" --base "$(cat base)" --tree tree'
+finding = "owner-verify: refused: 1 item(s) above need Abhijeet34's approval"
+
 # A change that relaxes a test, a required context, a required workflow or a pin,
 # unless policy/relaxations.toml in the gates checkout covers it; README.md, "The weakening guard".
 [[gate]]
