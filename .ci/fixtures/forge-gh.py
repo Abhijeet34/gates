@@ -110,7 +110,7 @@ def api(argv):
     if m := re.fullmatch(r"repos/([^/]+/[^/]+)/environments/([^/]+)", route):
         repo, name = m[1], m[2]
         if method == "PUT":
-            env = db["envs"].setdefault(repo, {}).setdefault(name, {"policies": [], "secrets": {}, "variables": {}})
+            env = db.setdefault("envs", {}).setdefault(repo, {}).setdefault(name, {"policies": [], "secrets": {}, "variables": {}})
             env["deployment_branch_policy"] = body["deployment_branch_policy"]
             save()
             respond(200, {"name": name, "deployment_branch_policy": env["deployment_branch_policy"]}, include)

@@ -821,15 +821,16 @@ def sitting_cases(tmp):
     check(
         "sitting: steps 1 to 3 wrote the ruleset, the branch and both environments before it",
         [w.split(" ")[0] + " " + w.split(" ")[1].split("/")[-1] for w in writes(first)][:2]
-        == ["POST rulesets", "push refs/heads/verifier"]
+        == ["POST rulesets", "push verifier"]
         and sum(w.startswith("PUT repos/o/r/environments/") for w in writes(first)) == 2,
         writes(first),
     )
     replies = [json.loads(ln) for ln in (state / "browser.jsonl").read_text().splitlines()]
+    created = [r for r in replies if "/created?" in r["url"]]
     check(
         "sitting: the listener refuses a wrong state and exchanges no code for it",
-        replies[0]["status"] == 400
-        and "state" in replies[0]["body"]
+        [r["status"] for r in created] == [400, 200]
+        and "state" in created[0]["body"]
         and sum(c["call"].startswith("POST app-manifests/") for c in first) == 1,
         replies,
     )
@@ -892,14 +893,16 @@ def sitting_cases(tmp):
         rc == 0 and writes(third) == [] and "0 writes" in out3,
         f"exit {rc}\n{out3}\n{writes(third)}",
     )
+    # The key's body line alone, so a copy with other line ends is found too.
+    needles = {k: max(v.split("\n"), key=len) for k, v in values.items()}
     found = []
     for path in [*root.rglob("*"), *tmp.glob("sit-gates/**/*")]:
         if path.is_file():
             data = path.read_bytes()
-            found += [f"{path}: {k}" for k, v in values.items() if v.strip().encode() in data or v.split("\n")[1].encode() in data]
-    for k, v in values.items():
+            found += [f"{path}: {k}" for k, v in needles.items() if v.encode() in data]
+    for k, v in needles.items():
         for label, text in (("output", out1 + out2 + out3), ("listener", json.dumps(replies))):
-            if v.split("\n")[1] in text or v.strip() in text:
+            if v in text:
                 found.append(f"{label}: {k}")
     check(
         "sitting: no secret is in any file, in the output or in the listener's replies",
