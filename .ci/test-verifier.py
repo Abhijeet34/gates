@@ -308,6 +308,7 @@ def classify_cases(tmp):
     )
     run("a refusal is posted as failure", "failure", "stub", JUDGE_RC="1")
     run("an undecided judge is posted as undecided", "undecided", "stub", JUDGE_RC="2")
+    run("a not-enrolled judge is posted as neutral", "neutral", "stub", JUDGE_RC="3")
     run(
         "text from the change cannot add an output line",
         "failure",
@@ -499,6 +500,19 @@ def post_cases(tmp):
             body.get("conclusion") == "failure" and body["output"]["title"] == title,
             body,
         )
+    calls, _ = run(
+        "a not-enrolled verdict is posted as neutral",
+        0,
+        VERDICT="neutral",
+        SUMMARY=base64.b64encode(b"owner-verify: not enrolled: x").decode(),
+    )
+    body = json.loads(calls[2]["body"]) if len(calls) > 2 else {}
+    check(
+        "post: a not-enrolled verdict is neutral, titled 'not enrolled'",
+        body.get("conclusion") == "neutral"
+        and body["output"]["title"] == "not enrolled",
+        body,
+    )
     calls, _ = run(
         "the named check can be the required one", 0, CHECK_NAME="owner-verify"
     )

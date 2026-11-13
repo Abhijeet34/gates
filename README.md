@@ -287,6 +287,7 @@ The job runs the base commit's copy of the script, so a pull request cannot pass
 `run/owner-verify.py --repo OWNER/NAME --pr N --head SHA --base SHA --tree DIR [--review FILE]` decides the `owner-verify` check the verifier App posts.
 It reads the pull request, its files, the base's `.github/owner-verify.toml` and `.github/CODEOWNERS`, the owner's reviews, and the head's workflow runs, their jobs and its check runs named `checks` through `gh api`, and runs `run/weakening.py` beside it over `DIR`, a git directory holding both commits; no file of the head is executed.
 It exits 0 to pass, 1 to refuse and 2 when it cannot decide, which the verifier posts as a failure.
+It exits 3 when the base has no `.github/owner-verify.toml` (a 404 on that one read), which the verifier posts as `neutral`, so the pull request that enrols a repository can go green; a malformed list, a 5xx or a timeout still exit 2.
 
 The tier list, read from the base and never from the head:
 

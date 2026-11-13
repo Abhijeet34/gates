@@ -31,6 +31,7 @@ esac
 case ${VERDICT:-} in
     success) conclusion=success title="passes" ;;
     failure) conclusion=failure title="refused" ;;
+    neutral) conclusion=neutral title="not enrolled" ;;
     undecided) conclusion=failure title="could not decide" ;;
     *) conclusion=failure title="could not decide" SUMMARY="" ;;
 esac

@@ -42,7 +42,10 @@ from pathlib import Path
 page = Path(os.environ["GH_STUB"]) / sys.argv[-1].replace("/", "__")
 if not page.is_file():
     sys.exit("gh: Not Found (HTTP 404)")
-sys.stdout.write(page.read_text())
+text = page.read_text()
+if text.startswith("ERR:"):
+    sys.exit(text[4:])
+sys.stdout.write(text)
 """
 
 TIERS = """\
@@ -457,10 +460,30 @@ def cases():
             "--pr must be digits",
         ),
         (
-            "a base with no tier list cannot decide",
+            "a base with no tier list is not enrolled",
             dict(files=[], tiers=None),
+            3,
+            "owner-verify: not enrolled: no .github/owner-verify.toml at BASE",
+        ),
+        (
+            "a malformed tier list still cannot decide",
+            dict(files=[], tiers=file_page("owner = [\n")),
             2,
-            "gh api repos/Abhijeet34/fixture/contents/.github/owner-verify.toml",
+            "could not decide",
+        ),
+        (
+            "a 5xx reading the tier list cannot decide",
+            dict(files=[], tiers="ERR:gh: Bad Gateway (HTTP 502)"),
+            2,
+            "could not decide: gh api repos/Abhijeet34/fixture/contents/.github/owner-verify.toml",
+        ),
+        (
+            "a timeout reading the tier list cannot decide",
+            dict(
+                files=[], tiers="ERR:Post: context deadline exceeded (Client.Timeout)"
+            ),
+            2,
+            "could not decide",
         ),
         (
             "a tier list with an unknown key cannot decide",
@@ -763,6 +786,7 @@ def main():
             head = head_of(case.get("tree", "clean"))
             case = resolve(case, head)
             code, out = run(case)
+            want_line = want_line.replace("BASE", TREES[case.get("tree", "clean")][1])
             if code == want_code and want_line in out:
                 print(f"ok   {name}")
             else:

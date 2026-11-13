@@ -6,7 +6,7 @@
 # any that is not digits or 40 hex before it is used. The head and base are
 # fetched as objects into a bare repository, so no file of the head is checked
 # out, and the judge reads them with git; nothing of the head runs.
-# Always exits 0 once it has written `verdict`: success, failure or undecided.
+# Always exits 0 once it has written `verdict`: success, failure, neutral or undecided.
 
 set -euo pipefail
 
@@ -43,5 +43,6 @@ out=$(python3 "$here/gates/run/owner-verify.py" --repo "$GITHUB_REPOSITORY" --pr
 case $rc in
     0) emit success "$out" ;;
     1) emit failure "$out" ;;
+    3) emit neutral "$out" ;;
     *) emit undecided "$out" ;;
 esac
