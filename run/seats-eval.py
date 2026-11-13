@@ -184,11 +184,11 @@ def run_one(root, name, case, variant, styles, store, record):
     log = store / "seats.jsonl"
     recs = [json.loads(ln) for ln in log.read_text().splitlines()] if log.exists() else []
     rec = next((r for r in reversed(recs) if r["head"] == head), None)
+    if rec is not None and record:
+        keep(rec, store, record / name / variant)
     if rec is None or done.returncode not in (0, 1):
         last = (done.stdout + done.stderr).strip().splitlines()[-1:] or ["no output"]
         return "undecided", f"seats.py exited {done.returncode}: {last[0]}"
-    if record:
-        keep(rec, store, record / name / variant)
     holds = [
         f"{s['seat']}: {f['path']}:{f['line']} ({f['side']})"
         for s in rec["seats"]["seats"]
