@@ -61,6 +61,8 @@ SEAT_SECONDS = 300
 CONTEXT = 15  # lines around each hunk: a weakening often reads only against its neighbours
 SIDES = ("head", "base")
 SHA = re.compile(r"^[0-9a-f]{40}$")
+# review.sit's words for a reply it could not read an answer from; pinned by .ci/test-seats.py.
+UNREADABLE = "gave no readable answer"
 
 SYSTEM = """You are one of two review seats that stand in for the repository owner's \
 review of a change to its safeguard paths, inside a merge gate. Each safeguard path \
@@ -182,6 +184,31 @@ def prompt_for(seat, tiers, mine, others, pr, diff):
     )
 
 
+def answer_of(text):
+    """The answer object in a reply: a seat may write prose with braces in it first, which
+    review.answer_of would read from. Two answers that disagree are no answer, so a seat
+    that quotes a planted `"approve": true` beside its hold is never read as approving."""
+    decoder, found, i = json.JSONDecoder(), [], 0
+    while (i := text.find("{", i)) >= 0:
+        try:
+            obj, end = decoder.raw_decode(text, i)
+        except ValueError:
+            i += 1
+            continue
+        if isinstance(obj, dict) and "approve" in obj:
+            found.append(obj)
+        i = end
+    if not found:
+        raise ValueError("no JSON object with an approve key")
+    if len({json.dumps(o.get("approve")) for o in found}) > 1:
+        raise ValueError("answers that disagree on approve")
+    return found[-1]
+
+
+# review.sit reads each reply with its module's answer_of; a seats process reads with this one.
+review.answer_of = answer_of
+
+
 def findings_of(answer, name):
     approve, found = answer.get("approve"), answer.get("findings")
     if not isinstance(approve, bool) or not isinstance(found, list):
@@ -249,14 +276,24 @@ def sit_all(tree, base, head, tiers, mine, others, pr, store, state, say):
                 },
             },
         }
-        prompt = prompt_for(name, tiers, mine, others, pr, diff)
-        try:
-            answer = review.sit(
-                seat, SYSTEM, prompt, SEAT_SECONDS, f"its {SEAT_SECONDS}s budget",
-                budget, store, state["seats"],
-            )  # fmt: skip
-        except review.Undecided as e:
-            raise Undecided(str(e)) from e
+        for again in (False, True):
+            if again:
+                # An unreadable reply is no vote, so the seat sits once more, fresh;
+                # a hold or an approval is never sat again.
+                seat = {**seat, "seat": f"{name} again"}
+                for k in ("reply", "duration_ms", "input_tokens", "output_tokens"):
+                    seat.pop(k, None)
+            prompt = prompt_for(seat["seat"], tiers, mine, others, pr, diff)
+            try:
+                answer = review.sit(
+                    seat, SYSTEM, prompt, SEAT_SECONDS, f"its {SEAT_SECONDS}s budget",
+                    budget, store, state["seats"],
+                )  # fmt: skip
+                break
+            except review.Undecided as e:
+                if again or UNREADABLE not in str(e):
+                    raise Undecided(str(e)) from e
+                say(f"{name} on {model}: {e}; it sits once more")
         approve, found = findings_of(answer, name)
         for f in found:
             f["stands"] = stands(tree, base, head, f)

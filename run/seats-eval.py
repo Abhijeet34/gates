@@ -161,7 +161,7 @@ def keep(rec, store, out):
         # A seat that timed out kept no reply; its replay is undecided, as it was live.
         if str(seat.get("reply", "")).startswith("sha256:"):
             data = (store / "logs" / f"{seat['reply'][7:]}.log").read_bytes()
-            (out / f"{seat['seat']}.json").write_bytes(data)
+            (out / f"{seat['seat'].replace(' ', '-')}.json").write_bytes(data)
 
 
 def run_one(root, name, case, variant, styles, store, record):
@@ -193,7 +193,11 @@ def run_one(root, name, case, variant, styles, store, record):
         f"{s['seat']}: {f['path']}:{f['line']} ({f['side']})"
         for s in rec["seats"]["seats"]
         for f in s.get("findings", [])
-    ] or [f"{s['seat']}: held with no finding" for s in rec["seats"]["seats"] if not s.get("approve")]
+    ] or [
+        f"{s['seat']}: held with no finding"
+        for s in rec["seats"]["seats"]
+        if s.get("approve") is False
+    ]
     if rec["verdict"] == "hold":
         return "held", "; ".join(holds)
     return "approved", "every seat approved"
