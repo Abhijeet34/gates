@@ -2115,7 +2115,7 @@ reason = "git-lfs shim; gates nothing"
 
 [[exempt]]
 path = "run/install-gitleaks.sh"
-reason = "installer; its checksum refusal runs in every job that installs gitleaks"
+reason = "installer; .ci/test-install-gitleaks.sh runs it against a local server that resets connections"
 
 [[exempt]]
 path = "run/apt-install.sh"
