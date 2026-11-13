@@ -303,7 +303,7 @@ ci = ".github/workflows/ci.yml"  # optional; this is the default
 | Each changed path, by both names on a rename, in the first list that covers it | Verdict |
 | --- | --- |
 | `maintainer` | passes only with the owner's approval at the head |
-| `workflow` | held until its privilege reader, canary and review are built |
+| `workflow` | passes when the privilege reader below finds no trigger, permission or credential changed; held otherwise |
 | `verified` | passes on a review verdict `{"head": SHA, "blocking": 0}` for this head, never for a head outside the repository |
 | `checked`, or no list | passes |
 | any path, when `run/weakening.py` finds a weakening no record covers | refuses |
@@ -315,6 +315,17 @@ The judge reads it from the Actions runs and jobs API, not from the check run na
 - every check run named `checks` on the head, from any app and of any conclusion, is the check run of a `checks` job of a `pull_request` or `pull_request_review` run of that workflow at the head.
 
 A head with no such run, a `checks` job not yet ended or not green, or any other check run named `checks` is refused; the first says it is judged again once the job ends.
+
+The privilege reader compares a workflow's base and head copies from `DIR`, by lines and never as parsed YAML, so it fails closed.
+It holds the edit when:
+
+- a top-level key other than `name`, `run-name`, `jobs`, `env`, `defaults` or `concurrency` changed, so `on` in any spelling (`'on'`, YAML 1.1's `true`) is compared whole, with the root read at its shallowest indent;
+- a `permissions:`, `secrets:` or `environment:` block changed at any depth;
+- a `runs-on` the base lacked names a label that is not a GitHub-hosted image, or any `runs-on` reads an expression;
+- a changed line names `secrets`, `permissions` or `self-hosted` in any other form, or opens a flow mapping, an explicit key, a tag or an escaped key, or holds a tab or a non-ASCII space, or the file uses an anchor or alias;
+- the workflow is new, deleted, renamed, a link, not UTF-8 or not `.yml` or `.yaml`.
+
+It does not judge what a step runs: a changed action pin, script or job passes here, and `run/weakening.py` beside it still refuses a relaxed condition or a moving ref.
 So the verifier must be dispatched after CI ends, which is the stub's to arrange.
 
 The owner's approval at the head passes every row: it is the owner's latest approving, changes-requested or dismissed review, matched by numeric id, being `APPROVED` on the head commit, on any pull request at that head into the default branch.
@@ -325,7 +336,8 @@ It refuses a pull request into any branch but the default, and a run whose head 
 It cannot decide when an input is not digits or 40 hex, a list holds an unknown key, a path twice, a glob, `..` or a non-ASCII byte, `maintainer` omits either list file, `ci` is not a literal file path or the base does not hold it, `CODEOWNERS` has a line other than `/<path> @<owner>` or differs from `maintainer`, either file is a link or over 1 MB, the file list or a runs, jobs or check-runs list is shorter than its total, or any read fails.
 
 `.ci/test-owner-verify.py` serves each case through a stub `gh` against fixture git trees, one per row above and per refusal, including six CODEOWNERS disguises and a duplicated list, recorded 2026-11-12, and 18 CI cases: a forged `checks` with no run, one beside a green run, a run of another path, another event or another head, a failed, running or missing `checks` job, re-runs and two runs.
-`.ci/gate-registry.toml` proves the rows `owner-verify` and `owner-verify-ci`.
+Its workflow cases, added 2026-11-13, are twelve edits that change no trigger, permission or credential and pass, each held before the reader, and 22 that stay held, among them a trigger added, a write scope, a secret, an environment, a non-hosted runner and each unread form above.
+`.ci/gate-registry.toml` proves the rows `owner-verify`, `owner-verify-ci` and `owner-verify-workflow`.
 
 ## The verifier branch
 
@@ -358,7 +370,7 @@ The ten invariants, which must hold from the first push because a run of an old 
 | 10 | a head from a fork gets the deterministic verdict alone, so no review runs for a stranger | `run/owner-verify.py` |
 
 The first commit is `activate.sh --init <gates commit>` in an empty directory, run from that commit's copy; each later one is `./activate.sh <gates commit>` in a checkout of the branch, and a rollback is the same with the earlier commit.
-Not built yet: the review job that writes `--review`, the workflow route's privilege reader and canary, and the activation digest; until then a `verified` or `workflow` path needs the owner's approval.
+Not built yet: the review job that writes `--review`, the workflow route's canary and review, and the activation digest; until then a `verified` path, and a `workflow` path the privilege reader holds, needs the owner's approval.
 
 `.ci/test-verifier.py` reads the workflow for invariants 3 to 6 and shows each refusing a planted line, then runs `classify.sh`, `post.sh`, `activate.sh` and `ruleset-read.sh` against stub programs, fixture repositories over `file://` and an RSA key made for the run.
 
