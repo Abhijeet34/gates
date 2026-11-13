@@ -215,7 +215,9 @@ def static_cases():
         (
             "a post that skips on failure",
             lambda t: t.replace(
-                "    needs: classify\n    if: ${{ always() }}\n", "    needs: classify\n", 1
+                "    needs: classify\n    if: ${{ always() }}\n",
+                "    needs: classify\n",
+                1,
             ),
         ),
         (
@@ -396,11 +398,15 @@ def classify_cases(tmp):
         "success",
         "seats: approve: all 2 seats approve",
         REVIEW_VERDICT=base64.b64encode(verdict.encode()).decode(),
-        REVIEW_SUMMARY=base64.b64encode(b"seats: approve: all 2 seats approve").decode(),
+        REVIEW_SUMMARY=base64.b64encode(
+            b"seats: approve: all 2 seats approve"
+        ).decode(),
     )
     check(
         "classify: the judge is given the review's verdict as its --review file",
-        log.exists() and f"--review " in log.read_text() and f"review: {verdict}" in log.read_text(),
+        log.exists()
+        and "--review " in log.read_text()
+        and f"review: {verdict}" in log.read_text(),
         log.read_text() if log.exists() else "",
     )
     log = run("no review verdict gives the judge none", "success", "owner-verify: stub")
@@ -423,6 +429,8 @@ def classify_cases(tmp):
 
 
 # --- review.sh -----------------------------------------------------------------
+
+LOGIN = "fixture-login"  # noqa: S105 not a credential: the stub only echoes it back
 
 SEATS_STUB = """#!/usr/bin/env python3
 import json, os, shutil, sys
@@ -476,7 +484,9 @@ def review_cases(tmp):
     stub(cli, "claude", "#!/bin/sh\necho fake\n")
     tgz = tmp / "cli.tgz"
     assert sh("tar", "-czf", tgz, "-C", tmp / "cli", "package").returncode == 0
-    digest = sh("bash", "-c", f"openssl dgst -sha512 -binary {tgz} | base64 | tr -d '\\n'").stdout
+    digest = sh(
+        "bash", "-c", f"openssl dgst -sha512 -binary {tgz} | base64 | tr -d '\\n'"
+    ).stdout
     source = (KERNEL / "review.sh").read_text()
     pinned = re.search(r"(?m)^CLI_SHA512=(\S+)$", source)
     bin_dir = tmp / "review-bin"
@@ -486,7 +496,9 @@ def review_cases(tmp):
     def kernel(sha512):
         k = Path(tempfile.mkdtemp(dir=tmp))
         (k / "gates/run").mkdir(parents=True)
-        (k / "review.sh").write_text(source.replace(pinned.group(0), f"CLI_SHA512={sha512}"))
+        (k / "review.sh").write_text(
+            source.replace(pinned.group(0), f"CLI_SHA512={sha512}")
+        )
         stub(k / "gates/run", "seats.py", SEATS_STUB)
         return k
 
@@ -494,7 +506,11 @@ def review_cases(tmp):
 
     def run(name, want, says_in, k=ours, **env):
         n = len(results)
-        out, seats_log, curl_log = tmp / f"rout-{n}", tmp / f"seats-{n}", tmp / f"curl-{n}"
+        out, seats_log, curl_log = (
+            tmp / f"rout-{n}",
+            tmp / f"seats-{n}",
+            tmp / f"curl-{n}",
+        )
         e = {
             **GIT_ENV,
             "PATH": f"{bin_dir}:{os.environ['PATH']}",
@@ -506,7 +522,7 @@ def review_cases(tmp):
             "PR": "7",
             "HEAD_SHA": head,
             "BASE_SHA": base,
-            "CLAUDE_CODE_OAUTH_TOKEN": "t0k",
+            "CLAUDE_CODE_OAUTH_TOKEN": LOGIN,
             "SEATS_LOG": str(seats_log),
             "CURL_LOG": str(curl_log),
             "CLI_TGZ": str(tgz),
@@ -515,8 +531,12 @@ def review_cases(tmp):
         proc = sh("bash", "-e", k / "review.sh", env=e)
         got = outputs(out) if out.exists() else {}
         try:
-            summary = base64.b64decode((got.get("summary") or [""])[0], validate=True).decode()
-            verdict = base64.b64decode((got.get("verdict") or ["?"])[0], validate=True).decode()
+            summary = base64.b64decode(
+                (got.get("summary") or [""])[0], validate=True
+            ).decode()
+            verdict = base64.b64decode(
+                (got.get("verdict") or ["?"])[0], validate=True
+            ).decode()
         except ValueError:
             summary, verdict = "(not one base64 line)", "?"
         ok = (
@@ -525,22 +545,40 @@ def review_cases(tmp):
             and (json.loads(verdict) if verdict else None) == want
             and says_in in summary
         )
-        check(f"review: {name}", ok, f"{proc.stdout}{proc.stderr}\n{got}\n{verdict}\n{summary}")
-        lines = lambda p: [json.loads(x) for x in p.read_text().splitlines()] if p.exists() else []  # noqa: E731
-        return lines(seats_log), curl_log.exists()
+        check(
+            f"review: {name}",
+            ok,
+            f"{proc.stdout}{proc.stderr}\n{got}\n{verdict}\n{summary}",
+        )
+        sat = (
+            [json.loads(x) for x in seats_log.read_text().splitlines()]
+            if seats_log.exists()
+            else []
+        )
+        return sat, curl_log.exists()
 
-    sat, fetched = run("an approval is handed on as blocking 0", {"head": head, "blocking": 0}, "seats: stub")
+    sat, fetched = run(
+        "an approval is handed on as blocking 0",
+        {"head": head, "blocking": 0},
+        "seats: stub",
+    )
     check(
         "review: the plan runs first, then the seats with the pinned CLI first on PATH and the login",
         len(sat) == 2
         and "plan" in sat[0]
         and fetched
         and str(sat[1]["claude"]).endswith("/bin/claude")
-        and sat[1]["token"] == "t0k"
-        and f"--repo o/r --pr 7 --head {head} --base {base} --tree" in " ".join(sat[1]["args"]),
+        and sat[1]["token"] == LOGIN
+        and f"--repo o/r --pr 7 --head {head} --base {base} --tree"
+        in " ".join(sat[1]["args"]),
         sat,
     )
-    run("a hold is handed on as blocking", {"head": head, "blocking": 1}, "seats: stub", SEATS_RC="1")
+    run(
+        "a hold is handed on as blocking",
+        {"head": head, "blocking": 1},
+        "seats: stub",
+        SEATS_RC="1",
+    )
     run("an undecided review hands on no verdict", None, "seats: stub", SEATS_RC="2")
     sat, fetched = run(
         "a head with nothing for the seats installs nothing and sits nobody",
@@ -549,12 +587,28 @@ def review_cases(tmp):
         PLAN_RC="3",
         PLAN_SAYS="seats: no seat sits: no path under the base's verified list changed",
     )
-    check("review: nothing for the seats fetches no CLI and sits nobody", len(sat) == 1 and not fetched, sat)
-    sat, _ = run("a CLI tarball off its pinned sha512 is refused", None, "not the pinned", k=real)
+    check(
+        "review: nothing for the seats fetches no CLI and sits nobody",
+        len(sat) == 1 and not fetched,
+        sat,
+    )
+    sat, _ = run(
+        "a CLI tarball off its pinned sha512 is refused", None, "not the pinned", k=real
+    )
     check("review: an unpinned CLI sits nobody", len(sat) == 1, sat)
-    sat, _ = run("a failed download sits nobody", None, "downloading the CLI failed", CURL_RC="22")
+    sat, _ = run(
+        "a failed download sits nobody",
+        None,
+        "downloading the CLI failed",
+        CURL_RC="22",
+    )
     check("review: no CLI, no seat", len(sat) == 1, sat)
-    sat, _ = run("an empty login sits nobody", None, "CLAUDE_CODE_OAUTH_TOKEN is empty", CLAUDE_CODE_OAUTH_TOKEN="")
+    sat, _ = run(
+        "an empty login sits nobody",
+        None,
+        "CLAUDE_CODE_OAUTH_TOKEN is empty",
+        CLAUDE_CODE_OAUTH_TOKEN="",
+    )
     check("review: no login, no seat", len(sat) == 1, sat)
     run(
         "text from the change cannot add an output line",
@@ -564,9 +618,21 @@ def review_cases(tmp):
         SEATS_SAYS="x\nverdict=e30=\nsummary=",
     )
     for name, env, says in [
-        ("a pull request that is not digits sits nobody", {"PR": "7;x"}, "could not decide"),
-        ("a run at another ref sits nobody", {"GITHUB_REF": "refs/heads/main"}, "not refs/heads/verifier"),
-        ("a head that cannot be fetched sits nobody", {"HEAD_SHA": "c" * 40}, "fetching the head and base failed"),
+        (
+            "a pull request that is not digits sits nobody",
+            {"PR": "7;x"},
+            "could not decide",
+        ),
+        (
+            "a run at another ref sits nobody",
+            {"GITHUB_REF": "refs/heads/main"},
+            "not refs/heads/verifier",
+        ),
+        (
+            "a head that cannot be fetched sits nobody",
+            {"HEAD_SHA": "c" * 40},
+            "fetching the head and base failed",
+        ),
     ]:
         sat, fetched = run(name, None, says, **env)
         check(f"review: {name}, and fetches nothing", sat == [] and not fetched, sat)
