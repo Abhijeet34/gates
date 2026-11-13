@@ -329,6 +329,8 @@ So no merged change, on `main` or on a builder's branch, runs with the verifier 
 | `post.sh` | `verifier/post.sh` | refuses a re-run, a ref other than `verifier` and a kernel that is not the branch's tip; signs a JWT with the key from the environment, mints a token for `checks: write` on this repository alone, posts the check run and revokes the token |
 | `activate.sh` | `verifier/activate.sh` | moves the branch to one gates commit that `main` contains and whose `checks` run is green, writing exactly the files `kernel.txt` names; pushes nothing |
 | `ruleset-read.sh` | `verifier/ruleset-read.sh` | prints a ruleset file against the live ruleset before the maintainer applies it |
+| `sitting.py` | `verifier/sitting.py` | the one-command sitting below: the ruleset, the branch, the environments, the App and its key, the installation |
+| `ruleset.json` | `verifier/ruleset.json` | the ruleset `sitting.py` applies: only the admin role creates, updates, deletes or force-pushes `refs/heads/verifier` |
 | `gates/run/owner-verify.py`, `gates/run/weakening.py`, `gates/run/gate.py`, `gates/policy/relaxations.toml`, `gates/COMMIT` | that gates commit | the judge and what it reads, and which commit they came from |
 
 The ten invariants, which must hold from the first push because a run of an old kernel cannot be patched afterwards:
@@ -347,9 +349,35 @@ The ten invariants, which must hold from the first push because a run of an old 
 | 10 | a head from a fork gets the deterministic verdict alone, so no review runs for a stranger | `run/owner-verify.py` |
 
 The first commit is `activate.sh --init <gates commit>` in an empty directory, run from that commit's copy; each later one is `./activate.sh <gates commit>` in a checkout of the branch, and a rollback is the same with the earlier commit.
+
+### The sitting
+
+`sitting.py OWNER/NAME <gates commit>` is the whole setup of one repository as one command, run by an admin whose `gh` is signed in, the first time from that gates commit's `verifier/sitting.py` and afterwards from the branch's copy.
+It takes the five steps in invariant 8's order, and each one reads the forge before writing anything and writes only what differs:
+
+| Step | Done when | Writes otherwise |
+| --- | --- | --- |
+| 1 | a ruleset named as in `ruleset.json` has the same shape as `ruleset-read.sh` compares | creates it, or puts the file over it |
+| 2 | the remote `verifier` branch's `gates/COMMIT` is the commit | `activate.sh --init` (the running copy) or the branch's own `activate.sh` (invariant 9), then one push |
+| 3 | `verify` and `review` admit custom branches and exactly one policy, the branch `verifier` | the environment, the missing policy, and removes any other |
+| 4 | `verify` holds the secret `VERIFIER_APP_KEY` and the variables `VERIFIER_APP_ID` and `VERIFIER_APP_SLUG` | a new App through the manifest flow (`checks: write`, an inactive webhook), its key and its id and slug |
+| 5 | the App's installation covers the repository, read from `user/installations` | nothing: it opens the installation page and polls until the install appears |
+
+So a second run makes no write, and a run after a failure finds the earlier steps in place and resumes at the failed one; the forge is the only record, nothing is kept on disk.
+The maintainer clicks twice in the browser, to confirm the App and to install it, and reads nothing else: the run prints one line per step and `done, N writes`.
+
+Step 4 serves a page on `127.0.0.1` that posts the manifest to the forge with a 32-byte random `state`.
+The callback is refused with a 400 unless its `state` is this run's (compared in constant time), the code is exchanged once, and no reply holds the code or any secret.
+The key goes from the conversion's reply to `gh secret set` on stdin, so it is in no file, argument list or log line.
+The forge shows a key once, so a failure between the conversion and the secret leaves an App with no stored key: the refusal names it for the maintainer to delete, and the resumed step makes a new one.
+`SITTING_WAIT` (900 s) bounds each browser wait; `GITHUB_SERVER_URL`, `SITTING_GIT_URL` and `SITTING_BROWSER` point it at a stand-in forge.
+
+Accepted as the design's weakest point: steps 4 and 5 rest on the maintainer's tap in the browser, which no record shows the maintainer reading.
+The maintainer reads the kernel itself before it lands (`git show HEAD` after `activate.sh`), a kernel change is never batched, and the heads it judges must be strict.
 Not built yet: the review job that writes `--review`, the workflow route's privilege reader and canary, and the activation digest; until then a `verified` or `workflow` path needs the owner's approval.
 
 `.ci/test-verifier.py` reads the workflow for invariants 3 to 6 and shows each refusing a planted line, then runs `classify.sh`, `post.sh`, `activate.sh` and `ruleset-read.sh` against stub programs, fixture repositories over `file://` and an RSA key made for the run.
+It runs `sitting.py` against a stand-in forge (`.ci/fixtures/forge-gh.py`, which keeps a secret as its digest alone, and `.ci/fixtures/forge-browser.py`): a failure injected at step 4 resumes at step 4, a run after a whole sitting makes 0 writes, a drifted ruleset costs one write, a wrong `state` is refused with no code exchanged, and no secret is in any file, in the output or in a listener reply.
 
 ## The documentation rows
 

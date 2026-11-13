@@ -69,14 +69,20 @@ def api(method, path, body=None, missing_ok=False):
     if status == 404 and missing_ok:
         return None
     if not 200 <= status < 300:
-        raise Refused(f"{method} {path} answered {status or 'nothing'}: {proc.stderr.strip()[:500]}")
+        raise Refused(
+            f"{method} {path} answered {status or 'nothing'}: {proc.stderr.strip()[:500]}"
+        )
     return json.loads(rest) if rest.strip() else {}
 
 
 def run(argv, cwd=None):
-    proc = subprocess.run([str(a) for a in argv], cwd=cwd, capture_output=True, text=True)
+    proc = subprocess.run(
+        [str(a) for a in argv], cwd=cwd, capture_output=True, text=True
+    )
     if proc.returncode:
-        raise Refused(f"{' '.join(str(a) for a in argv[:3])} failed: {(proc.stderr or proc.stdout).strip()[-1500:]}")
+        raise Refused(
+            f"{' '.join(str(a) for a in argv[:3])} failed: {(proc.stderr or proc.stdout).strip()[-1500:]}"
+        )
     return proc.stdout.strip()
 
 
@@ -84,7 +90,9 @@ def open_url(url):
     say(f"  opening {url} (open it yourself if no browser appears)")
     browser = os.environ.get("SITTING_BROWSER")
     if browser:
-        subprocess.Popen([browser, url], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
+        subprocess.Popen(
+            [browser, url], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL
+        )
     else:
         webbrowser.open(url)
 
@@ -94,11 +102,17 @@ def shape(ruleset):
     return {
         **{k: ruleset.get(k) for k in ("name", "target", "enforcement", "conditions")},
         "bypass_actors": sorted(
-            ({k: a.get(k) for k in ("actor_id", "actor_type", "bypass_mode")} for a in ruleset.get("bypass_actors") or []),
+            (
+                {k: a.get(k) for k in ("actor_id", "actor_type", "bypass_mode")}
+                for a in ruleset.get("bypass_actors") or []
+            ),
             key=lambda a: (a["actor_type"], a["actor_id"]),
         ),
         "rules": sorted(
-            ({"type": r["type"], "parameters": r.get("parameters")} for r in ruleset.get("rules") or []),
+            (
+                {"type": r["type"], "parameters": r.get("parameters")}
+                for r in ruleset.get("rules") or []
+            ),
             key=lambda r: r["type"],
         ),
     }
@@ -106,7 +120,13 @@ def shape(ruleset):
 
 def step_ruleset(repo, _commit):
     want = json.loads((HERE / "ruleset.json").read_text())
-    found = [r for r in api("GET", f"repos/{repo}/rulesets?includes_parents=false&per_page=100") if r["name"] == want["name"]]
+    found = [
+        r
+        for r in api(
+            "GET", f"repos/{repo}/rulesets?includes_parents=false&per_page=100"
+        )
+        if r["name"] == want["name"]
+    ]
     if not found:
         api("POST", f"repos/{repo}/rulesets", want)
         return True
@@ -144,14 +164,24 @@ def step_environments(repo, _commit):
         if env is None or env.get("deployment_branch_policy") != POLICY:
             api("PUT", base, {"deployment_branch_policy": POLICY})
             changed = True
-        listed = api("GET", f"{base}/deployment-branch-policies?per_page=100")["branch_policies"]
-        keep = [p for p in listed if p.get("name") == "verifier" and p.get("type", "branch") == "branch"][:1]
+        listed = api("GET", f"{base}/deployment-branch-policies?per_page=100")[
+            "branch_policies"
+        ]
+        keep = [
+            p
+            for p in listed
+            if p.get("name") == "verifier" and p.get("type", "branch") == "branch"
+        ][:1]
         for policy in listed:
             if policy not in keep:
                 api("DELETE", f"{base}/deployment-branch-policies/{policy['id']}")
                 changed = True
         if not keep:
-            api("POST", f"{base}/deployment-branch-policies", {"name": "verifier", "type": "branch"})
+            api(
+                "POST",
+                f"{base}/deployment-branch-policies",
+                {"name": "verifier", "type": "branch"},
+            )
             changed = True
     return changed
 
@@ -189,15 +219,22 @@ class Listener:
                         f'<input type=hidden name="manifest" value="{html.escape(manifest)}">'
                         "<button>Create the App</button></form><script>document.getElementById('f').submit()</script>"
                     )
-                    return self.reply(200, "Sending the verifier App's manifest to the forge.")
+                    return self.reply(
+                        200, "Sending the verifier App's manifest to the forge."
+                    )
                 if url.path != "/created" or listener.done.is_set():
                     return self.reply(404, "Nothing here.")
                 state = (query.get("state") or [""])[0]
                 if not hmac.compare_digest(state.encode(), listener.state.encode()):
-                    return self.reply(400, "Refused: the state is not this sitting's, so the code was not used.")
+                    return self.reply(
+                        400,
+                        "Refused: the state is not this sitting's, so the code was not used.",
+                    )
                 code = (query.get("code") or [""])[0]
                 if not re.fullmatch(r"[A-Za-z0-9_-]{1,100}", code):
-                    return self.reply(400, "Refused: the code is not one the forge issues.")
+                    return self.reply(
+                        400, "Refused: the code is not one the forge issues."
+                    )
                 listener.code = code
                 listener.done.set()
                 return self.reply(200, "The App is created. Return to the terminal.")
@@ -220,13 +257,23 @@ class Listener:
 
 def step_key(repo, _commit):
     base = f"repos/{repo}/environments/verify"
-    held = [api("GET", f"{base}/{kind}/{name}", missing_ok=True) for kind, name in
-            (("secrets", "VERIFIER_APP_KEY"), ("variables", "VERIFIER_APP_ID"), ("variables", "VERIFIER_APP_SLUG"))]
+    held = [
+        api("GET", f"{base}/{kind}/{name}", missing_ok=True)
+        for kind, name in (
+            ("secrets", "VERIFIER_APP_KEY"),
+            ("variables", "VERIFIER_APP_ID"),
+            ("variables", "VERIFIER_APP_SLUG"),
+        )
+    ]
     if all(held):
         return False
     owner = repo.split("/")[0]
     org = api("GET", f"users/{owner}")["type"] == "Organization"
-    action = f"{SERVER}/organizations/{owner}/settings/apps/new" if org else f"{SERVER}/settings/apps/new"
+    action = (
+        f"{SERVER}/organizations/{owner}/settings/apps/new"
+        if org
+        else f"{SERVER}/settings/apps/new"
+    )
 
     def manifest(redirect):
         return {
@@ -242,11 +289,17 @@ def step_key(repo, _commit):
     say("  confirm the App in the browser; nothing else is asked of you there")
     code = Listener(action, manifest).wait()
     if code is None:
-        raise Refused(f"no callback with this sitting's state came within {WAIT:.0f} s, so no App was made from it")
+        raise Refused(
+            f"no callback with this sitting's state came within {WAIT:.0f} s, so no App was made from it"
+        )
     app = api("POST", f"app-manifests/{code}/conversions")
     slug, app_id = app["slug"], str(app["id"])
     say(f"  created the App {slug} ({app_id})")
-    stored = gh(["secret", "set", "VERIFIER_APP_KEY", "--env", "verify", "--repo", repo], stdin=app.pop("pem"), write=True)
+    stored = gh(
+        ["secret", "set", "VERIFIER_APP_KEY", "--env", "verify", "--repo", repo],
+        stdin=app.pop("pem"),
+        write=True,
+    )
     app.clear()
     if stored.returncode:
         raise Refused(
@@ -254,16 +307,33 @@ def step_key(repo, _commit):
             "and its key cannot be read again, so delete that App in its settings"
         )
     for name, value in (("VERIFIER_APP_ID", app_id), ("VERIFIER_APP_SLUG", slug)):
-        proc = gh(["variable", "set", name, "--env", "verify", "--repo", repo, "--body", value], write=True)
+        proc = gh(
+            [
+                "variable",
+                "set",
+                name,
+                "--env",
+                "verify",
+                "--repo",
+                repo,
+                "--body",
+                value,
+            ],
+            write=True,
+        )
         if proc.returncode:
-            raise Refused(f"setting {name} failed: {proc.stderr.strip()[:500]}; delete the App {slug} ({app_id})")
+            raise Refused(
+                f"setting {name} failed: {proc.stderr.strip()[:500]}; delete the App {slug} ({app_id})"
+            )
     return True
 
 
 def installed(repo, app_id):
     for inst in api("GET", "user/installations?per_page=100")["installations"]:
         if str(inst.get("app_id")) == app_id:
-            listed = api("GET", f"user/installations/{inst['id']}/repositories?per_page=100")["repositories"]
+            listed = api(
+                "GET", f"user/installations/{inst['id']}/repositories?per_page=100"
+            )["repositories"]
             if any(r["full_name"].lower() == repo.lower() for r in listed):
                 return True
     return False
@@ -271,7 +341,10 @@ def installed(repo, app_id):
 
 def step_install(repo, _commit):
     base = f"repos/{repo}/environments/verify/variables"
-    app_id, slug = (api("GET", f"{base}/{name}")["value"] for name in ("VERIFIER_APP_ID", "VERIFIER_APP_SLUG"))
+    app_id, slug = (
+        api("GET", f"{base}/{name}")["value"]
+        for name in ("VERIFIER_APP_ID", "VERIFIER_APP_SLUG")
+    )
     if installed(repo, app_id):
         return False
     url = f"{SERVER}/apps/{slug}/installations/new"
@@ -282,7 +355,9 @@ def step_install(repo, _commit):
         time.sleep(POLL)
         if installed(repo, app_id):
             return True
-    raise Refused(f"the App {slug} is not installed on {repo}; install it at {url}, choosing {repo}")
+    raise Refused(
+        f"the App {slug} is not installed on {repo}; install it at {url}, choosing {repo}"
+    )
 
 
 STEPS = [
@@ -295,7 +370,11 @@ STEPS = [
 
 
 def main(argv):
-    if len(argv) != 2 or not re.fullmatch(r"[A-Za-z0-9-]+/[A-Za-z0-9._-]+", argv[0]) or not re.fullmatch(r"[0-9a-f]{40}", argv[1]):
+    if (
+        len(argv) != 2
+        or not re.fullmatch(r"[A-Za-z0-9-]+/[A-Za-z0-9._-]+", argv[0])
+        or not re.fullmatch(r"[0-9a-f]{40}", argv[1])
+    ):
         print("usage: sitting.py OWNER/NAME <40-hex gates commit>", file=sys.stderr)
         return 2
     repo, commit = argv
@@ -304,7 +383,10 @@ def main(argv):
             changed = step(repo, commit)
         except Refused as e:
             print(f"sitting: refused at step {n}, {what}: {e}", file=sys.stderr)
-            print(f"sitting: run the same command again to resume at step {n}; {writes} writes made", file=sys.stderr)
+            print(
+                f"sitting: run the same command again to resume at step {n}; {writes} writes made",
+                file=sys.stderr,
+            )
             return 1
         say(f"step {n} {what}: {'applied' if changed else 'in place'}")
     say(f"done, {writes} writes")

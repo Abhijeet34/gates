@@ -739,7 +739,11 @@ FIXTURES = ROOT / ".ci/fixtures"
 
 def calls_of(state):
     path = state / "calls.jsonl"
-    return [json.loads(ln) for ln in path.read_text().splitlines()] if path.exists() else []
+    return (
+        [json.loads(ln) for ln in path.read_text().splitlines()]
+        if path.exists()
+        else []
+    )
 
 
 def sitting_cases(tmp):
@@ -758,7 +762,11 @@ def sitting_cases(tmp):
     bin_dir = tmp / "sit-bin"
     bin_dir.mkdir()
     stub(bin_dir, "gh", f'#!/bin/sh\nexec python3 "{FIXTURES}/forge-gh.py" "$@"\n')
-    stub(bin_dir, "browser", f'#!/bin/sh\nexec python3 "{FIXTURES}/forge-browser.py" "$@"\n')
+    stub(
+        bin_dir,
+        "browser",
+        f'#!/bin/sh\nexec python3 "{FIXTURES}/forge-browser.py" "$@"\n',
+    )
     # Made at run time, so no file of this tree holds a value the scan looks for.
     values = {
         "FORGE_PEM": "-----BEGIN RSA PRIVATE KEY-----\n"
@@ -798,7 +806,14 @@ def sitting_cases(tmp):
         return root, state, remote, env
 
     def sit(root, env, **extra):
-        proc = sh("python3", KERNEL / "sitting.py", "o/r", release, cwd=root / "cwd", env={**env, **extra})
+        proc = sh(
+            "python3",
+            KERNEL / "sitting.py",
+            "o/r",
+            release,
+            cwd=root / "cwd",
+            env={**env, **extra},
+        )
         return proc.returncode, proc.stdout + proc.stderr
 
     def writes(calls):
@@ -820,12 +835,17 @@ def sitting_cases(tmp):
     )
     check(
         "sitting: steps 1 to 3 wrote the ruleset, the branch and both environments before it",
-        [w.split(" ")[0] + " " + w.split(" ")[1].split("/")[-1] for w in writes(first)][:2]
+        [w.split(" ")[0] + " " + w.split(" ")[1].split("/")[-1] for w in writes(first)][
+            :2
+        ]
         == ["POST rulesets", "push verifier"]
-        and sum(w.startswith("PUT repos/o/r/environments/") for w in writes(first)) == 2,
+        and sum(w.startswith("PUT repos/o/r/environments/") for w in writes(first))
+        == 2,
         writes(first),
     )
-    replies = [json.loads(ln) for ln in (state / "browser.jsonl").read_text().splitlines()]
+    replies = [
+        json.loads(ln) for ln in (state / "browser.jsonl").read_text().splitlines()
+    ]
     created = [r for r in replies if "/created?" in r["url"]]
     check(
         "sitting: the listener refuses a wrong state and exchanges no code for it",
@@ -836,11 +856,12 @@ def sitting_cases(tmp):
     )
     (state / "wrong-state").unlink()
     rc, out2 = sit(root, env)
-    second = calls_of(state)[len(first):]
+    second = calls_of(state)[len(first) :]
     check(
         "sitting: the second run finds steps 1 to 3 in place and resumes at step 4",
         rc == 0
-        and writes(second)[:1] == [c for c in writes(second) if c.startswith("POST app-manifests/")][:1]
+        and writes(second)[:1]
+        == [c for c in writes(second) if c.startswith("POST app-manifests/")][:1]
         and len(writes(second)) >= 1
         and re.search(r"step 1 .*in place", out2)
         and re.search(r"step 3 .*in place", out2),
@@ -848,7 +869,14 @@ def sitting_cases(tmp):
     )
     db = json.loads((state / "forge.json").read_text())
     verify = db["envs"]["o/r"]["verify"]
-    app = next(iter(a for a in db["apps"].values() if str(a["id"]) == verify["variables"].get("VERIFIER_APP_ID")), None)
+    app = next(
+        iter(
+            a
+            for a in db["apps"].values()
+            if str(a["id"]) == verify["variables"].get("VERIFIER_APP_ID")
+        ),
+        None,
+    )
     check(
         "sitting: the key is the verify environment's secret and the App's id and slug its variables",
         verify["secrets"].get("VERIFIER_APP_KEY")
@@ -860,11 +888,14 @@ def sitting_cases(tmp):
     manifest = json.loads((state / "form.json").read_text())
     check(
         "sitting: the manifest asks for checks write alone, with no webhook, and returns to the local listener",
-        manifest["manifest"]["default_permissions"] == {"checks": "write", "metadata": "read"}
+        manifest["manifest"]["default_permissions"]
+        == {"checks": "write", "metadata": "read"}
         and manifest["manifest"].get("hook_attributes", {}).get("active") is False
         and manifest["manifest"]["public"] is False
         and manifest["manifest"]["redirect_url"].startswith("http://127.0.0.1:")
-        and manifest["action"].startswith("https://forge.invalid/settings/apps/new?state="),
+        and manifest["action"].startswith(
+            "https://forge.invalid/settings/apps/new?state="
+        ),
         manifest,
     )
     rulesets = db["rulesets"]["o/r"]
@@ -874,7 +905,8 @@ def sitting_cases(tmp):
         and all(
             db["envs"]["o/r"][e]["deployment_branch_policy"]
             == {"protected_branches": False, "custom_branch_policies": True}
-            and [(p["name"], p["type"]) for p in db["envs"]["o/r"][e]["policies"]] == [("verifier", "branch")]
+            and [(p["name"], p["type"]) for p in db["envs"]["o/r"][e]["policies"]]
+            == [("verifier", "branch")]
             for e in ("verify", "review")
         )
         and [i["app_id"] for i in db.get("installs", [])] == [app and app["id"]],
@@ -887,7 +919,7 @@ def sitting_cases(tmp):
         tip.stdout + tip.stderr,
     )
     rc, out3 = sit(root, env)
-    third = calls_of(state)[len(first) + len(second):]
+    third = calls_of(state)[len(first) + len(second) :]
     check(
         "sitting: a run after a whole sitting makes 0 writes",
         rc == 0 and writes(third) == [] and "0 writes" in out3,
@@ -901,7 +933,10 @@ def sitting_cases(tmp):
             data = path.read_bytes()
             found += [f"{path}: {k}" for k, v in needles.items() if v.encode() in data]
     for k, v in needles.items():
-        for label, text in (("output", out1 + out2 + out3), ("listener", json.dumps(replies))):
+        for label, text in (
+            ("output", out1 + out2 + out3),
+            ("listener", json.dumps(replies)),
+        ):
             if v in text:
                 found.append(f"{label}: {k}")
     check(
@@ -914,7 +949,7 @@ def sitting_cases(tmp):
     rules[rid]["enforcement"] = "evaluate"
     (state / "forge.json").write_text(json.dumps(db))
     rc, out4 = sit(root, env)
-    fourth = calls_of(state)[len(first) + len(second) + len(third):]
+    fourth = calls_of(state)[len(first) + len(second) + len(third) :]
     check(
         "sitting: a drifted ruleset is put back with one write and nothing else",
         rc == 0 and writes(fourth) == [f"PUT repos/o/r/rulesets/{rid}"],
@@ -925,15 +960,23 @@ def sitting_cases(tmp):
     (state / "only-wrong-state").write_text("")
     rc, out = sit(root, env, SITTING_WAIT="3")
     calls = calls_of(state)
-    replies = [json.loads(ln) for ln in (state / "browser.jsonl").read_text().splitlines()]
+    replies = [
+        json.loads(ln) for ln in (state / "browser.jsonl").read_text().splitlines()
+    ]
     form = json.loads((state / "form.json").read_text())
     check(
         "sitting: with only a wrong state the code is never exchanged and no secret is written",
         rc == 1
         and "step 4" in out
         and [r["status"] for r in replies[1:]] == [400]
-        and not any(c["call"].startswith("POST app-manifests/") or c["call"].startswith("secret set") for c in calls)
-        and form["action"].startswith("https://forge.invalid/organizations/o/settings/apps/new?state="),
+        and not any(
+            c["call"].startswith("POST app-manifests/")
+            or c["call"].startswith("secret set")
+            for c in calls
+        )
+        and form["action"].startswith(
+            "https://forge.invalid/organizations/o/settings/apps/new?state="
+        ),
         f"exit {rc}\n{out}\n{replies}\n{form['action']}",
     )
 

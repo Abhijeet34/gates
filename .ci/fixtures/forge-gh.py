@@ -86,7 +86,12 @@ def api(argv):
     maybe_fail(call)
     route = path.split("?")[0]
     if m := re.fullmatch(r"repos/[^/]+/gates/commits/([0-9a-f]{40})/check-runs", route):
-        check = {"name": "checks", "app": {"id": 15368}, "status": "completed", "conclusion": "success"}
+        check = {
+            "name": "checks",
+            "app": {"id": 15368},
+            "status": "completed",
+            "conclusion": "success",
+        }
         respond(200, {"check_runs": [check]}, include)
     if m := re.fullmatch(r"users/([^/]+)", route):
         respond(200, {"login": m[1], "type": db.get("owner_type", "User")}, include)
@@ -94,7 +99,11 @@ def api(argv):
         repo, rid = m[1], m[2]
         sets = db.setdefault("rulesets", {}).setdefault(repo, {})
         if method == "GET" and rid is None:
-            respond(200, [{"id": int(k), "name": v["name"]} for k, v in sets.items()], include)
+            respond(
+                200,
+                [{"id": int(k), "name": v["name"]} for k, v in sets.items()],
+                include,
+            )
         if method == "GET" and rid in sets:
             respond(200, {"id": int(rid), "source": repo, **sets[rid]}, include)
         if method == "POST" and rid is None:
@@ -110,21 +119,43 @@ def api(argv):
     if m := re.fullmatch(r"repos/([^/]+/[^/]+)/environments/([^/]+)", route):
         repo, name = m[1], m[2]
         if method == "PUT":
-            env = db.setdefault("envs", {}).setdefault(repo, {}).setdefault(name, {"policies": [], "secrets": {}, "variables": {}})
+            env = (
+                db.setdefault("envs", {})
+                .setdefault(repo, {})
+                .setdefault(name, {"policies": [], "secrets": {}, "variables": {}})
+            )
             env["deployment_branch_policy"] = body["deployment_branch_policy"]
             save()
-            respond(200, {"name": name, "deployment_branch_policy": env["deployment_branch_policy"]}, include)
+            respond(
+                200,
+                {
+                    "name": name,
+                    "deployment_branch_policy": env["deployment_branch_policy"],
+                },
+                include,
+            )
         env = env_of(repo, name)
         if env is None:
             respond(404, {"message": "Not Found"}, include)
-        respond(200, {"name": name, "deployment_branch_policy": env["deployment_branch_policy"]}, include)
-    if m := re.fullmatch(r"repos/([^/]+/[^/]+)/environments/([^/]+)/deployment-branch-policies(?:/(\d+))?", route):
+        respond(
+            200,
+            {"name": name, "deployment_branch_policy": env["deployment_branch_policy"]},
+            include,
+        )
+    if m := re.fullmatch(
+        r"repos/([^/]+/[^/]+)/environments/([^/]+)/deployment-branch-policies(?:/(\d+))?",
+        route,
+    ):
         env = env_of(m[1], m[2])
         if env is None:
             respond(404, {"message": "Not Found"}, include)
         policies = env["policies"]
         if method == "GET":
-            respond(200, {"total_count": len(policies), "branch_policies": policies}, include)
+            respond(
+                200,
+                {"total_count": len(policies), "branch_policies": policies},
+                include,
+            )
         if method == "POST":
             policy = {"id": 500 + len(policies), **body}
             policies.append(policy)
@@ -134,32 +165,60 @@ def api(argv):
             env["policies"] = [p for p in policies if str(p["id"]) != m[3]]
             save()
             respond(204, None, include)
-    if m := re.fullmatch(r"repos/([^/]+/[^/]+)/environments/([^/]+)/(secrets|variables)/([A-Z_]+)", route):
+    if m := re.fullmatch(
+        r"repos/([^/]+/[^/]+)/environments/([^/]+)/(secrets|variables)/([A-Z_]+)", route
+    ):
         env = env_of(m[1], m[2])
         kept = env and env[m[3]].get(m[4])
         if kept is None:
             respond(404, {"message": "Not Found"}, include)
-        respond(200, {"name": m[4], **({"value": kept} if m[3] == "variables" else {})}, include)
+        respond(
+            200,
+            {"name": m[4], **({"value": kept} if m[3] == "variables" else {})},
+            include,
+        )
     if m := re.fullmatch(r"app-manifests/([^/]+)/conversions", route):
         manifest = db.setdefault("codes", {}).pop(m[1], None)
         if manifest is None or method != "POST":
             respond(404, {"message": "Not Found"}, include)
         app_id = 900 + len(db.setdefault("apps", {}))
-        slug = re.sub(r"[^a-z0-9]+", "-", manifest["name"].lower()).strip("-") + f"-{app_id}"
+        slug = (
+            re.sub(r"[^a-z0-9]+", "-", manifest["name"].lower()).strip("-")
+            + f"-{app_id}"
+        )
         db["apps"][slug] = {"id": app_id, "manifest": manifest}
         save()
         # The key, the webhook secret and the client secret exist only in this reply.
-        respond(201, {
-            "id": app_id, "slug": slug, "name": manifest["name"], "client_id": f"Iv1.{app_id}",
-            "pem": os.environ["FORGE_PEM"], "webhook_secret": os.environ["FORGE_WEBHOOK"],
-            "client_secret": os.environ["FORGE_CLIENT"],
-        }, include)
+        respond(
+            201,
+            {
+                "id": app_id,
+                "slug": slug,
+                "name": manifest["name"],
+                "client_id": f"Iv1.{app_id}",
+                "pem": os.environ["FORGE_PEM"],
+                "webhook_secret": os.environ["FORGE_WEBHOOK"],
+                "client_secret": os.environ["FORGE_CLIENT"],
+            },
+            include,
+        )
     if route == "user/installations":
-        respond(200, {"total_count": len(db.get("installs", [])), "installations": db.get("installs", [])}, include)
+        respond(
+            200,
+            {
+                "total_count": len(db.get("installs", [])),
+                "installations": db.get("installs", []),
+            },
+            include,
+        )
     if m := re.fullmatch(r"user/installations/(\d+)/repositories", route):
         found = [i for i in db.get("installs", []) if str(i["id"]) == m[1]]
         repos = [{"full_name": r} for r in (found[0]["repos"] if found else [])]
-        respond(200 if found else 404, {"total_count": len(repos), "repositories": repos}, include)
+        respond(
+            200 if found else 404,
+            {"total_count": len(repos), "repositories": repos},
+            include,
+        )
     respond(404, {"message": f"forge-gh: no route for {call}"}, include)
 
 

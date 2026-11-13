@@ -50,7 +50,9 @@ def get(target):
 if url.startswith("http://127.0.0.1:"):
     status, page = get(url)
     action = html.unescape(re.search(r'<form[^>]* action="([^"]+)"', page)[1])
-    manifest = json.loads(html.unescape(re.search(r'name="manifest" value="([^"]*)"', page)[1]))
+    manifest = json.loads(
+        html.unescape(re.search(r'name="manifest" value="([^"]*)"', page)[1])
+    )
     query = urllib.parse.parse_qs(urllib.parse.urlparse(action).query)
     with open(state / "form.json", "w") as f:
         json.dump({"action": action, "manifest": manifest}, f)
@@ -68,7 +70,13 @@ elif m := re.match(r"https://forge\.invalid/apps/([^/]+)/installations/new", url
         db = load()
         installs = db.setdefault("installs", [])
         repo = (state / "install-repo").read_text().strip()
-        installs.append({"id": 7000 + len(installs), "app_id": db["apps"][m[1]]["id"], "repos": [repo]})
+        installs.append(
+            {
+                "id": 7000 + len(installs),
+                "app_id": db["apps"][m[1]]["id"],
+                "repos": [repo],
+            }
+        )
         save(db)
 else:
     sys.exit(f"forge-browser: no page at {url}")
