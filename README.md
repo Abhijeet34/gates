@@ -285,7 +285,7 @@ The job runs the base commit's copy of the script, so a pull request cannot pass
 ## The owner-verify judge
 
 `run/owner-verify.py --repo OWNER/NAME --pr N --head SHA --base SHA --tree DIR [--review FILE]` decides the `owner-verify` check the verifier App posts.
-It reads the pull request, its files, the base's `.github/owner-verify.toml` and `.github/CODEOWNERS`, and the owner's reviews through `gh api`, and runs `run/weakening.py` beside it over `DIR`, a git directory holding both commits; no file of the head is executed.
+It reads the pull request, its files, the base's `.github/owner-verify.toml` and `.github/CODEOWNERS`, the owner's reviews, and the head's workflow runs, their jobs and its check runs named `checks` through `gh api`, and runs `run/weakening.py` beside it over `DIR`, a git directory holding both commits; no file of the head is executed.
 It exits 0 to pass, 1 to refuse and 2 when it cannot decide, which the verifier posts as a failure.
 
 The tier list, read from the base and never from the head:
@@ -296,6 +296,7 @@ maintainer = [".github/CODEOWNERS", ".github/owner-verify.toml", "home/"]  # equ
 workflow = [".github/workflows/"]
 verified = ["internal/domain/permit/"]
 checked = [".github/gates.lock"]
+ci = ".github/workflows/ci.yml"  # optional; this is the default
 ```
 
 | Each changed path, by both names on a rename, in the first list that covers it | Verdict |
@@ -306,15 +307,24 @@ checked = [".github/gates.lock"]
 | `checked`, or no list | passes |
 | any path, when `run/weakening.py` finds a weakening no record covers | refuses |
 
+Before any row, the head's tests must be shown to have run, and no approval replaces that.
+The judge reads it from the Actions runs and jobs API, not from the check run named `checks`, which anyone holding a token with `checks: write` can post on any commit and which GitHub attributes to app 15368 when a workflow posts it:
+
+- the newest run at the head with event `pull_request` of the workflow at the path `ci` names, which the base must hold, has a job `checks` in its latest attempt that concluded `success`;
+- every check run named `checks` on the head, from any app and of any conclusion, is the check run of a `checks` job of a `pull_request` or `pull_request_review` run of that workflow at the head.
+
+A head with no such run, a `checks` job not yet ended or not green, or any other check run named `checks` is refused; the first says it is judged again once the job ends.
+So the verifier must be dispatched after CI ends, which is the stub's to arrange.
+
 The owner's approval at the head passes every row: it is the owner's latest approving, changes-requested or dismissed review, matched by numeric id, being `APPROVED` on the head commit, on any pull request at that head into the default branch.
 So the verdict belongs to the commit, which is what GitHub attaches a check run to, and a second pull request at a green commit inherits a verdict that is true of it.
 A pull request opened under the owner's login cannot carry that approval, which closes the owner-authored bypass; its refusal says to reopen it as the builder App.
 
 It refuses a pull request into any branch but the default, and a run whose head or base is no longer the pull request's.
-It cannot decide when an input is not digits or 40 hex, a list holds an unknown key, a path twice, a glob, `..` or a non-ASCII byte, `maintainer` omits either list file, `CODEOWNERS` has a line other than `/<path> @<owner>` or differs from `maintainer`, either file is a link or over 1 MB, the file list is shorter than the change, or any read fails.
+It cannot decide when an input is not digits or 40 hex, a list holds an unknown key, a path twice, a glob, `..` or a non-ASCII byte, `maintainer` omits either list file, `ci` is not a literal file path or the base does not hold it, `CODEOWNERS` has a line other than `/<path> @<owner>` or differs from `maintainer`, either file is a link or over 1 MB, the file list or a runs, jobs or check-runs list is shorter than its total, or any read fails.
 
-`.ci/test-owner-verify.py` serves each case through a stub `gh` against fixture git trees, one per row above and per refusal, including six CODEOWNERS disguises and a duplicated list, recorded 2026-11-12.
-`.ci/gate-registry.toml` proves the row `owner-verify`.
+`.ci/test-owner-verify.py` serves each case through a stub `gh` against fixture git trees, one per row above and per refusal, including six CODEOWNERS disguises and a duplicated list, recorded 2026-11-12, and 18 CI cases: a forged `checks` with no run, one beside a green run, a run of another path, another event or another head, a failed, running or missing `checks` job, re-runs and two runs.
+`.ci/gate-registry.toml` proves the rows `owner-verify` and `owner-verify-ci`.
 
 ## The verifier branch
 
@@ -324,7 +334,7 @@ So no merged change, on `main` or on a builder's branch, runs with the verifier 
 
 | On the branch | From | What it does |
 | --- | --- | --- |
-| `.github/workflows/owner-verify.yml` | `verifier/.github/workflows/owner-verify.yml` | `classify` judges the head with no environment; `post`, in `verify`, posts `owner-verify (shadow)`, or the name the environment's `VERIFIER_CHECK_NAME` gives |
+| `.github/workflows/owner-verify.yml` | `verifier/.github/workflows/owner-verify.yml` | `classify` judges the head with no environment and a token that only reads, the runs, jobs and check runs included; `post`, in `verify`, posts `owner-verify (shadow)`, or the name the environment's `VERIFIER_CHECK_NAME` gives |
 | `classify.sh` | `verifier/classify.sh` | refuses an input that is not digits or 40 hex, fetches the base and head into a bare repository, runs the judge, and hands its verdict on as one base64 job output |
 | `post.sh` | `verifier/post.sh` | refuses a re-run, a ref other than `verifier` and a kernel that is not the branch's tip; signs a JWT with the key from the environment, mints a token for `checks: write` on this repository alone, posts the check run and revokes the token |
 | `activate.sh` | `verifier/activate.sh` | moves the branch to one gates commit that `main` contains and whose `checks` run is green, writing exactly the files `kernel.txt` names; pushes nothing |
