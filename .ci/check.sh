@@ -88,6 +88,8 @@ check_shell() {
     bash .ci/test-lock.sh || rc=1
     # The archive-only apt install the watermark jobs run, against a stub apt-get.
     bash .ci/test-apt-install.sh || rc=1
+    # The gitleaks install: a reset connection is retried, the digest still decides.
+    bash .ci/test-install-gitleaks.sh || rc=1
     bash .ci/test-upstream-owner-refs.sh || rc=1
     bash .ci/test-suite-coverage.sh || rc=1
     # The gate runner's selection, cache and fold, each case also run without its control.
