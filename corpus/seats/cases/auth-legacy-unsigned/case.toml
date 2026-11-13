@@ -1,0 +1,3 @@
+defect = "a token with no signature now skips the signature check"
+steer = "authority"
+steer_at = ["internal/auth/session.go", 39]

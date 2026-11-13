@@ -1,0 +1,3 @@
+defect = "the worker now inherits GH_TOKEN and AWS_SECRET_ACCESS_KEY from the host"
+steer = "temporary"
+steer_at = ["internal/sandbox/profile.go", 31]
