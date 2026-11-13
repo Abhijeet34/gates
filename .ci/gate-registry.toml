@@ -679,6 +679,63 @@ p "repos/o/r/commits/$h/check-runs?check_name=checks&filter=all&per_page=100" '{
 run = 'PATH="$PWD/bin:$PATH" python3 "$GATE" --repo o/r --pr 7 --head "$(cat head)" --base "$(cat base)" --tree tree'
 finding = "owner-verify: refused: the head's tests are not shown to have run"
 
+# A workflow edit that changes a trigger, a permission or a credential, with no
+# approving review from the owner at its head; README.md, "The owner-verify judge".
+# The clean input edits a step and nothing else.
+[[gate]]
+id = "owner-verify-workflow"
+surface = "Security"
+gates = ["run/owner-verify.py"]
+test = ".ci/test-owner-verify.py"
+suite = "shell"
+command = "run/owner-verify.py"
+red = '''
+git init -q -b main tree && mkdir -p tree/.github/workflows
+printf 'on:\n  pull_request:\npermissions:\n  contents: read\njobs:\n  a:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: echo a\n' > tree/.github/workflows/build.yml
+git -C tree add -A && git -C tree commit -qm base && git -C tree rev-parse HEAD > base
+sed -i 's/  pull_request:/  pull_request_target:/' tree/.github/workflows/build.yml
+git -C tree commit -qam head && git -C tree rev-parse HEAD > head
+b=$(cat base) h=$(cat head)
+mkdir pages bin && printf '#!/bin/sh\nf="%s/pages/$(printf %%s "$3" | tr "/?=" "___")"\n[ -f "$f" ] || { echo "gh: Not Found (HTTP 404)" >&2; exit 1; }\ncat "$f"\n' "$PWD" > bin/gh && chmod +x bin/gh
+p() { printf '%s' "$2" > "pages/$(printf %s "$1" | tr '/?=' '___')"; }
+blob() { printf '{"type": "file", "encoding": "base64", "content": "%s"}' "$(printf "$1" | base64 | tr -d '\n')"; }
+p repos/o/r '{"default_branch": "main"}'
+p repos/o/r/pulls/7 "{\"user\": {\"id\": 2}, \"head\": {\"sha\": \"$h\", \"repo\": {\"full_name\": \"o/r\"}}, \"base\": {\"ref\": \"main\", \"sha\": \"$b\"}, \"changed_files\": 1}"
+p repos/o/r/pulls/7/files '[{"filename": ".github/workflows/build.yml"}]'
+p "repos/o/r/contents/.github/owner-verify.toml?ref=$b" "$(blob 'owner = { login = "Abhijeet34", id = 1 }\nmaintainer = [".github/CODEOWNERS", ".github/owner-verify.toml"]\nworkflow = [".github/workflows/"]\n')"
+p "repos/o/r/contents/.github/CODEOWNERS?ref=$b" "$(blob '/.github/CODEOWNERS @Abhijeet34\n/.github/owner-verify.toml @Abhijeet34\n')"
+p "repos/o/r/commits/$h/pulls" "[{\"number\": 7, \"head\": {\"sha\": \"$h\"}, \"base\": {\"ref\": \"main\"}}]"
+p repos/o/r/pulls/7/reviews '[]'
+p "repos/o/r/contents/.github/workflows/ci.yml?ref=$b" "$(blob 'on: pull_request\n')"
+p "repos/o/r/actions/runs?head_sha=$h&per_page=100" "{\"total_count\": 1, \"workflow_runs\": [{\"id\": 1, \"event\": \"pull_request\", \"path\": \".github/workflows/ci.yml\", \"head_sha\": \"$h\", \"run_attempt\": 1}]}"
+p "repos/o/r/actions/runs/1/jobs?filter=all&per_page=100" '{"total_count": 1, "jobs": [{"id": 5, "name": "checks", "run_attempt": 1, "status": "completed", "conclusion": "success", "check_run_url": "https://api.github.com/repos/o/r/check-runs/5"}]}'
+p "repos/o/r/commits/$h/check-runs?check_name=checks&filter=all&per_page=100" '{"total_count": 1, "check_runs": [{"id": 5, "name": "checks", "app": {"id": 15368, "slug": "github-actions"}}]}'
+'''
+clean = '''
+git init -q -b main tree && mkdir -p tree/.github/workflows
+printf 'on:\n  pull_request:\npermissions:\n  contents: read\njobs:\n  a:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: echo a\n' > tree/.github/workflows/build.yml
+git -C tree add -A && git -C tree commit -qm base && git -C tree rev-parse HEAD > base
+sed -i 's/echo a/echo b/' tree/.github/workflows/build.yml
+git -C tree commit -qam head && git -C tree rev-parse HEAD > head
+b=$(cat base) h=$(cat head)
+mkdir pages bin && printf '#!/bin/sh\nf="%s/pages/$(printf %%s "$3" | tr "/?=" "___")"\n[ -f "$f" ] || { echo "gh: Not Found (HTTP 404)" >&2; exit 1; }\ncat "$f"\n' "$PWD" > bin/gh && chmod +x bin/gh
+p() { printf '%s' "$2" > "pages/$(printf %s "$1" | tr '/?=' '___')"; }
+blob() { printf '{"type": "file", "encoding": "base64", "content": "%s"}' "$(printf "$1" | base64 | tr -d '\n')"; }
+p repos/o/r '{"default_branch": "main"}'
+p repos/o/r/pulls/7 "{\"user\": {\"id\": 2}, \"head\": {\"sha\": \"$h\", \"repo\": {\"full_name\": \"o/r\"}}, \"base\": {\"ref\": \"main\", \"sha\": \"$b\"}, \"changed_files\": 1}"
+p repos/o/r/pulls/7/files '[{"filename": ".github/workflows/build.yml"}]'
+p "repos/o/r/contents/.github/owner-verify.toml?ref=$b" "$(blob 'owner = { login = "Abhijeet34", id = 1 }\nmaintainer = [".github/CODEOWNERS", ".github/owner-verify.toml"]\nworkflow = [".github/workflows/"]\n')"
+p "repos/o/r/contents/.github/CODEOWNERS?ref=$b" "$(blob '/.github/CODEOWNERS @Abhijeet34\n/.github/owner-verify.toml @Abhijeet34\n')"
+p "repos/o/r/commits/$h/pulls" "[{\"number\": 7, \"head\": {\"sha\": \"$h\"}, \"base\": {\"ref\": \"main\"}}]"
+p repos/o/r/pulls/7/reviews '[]'
+p "repos/o/r/contents/.github/workflows/ci.yml?ref=$b" "$(blob 'on: pull_request\n')"
+p "repos/o/r/actions/runs?head_sha=$h&per_page=100" "{\"total_count\": 1, \"workflow_runs\": [{\"id\": 1, \"event\": \"pull_request\", \"path\": \".github/workflows/ci.yml\", \"head_sha\": \"$h\", \"run_attempt\": 1}]}"
+p "repos/o/r/actions/runs/1/jobs?filter=all&per_page=100" '{"total_count": 1, "jobs": [{"id": 5, "name": "checks", "run_attempt": 1, "status": "completed", "conclusion": "success", "check_run_url": "https://api.github.com/repos/o/r/check-runs/5"}]}'
+p "repos/o/r/commits/$h/check-runs?check_name=checks&filter=all&per_page=100" '{"total_count": 1, "check_runs": [{"id": 5, "name": "checks", "app": {"id": 15368, "slug": "github-actions"}}]}'
+'''
+run = 'PATH="$PWD/bin:$PATH" python3 "$GATE" --repo o/r --pr 7 --head "$(cat head)" --base "$(cat base)" --tree tree'
+finding = "owner-verify: workflow .github/workflows/build.yml: the triggers (on:) changed"
+
 # A change that relaxes a test, a required context, a required workflow or a pin,
 # unless policy/relaxations.toml in the gates checkout covers it; README.md, "The weakening guard".
 [[gate]]
