@@ -37,7 +37,8 @@ request at that head into the default branch is APPROVED on that commit, so
 the verdict depends on the commit and not on which pull request asked.
 README.md, "The owner-verify judge", owns the design.
 
-Exit status: 0 pass, 1 refused, 2 could not decide.
+Exit status: 0 pass, 1 refused, 2 could not decide, 3 not enrolled (the base has no
+tier list, which the verifier posts as neutral so the pull request that adds one can go green).
 """
 
 import argparse
@@ -68,6 +69,10 @@ PATH = re.compile(r"^[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*/?$")
 
 
 class Undecided(Exception):
+    pass
+
+
+class NotEnrolled(Exception):
     pass
 
 
@@ -341,7 +346,14 @@ def decide(args):
             f"refused: this run is for {head[:12]} on {base[:12]}, but the pull request is now"
             f" {pr['head']['sha'][:12]} on {pr['base']['sha'][:12]}; the run for those decides"
         ]
-    owner, tiers = load_tiers(blob(repo, TIERS, base))
+    try:
+        raw = blob(repo, TIERS, base)
+    except Undecided as e:
+        # Only a 404 on this one read; a 5xx, a timeout or a non-file stays undecided.
+        if str(e).endswith("(HTTP 404)"):
+            raise NotEnrolled(f"not enrolled: no {TIERS} at {base}") from e
+        raise
+    owner, tiers = load_tiers(raw)
     check_owners(blob(repo, OWNERS, base), owner, tiers["maintainer"])
     ci_notes, ci_failures = ci_ran(repo, head, base, tiers["ci"])
     files = api(f"repos/{repo}/pulls/{args.pr}/files")
@@ -446,6 +458,9 @@ def main():
         return 2
     try:
         code, lines = decide(args)
+    except NotEnrolled as e:
+        print(f"owner-verify: {e}")
+        return 3
     except (Undecided, KeyError, TypeError) as e:
         print(f"owner-verify: could not decide: {e}", file=sys.stderr)
         return 2
