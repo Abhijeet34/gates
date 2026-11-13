@@ -10,9 +10,11 @@ repositories served over file://, and an RSA key made for the run.
 """
 
 import base64
+import hashlib
 import json
 import os
 import re
+import secrets
 import shutil
 import subprocess
 import sys
@@ -730,6 +732,231 @@ def ruleset_cases(tmp):
     )
 
 
+# --- sitting.py, on a stand-in forge ------------------------------------------
+
+FIXTURES = ROOT / ".ci/fixtures"
+
+
+def calls_of(state):
+    path = state / "calls.jsonl"
+    return [json.loads(ln) for ln in path.read_text().splitlines()] if path.exists() else []
+
+
+def sitting_cases(tmp):
+    origin = tmp / "sit-gates"
+    origin.mkdir()
+    git(origin, "init", "-q", "-b", "main")
+    for ln in (KERNEL / "kernel.txt").read_text().splitlines():
+        if ln.strip() and not ln.startswith("#"):
+            src = ln.split()[0]
+            (origin / src).parent.mkdir(parents=True, exist_ok=True)
+            if (ROOT / src).exists():
+                shutil.copy2(ROOT / src, origin / src)
+    git(origin, "add", "-A")
+    git(origin, "commit", "-qm", "release")
+    release = git(origin, "rev-parse", "HEAD")
+    bin_dir = tmp / "sit-bin"
+    bin_dir.mkdir()
+    stub(bin_dir, "gh", f'#!/bin/sh\nexec python3 "{FIXTURES}/forge-gh.py" "$@"\n')
+    stub(bin_dir, "browser", f'#!/bin/sh\nexec python3 "{FIXTURES}/forge-browser.py" "$@"\n')
+    # Made at run time, so no file of this tree holds a value the scan looks for.
+    values = {
+        "FORGE_PEM": "-----BEGIN RSA PRIVATE KEY-----\n"
+        + secrets.token_hex(48)
+        + "\n-----END RSA PRIVATE KEY-----\n",
+        "FORGE_WEBHOOK": secrets.token_hex(20),
+        "FORGE_CLIENT": secrets.token_hex(20),
+    }
+
+    def forge(name, owner_type="User"):
+        root = tmp / f"sit-{name}"
+        state, remote = root / "state", root / "remote/o/r.git"
+        for d in (state, root / "home", root / "tmp", root / "cwd"):
+            d.mkdir(parents=True)
+        (state / "forge.json").write_text(json.dumps({"owner_type": owner_type}))
+        (state / "install-repo").write_text("o/r\n")
+        git(tmp, "init", "-q", "--bare", remote)
+        stub(
+            remote / "hooks",
+            "update",
+            '#!/bin/sh\nprintf \'{"call": "push %s", "write": true}\\n\' "$1" >>"$FORGE/calls.jsonl"\n',
+        )
+        env = {
+            **GIT_ENV,
+            **values,
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "FORGE": str(state),
+            "HOME": str(root / "home"),
+            "TMPDIR": str(root / "tmp"),
+            "GATES_URL": f"file://{origin}",
+            "GITHUB_SERVER_URL": "https://forge.invalid",
+            "SITTING_GIT_URL": f"file://{remote}",
+            "SITTING_BROWSER": str(bin_dir / "browser"),
+            "SITTING_POLL": "0.1",
+            "SITTING_WAIT": "20",
+        }
+        return root, state, remote, env
+
+    def sit(root, env, **extra):
+        proc = sh("python3", KERNEL / "sitting.py", "o/r", release, cwd=root / "cwd", env={**env, **extra})
+        return proc.returncode, proc.stdout + proc.stderr
+
+    def writes(calls):
+        return [c["call"] for c in calls if c["write"]]
+
+    if not (KERNEL / "sitting.py").exists():
+        check("sitting: verifier/sitting.py exists", False, "no verifier/sitting.py")
+        return
+
+    root, state, remote, env = forge("main")
+    (state / "fail").write_text("secret set VERIFIER_APP_KEY")
+    (state / "wrong-state").write_text("")
+    rc, out1 = sit(root, env)
+    first = calls_of(state)
+    check(
+        "sitting: a failure at step 4 stops the sitting there and says the same command resumes it",
+        rc == 1 and "step 4" in out1 and "resume" in out1 and "step 5" not in out1,
+        f"exit {rc}\n{out1}",
+    )
+    check(
+        "sitting: steps 1 to 3 wrote the ruleset, the branch and both environments before it",
+        [w.split(" ")[0] + " " + w.split(" ")[1].split("/")[-1] for w in writes(first)][:2]
+        == ["POST rulesets", "push refs/heads/verifier"]
+        and sum(w.startswith("PUT repos/o/r/environments/") for w in writes(first)) == 2,
+        writes(first),
+    )
+    replies = [json.loads(ln) for ln in (state / "browser.jsonl").read_text().splitlines()]
+    check(
+        "sitting: the listener refuses a wrong state and exchanges no code for it",
+        replies[0]["status"] == 400
+        and "state" in replies[0]["body"]
+        and sum(c["call"].startswith("POST app-manifests/") for c in first) == 1,
+        replies,
+    )
+    (state / "wrong-state").unlink()
+    rc, out2 = sit(root, env)
+    second = calls_of(state)[len(first):]
+    check(
+        "sitting: the second run finds steps 1 to 3 in place and resumes at step 4",
+        rc == 0
+        and writes(second)[:1] == [c for c in writes(second) if c.startswith("POST app-manifests/")][:1]
+        and len(writes(second)) >= 1
+        and re.search(r"step 1 .*in place", out2)
+        and re.search(r"step 3 .*in place", out2),
+        f"exit {rc}\n{out2}\n{writes(second)}",
+    )
+    db = json.loads((state / "forge.json").read_text())
+    verify = db["envs"]["o/r"]["verify"]
+    app = next(iter(a for a in db["apps"].values() if str(a["id"]) == verify["variables"].get("VERIFIER_APP_ID")), None)
+    check(
+        "sitting: the key is the verify environment's secret and the App's id and slug its variables",
+        verify["secrets"].get("VERIFIER_APP_KEY")
+        == hashlib.sha256(values["FORGE_PEM"].encode()).hexdigest()
+        and app is not None
+        and db["apps"].get(verify["variables"].get("VERIFIER_APP_SLUG")) is app,
+        json.dumps(verify),
+    )
+    manifest = json.loads((state / "form.json").read_text())
+    check(
+        "sitting: the manifest asks for checks write alone, with no webhook, and returns to the local listener",
+        manifest["manifest"]["default_permissions"] == {"checks": "write", "metadata": "read"}
+        and manifest["manifest"].get("hook_attributes", {}).get("active") is False
+        and manifest["manifest"]["public"] is False
+        and manifest["manifest"]["redirect_url"].startswith("http://127.0.0.1:")
+        and manifest["action"].startswith("https://forge.invalid/settings/apps/new?state="),
+        manifest,
+    )
+    rulesets = db["rulesets"]["o/r"]
+    check(
+        "sitting: the forge holds the ruleset file, environments admitting the verifier branch alone, and the App installed",
+        list(rulesets.values()) == [json.loads((KERNEL / "ruleset.json").read_text())]
+        and all(
+            db["envs"]["o/r"][e]["deployment_branch_policy"]
+            == {"protected_branches": False, "custom_branch_policies": True}
+            and [(p["name"], p["type"]) for p in db["envs"]["o/r"][e]["policies"]] == [("verifier", "branch")]
+            for e in ("verify", "review")
+        )
+        and [i["app_id"] for i in db.get("installs", [])] == [app and app["id"]],
+        json.dumps(db, indent=1),
+    )
+    tip = sh("git", "--git-dir", remote, "show", "refs/heads/verifier:gates/COMMIT")
+    check(
+        "sitting: the remote verifier branch is the kernel at the release",
+        tip.stdout.strip() == release,
+        tip.stdout + tip.stderr,
+    )
+    rc, out3 = sit(root, env)
+    third = calls_of(state)[len(first) + len(second):]
+    check(
+        "sitting: a run after a whole sitting makes 0 writes",
+        rc == 0 and writes(third) == [] and "0 writes" in out3,
+        f"exit {rc}\n{out3}\n{writes(third)}",
+    )
+    found = []
+    for path in [*root.rglob("*"), *tmp.glob("sit-gates/**/*")]:
+        if path.is_file():
+            data = path.read_bytes()
+            found += [f"{path}: {k}" for k, v in values.items() if v.strip().encode() in data or v.split("\n")[1].encode() in data]
+    for k, v in values.items():
+        for label, text in (("output", out1 + out2 + out3), ("listener", json.dumps(replies))):
+            if v.split("\n")[1] in text or v.strip() in text:
+                found.append(f"{label}: {k}")
+    check(
+        "sitting: no secret is in any file, in the output or in the listener's replies",
+        not found and replies,
+        found,
+    )
+    rules = db["rulesets"]["o/r"]
+    rid = next(iter(rules))
+    rules[rid]["enforcement"] = "evaluate"
+    (state / "forge.json").write_text(json.dumps(db))
+    rc, out4 = sit(root, env)
+    fourth = calls_of(state)[len(first) + len(second) + len(third):]
+    check(
+        "sitting: a drifted ruleset is put back with one write and nothing else",
+        rc == 0 and writes(fourth) == [f"PUT repos/o/r/rulesets/{rid}"],
+        f"exit {rc}\n{out4}\n{writes(fourth)}",
+    )
+
+    root, state, remote, env = forge("wrong", owner_type="Organization")
+    (state / "only-wrong-state").write_text("")
+    rc, out = sit(root, env, SITTING_WAIT="3")
+    calls = calls_of(state)
+    replies = [json.loads(ln) for ln in (state / "browser.jsonl").read_text().splitlines()]
+    form = json.loads((state / "form.json").read_text())
+    check(
+        "sitting: with only a wrong state the code is never exchanged and no secret is written",
+        rc == 1
+        and "step 4" in out
+        and [r["status"] for r in replies[1:]] == [400]
+        and not any(c["call"].startswith("POST app-manifests/") or c["call"].startswith("secret set") for c in calls)
+        and form["action"].startswith("https://forge.invalid/organizations/o/settings/apps/new?state="),
+        f"exit {rc}\n{out}\n{replies}\n{form['action']}",
+    )
+
+    root, state, remote, env = forge("noinstall")
+    (state / "no-install").write_text("")
+    rc, out = sit(root, env, SITTING_WAIT="2")
+    check(
+        "sitting: an App never installed stops at step 5",
+        rc == 1 and "step 5" in out and "install" in out,
+        f"exit {rc}\n{out}",
+    )
+    before = len(calls_of(state))
+    rc, out = sit(root, env, SITTING_WAIT="2")
+    check(
+        "sitting: the next run makes no write and stops at step 5 again",
+        rc == 1 and "step 5" in out and writes(calls_of(state)[before:]) == [],
+        f"exit {rc}\n{out}\n{writes(calls_of(state)[before:])}",
+    )
+    bad = sh("python3", KERNEL / "sitting.py", "o/r", "main", cwd=root / "cwd", env=env)
+    check(
+        "sitting: a commit that is not 40 hex is refused before any call",
+        bad.returncode == 2 and "usage" in bad.stdout + bad.stderr,
+        bad.stdout + bad.stderr,
+    )
+
+
 def main():
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
@@ -738,6 +965,7 @@ def main():
         post_cases(tmp)
         activate_cases(tmp)
         ruleset_cases(tmp)
+        sitting_cases(tmp)
     failed = results.count(False)
     if failed:
         print(f"verifier: {failed} of {len(results)} check(s) failed", file=sys.stderr)
