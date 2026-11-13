@@ -79,7 +79,6 @@ check_shell() {
     bash .ci/test-guard-generated-files.sh || rc=1
     bash .ci/test-dependency-advisories.sh || rc=1
     bash .ci/gitleaks/test-sync.sh || rc=1
-    bash .ci/test-no-mistakes-required.sh || rc=1
     bash .ci/test-instruction-path-truth.sh || rc=1
     python3 run/instruction-truth/path-truth.py . || rc=1
     bash .ci/test-instruction-size-limit.sh || rc=1
@@ -107,12 +106,17 @@ check_shell() {
     python3 .ci/test-weakening.py || rc=1
     # The maintainer's approving review a change to that record needs.
     python3 .ci/test-record-approval.py || rc=1
+    # The verifier's judge: the base's tier list, the owner's approval at the head, the weakening guard.
+    python3 .ci/test-owner-verify.py || rc=1
+    # The verifier branch's content: its workflow's invariants, and its scripts against stub programs.
+    python3 .ci/test-verifier.py || rc=1
     # The document rules, their shadow rows under the runner, and all but the budget on this tree.
     # The budget is not run here yet, though this tree's AGENTS.md now fits it.
     python3 .ci/test-docs-truth.py || rc=1
     python3 run/docs-truth.py owner . || rc=1
     python3 run/docs-truth.py commands . || rc=1
     python3 run/docs-truth.py emdash . || rc=1
+    python3 run/docs-truth.py shape . || rc=1
     # The pull request text scan, and the guard that a run leaves no scratch behind.
     python3 .ci/test-pr-text.py || rc=1
     python3 .ci/test-scratch-guard.py || rc=1

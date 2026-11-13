@@ -59,10 +59,10 @@ HUMAN="printf 'feat: x\n\nCo-authored-by: Jane Doe <jane@example.com>\n' > msg"
 FINDING='refusing agent attribution line'
 
 refuses "an unregistered gate" --static 'printf "#!/bin/sh\n" > .githooks/pre-commit'
-refuses "a deleted test file" --static 'rm .ci/test-no-mistakes-required.sh'
-refuses "a test that check.sh no longer runs" --static "sed -i.orig '/test-no-mistakes-required.sh/d' .ci/check.sh && rm .ci/check.sh.orig"
+refuses "a deleted test file" --static 'rm .ci/test-guard-generated-files.sh'
+refuses "a test that check.sh no longer runs" --static "sed -i.orig '/test-guard-generated-files.sh/d' .ci/check.sh && rm .ci/check.sh.orig"
 refuses "a registered gate file that is gone" --static 'rm .github/workflows/shared-guard-generated-files.yml'
-refuses "a suite invocation left only in a comment" --static "sed -i.orig 's|^\( *\)bash .ci/test-no-mistakes-required.sh|\1# bash .ci/test-no-mistakes-required.sh|' .ci/check.sh && rm .ci/check.sh.orig"
+refuses "a suite invocation left only in a comment" --static "sed -i.orig 's|^\( *\)bash .ci/test-guard-generated-files.sh|\1# bash .ci/test-guard-generated-files.sh|' .ci/check.sh && rm .ci/check.sh.orig"
 refuses "a suite that runs the proof --static" --static "sed -i.orig 's|python3 .ci/gates-proof.py |python3 .ci/gates-proof.py --static |' .ci/check.sh && rm .ci/check.sh.orig" \
     "does not run \`python3 .ci/gates-proof.py\` bare"
 refuses "an empty registry" --static ': > .ci/gate-registry.toml'

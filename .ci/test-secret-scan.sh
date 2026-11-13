@@ -18,7 +18,7 @@
 # only tested: `gitleaks git` exits 0 on a repository it could not read.
 #
 # Shape follows test-pre-push.sh (a real throwaway repository, the real
-# canonical config, real gitleaks) and test-no-mistakes-required.sh (a stub
+# canonical config, real gitleaks), plus a stub
 # gitleaks on PATH for the cases real gitleaks cannot be made to produce).
 
 set -uo pipefail

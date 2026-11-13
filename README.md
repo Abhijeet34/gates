@@ -8,12 +8,12 @@ The checks that stand between a commit and a public push: a gitleaks pre-push ho
 | --- | --- |
 | `.githooks/pre-push`, `.gitleaks.toml` | The repository-local secret gate and the canonical rules. Callers also receive `system-maintenance/git-hooks/commit-msg` as `.githooks/commit-msg`. Callers carry byte copies, distributed by `.ci/gitleaks/sync.sh`, and extend the gate through a tracked, executable `.githooks/pre-push.local`, which it runs last. |
 | `system-maintenance/git-hooks/` | The machine-wide hooks deployed to `~/.git-hooks` by `install.sh`, including the watermark, exposure and signature gates, which its pre-push runs concurrently. Its `README.md` owns the design and the measurements. |
-| `.github/workflows/shared-*.yml` | Reusable workflows: `secret-scan`, `watermark-scan`, `dependency-advisories`, `guard-generated-files`, `no-mistakes-required`, `instruction-truth`, `fakes-smoke`, `gate-shadow`. Each is a bootstrap; see "Pinning". |
+| `.github/workflows/shared-*.yml` | Reusable workflows: `secret-scan`, `watermark-scan`, `dependency-advisories`, `guard-generated-files`, `instruction-truth`, `fakes-smoke`, `gate-shadow`. Each is a bootstrap; see "Pinning". |
 | `run/` | What each bootstrap runs from the locked gates commit: `lock.sh`, which decides that commit, and one script per gate. |
 | `run/gate.py` | The gate runner: selects a repository's gates from its `.github/gates.toml` and the diff, keys each verdict by the gate's inputs, records verdicts and folds them with review and docs verdicts, and keeps a shadow row from blocking until it earns promotion; its docstring owns the contract. `gate-shadow.yml` runs it in shadow on this repository; see "The shadow job". |
 | `run/gate-shadow.sh` | The shadow job's script: runs the runner and its fold on the caller's checkout, writes `shadow-verdict.txt`, and exits 0 whatever the gates decided; see "The shadow job". |
 | `run/permissions-diff.py` | The permissions-diff gate over the protected surface; see "The permissions-diff gate". |
-| `run/docs-truth.py`, `.github/docs.toml` | The four document rules (owner and reader, commands, byte budget, em dash) and this repository's own owner and reader list; see "The documentation rows". |
+| `run/docs-truth.py`, `.github/docs.toml`, `policy/docs/` | The five document rules (owner and reader, commands, byte budget, em dash, shape), the template of each doc kind that `shape` reads, and this repository's own owner and reader list; see "The documentation rows". |
 | `run/tool-gates.py`, `policy/` | The pinned-tool gates (zizmor, actionlint, offline OSV-Scanner) and the gates-owned configuration they read instead of the tree's; see "The tool rows". |
 | `run/ui-gates.py`, `run/ui-gates.mjs` | The UI rows: axe accessibility and Linux pixel baselines in a pinned Chromium; see "The UI rows". |
 | `run/pr-text.py` | The pull request text scan over a title and body read as JSON on stdin; see "The text rows". |
@@ -28,6 +28,7 @@ The checks that stand between a commit and a public push: a gitleaks pre-push ho
 | `run/critic.py`, `run/critic-eval.py`, `corpus/critic/` | The critic lens: one seat on another model writes the strongest counter-case to a decision request or a study and re-derives two numbers it rests on, and the gate holds it when a number does not survive; the eval measures each seat on planted wrong numbers, planted one-sided requests and their clean twins; see "The critic lens". |
 | `run/weakening.py`, `policy/relaxations.toml` | The weakening guard: a change that relaxes its tests, workflows or branch rulesets against the base, unless a recorded policy covers it; see "The weakening guard". |
 | `run/record-approval.py` | The record-approval check: a change to `policy/relaxations.toml` passes only with the maintainer's approving review at its head; see "The record-approval check". |
+| `run/owner-verify.py`, `verifier/` | The verifier's judge, which decides `owner-verify` from the base's tier list, and the content of the admin-only `verifier` branch that runs it with the verifier App's key; see "The owner-verify judge" and "The verifier branch". |
 | `run/licence.py` | The licence row: dependency and vendored-file licences against a caller's `.github/licence-policy.toml`; see "The licence row". |
 | `run/budget-monitor.py` | The gate budget monitor: prints each budgeted step's weekly p50/p95, the alarm and the fix task text; see "The budget monitor". |
 | `bin/gates.py`, `bin/rollout.toml` | `gates bump` and `gates rollback`, which move callers' locks; see "Bumping". |
@@ -58,7 +59,7 @@ Its `GITHUB_TOKEN` was refused on every write that touches `.github/workflows/`:
 That token also could not open a pull request, because the repository's Actions setting forbids it (`GitHub Actions is not permitted to create or approve pull requests`).
 It can dispatch the caller's own workflows, and a dispatched run puts its `checks` result on the commit it ran on, so the write is the only missing piece.
 A pinned `uses:` therefore needs a writer that already holds workflow write, such as Dependabot's `github-actions` updater, whose pull requests do receive the caller's checks.
-A reusable workflow runs in the caller's checkout with the caller's token, so a caller grants whatever the workflow reads: `shared-dependency-advisories.yml` needs `vulnerability-alerts: read` plus the `contents: read` its pull-request dependency compare uses, and `shared-no-mistakes-required.yml` needs `pull-requests: read`.
+A reusable workflow runs in the caller's checkout with the caller's token, so a caller grants whatever the workflow reads: `shared-dependency-advisories.yml` needs `vulnerability-alerts: read` plus the `contents: read` its pull-request dependency compare uses.
 The advisories judge counts an alert as fixed by a pull request when the dependency compare shows the package removed with that GHSA, at the alert's own manifest and adding no version still carrying it.
 For an alert filed against a `package.json`, whose npm changes the compare lists under the lockfile only, a `package-lock.json`, `npm-shrinkwrap.json`, `yarn.lock` or `pnpm-lock.yaml` in the same directory stands in; a lockfile in another directory, or any other manifest type, gets no such credit (measured 2026-10-25 on pointback PR 139).
 `shared-secret-scan.yml` compares `.gitleaks.toml`, `.githooks/pre-push` and `.githooks/commit-msg` byte for byte with this repository at the locked commit, so a caller whose synced copy has drifted fails until `.ci/gitleaks/sync.sh <clone>` is re-run.
@@ -281,9 +282,78 @@ The job runs the base commit's copy of the script, so a pull request cannot pass
 `.ci/test-record-approval.py` serves each case through a stub `gh`: approved at the head, approved at an older commit, changes requested, no review, opened by the approver, the file left alone, another user's approval, a later change request, a dismissal, a comment after the approval, a second page of reviews, a rename away from the file, a truncated file list and a stale head.
 `.ci/gate-registry.toml` proves the row `record-approval`.
 
+## The owner-verify judge
+
+`run/owner-verify.py --repo OWNER/NAME --pr N --head SHA --base SHA --tree DIR [--review FILE]` decides the `owner-verify` check the verifier App posts.
+It reads the pull request, its files, the base's `.github/owner-verify.toml` and `.github/CODEOWNERS`, and the owner's reviews through `gh api`, and runs `run/weakening.py` beside it over `DIR`, a git directory holding both commits; no file of the head is executed.
+It exits 0 to pass, 1 to refuse and 2 when it cannot decide, which the verifier posts as a failure.
+
+The tier list, read from the base and never from the head:
+
+```toml
+owner = { login = "Abhijeet34", id = 27002551 }
+maintainer = [".github/CODEOWNERS", ".github/owner-verify.toml", "home/"]  # equals CODEOWNERS
+workflow = [".github/workflows/"]
+verified = ["internal/domain/permit/"]
+checked = [".github/gates.lock"]
+```
+
+| Each changed path, by both names on a rename, in the first list that covers it | Verdict |
+| --- | --- |
+| `maintainer` | passes only with the owner's approval at the head |
+| `workflow` | held until its privilege reader, canary and review are built |
+| `verified` | passes on a review verdict `{"head": SHA, "blocking": 0}` for this head, never for a head outside the repository |
+| `checked`, or no list | passes |
+| any path, when `run/weakening.py` finds a weakening no record covers | refuses |
+
+The owner's approval at the head passes every row: it is the owner's latest approving, changes-requested or dismissed review, matched by numeric id, being `APPROVED` on the head commit, on any pull request at that head into the default branch.
+So the verdict belongs to the commit, which is what GitHub attaches a check run to, and a second pull request at a green commit inherits a verdict that is true of it.
+A pull request opened under the owner's login cannot carry that approval, which closes the owner-authored bypass; its refusal says to reopen it as the builder App.
+
+It refuses a pull request into any branch but the default, and a run whose head or base is no longer the pull request's.
+It cannot decide when an input is not digits or 40 hex, a list holds an unknown key, a path twice, a glob, `..` or a non-ASCII byte, `maintainer` omits either list file, `CODEOWNERS` has a line other than `/<path> @<owner>` or differs from `maintainer`, either file is a link or over 1 MB, the file list is shorter than the change, or any read fails.
+
+`.ci/test-owner-verify.py` serves each case through a stub `gh` against fixture git trees, one per row above and per refusal, including six CODEOWNERS disguises and a duplicated list, recorded 2026-11-12.
+`.ci/gate-registry.toml` proves the row `owner-verify`.
+
+## The verifier branch
+
+`verifier/` is the content of a branch `verifier` in each repository that runs the verifier, the only ref its `verify` and `review` environments admit; a ruleset lets only a repository admin create, update or delete it.
+So no merged change, on `main` or on a builder's branch, runs with the verifier App's key, and a workflow change on `main` cannot reach it.
+`main` carries a stub of the same file name that dispatches the workflow at `refs/heads/verifier` with the pull request, its head and its base.
+
+| On the branch | From | What it does |
+| --- | --- | --- |
+| `.github/workflows/owner-verify.yml` | `verifier/.github/workflows/owner-verify.yml` | `classify` judges the head with no environment; `post`, in `verify`, posts `owner-verify (shadow)`, or the name the environment's `VERIFIER_CHECK_NAME` gives |
+| `classify.sh` | `verifier/classify.sh` | refuses an input that is not digits or 40 hex, fetches the base and head into a bare repository, runs the judge, and hands its verdict on as one base64 job output |
+| `post.sh` | `verifier/post.sh` | refuses a re-run, a ref other than `verifier` and a kernel that is not the branch's tip; signs a JWT with the key from the environment, mints a token for `checks: write` on this repository alone, posts the check run and revokes the token |
+| `activate.sh` | `verifier/activate.sh` | moves the branch to one gates commit that `main` contains and whose `checks` run is green, writing exactly the files `kernel.txt` names; pushes nothing |
+| `ruleset-read.sh` | `verifier/ruleset-read.sh` | prints a ruleset file against the live ruleset before the maintainer applies it |
+| `gates/run/owner-verify.py`, `gates/run/weakening.py`, `gates/run/gate.py`, `gates/policy/relaxations.toml`, `gates/COMMIT` | that gates commit | the judge and what it reads, and which commit they came from |
+
+The ten invariants, which must hold from the first push because a run of an old kernel cannot be patched afterwards:
+
+| # | Invariant | Where |
+| --- | --- | --- |
+| 1 | the verdict depends on the head, the base and the owner's approval at that head, never on which pull request asked | `run/owner-verify.py` |
+| 2 | the diff is against the default branch; a pull request into another base is refused | `run/owner-verify.py` |
+| 3 | `post` refuses unless its commit is the live tip of `refs/heads/verifier` and it is the run's first attempt | `post.sh` |
+| 4 | the dispatch's inputs are checked as digits or 40 hex and passed through `env:`; the judge requires them to equal the pull request's, and `post` posts on that head alone | `classify.sh`, `run/owner-verify.py`, `post.sh` |
+| 5 | no job uses an action, a cache or an artifact; the verdict travels as a job output | the workflow |
+| 6 | nothing of the head runs: it is fetched as objects into a bare repository and read with git | `classify.sh` |
+| 7 | the stub triggers on `pull_request_target` and `pull_request_review`, so an approval re-judges the head | the stub on `main`, not here |
+| 8 | setup order: the ruleset, the branch, the environments, the secrets; the dispatch names `refs/heads/verifier` in full | the maintainer's setup and the stub |
+| 9 | what the maintainer runs for the kernel is read from the branch: `activate.sh`, `ruleset-read.sh` | the branch |
+| 10 | a head from a fork gets the deterministic verdict alone, so no review runs for a stranger | `run/owner-verify.py` |
+
+The first commit is `activate.sh --init <gates commit>` in an empty directory, run from that commit's copy; each later one is `./activate.sh <gates commit>` in a checkout of the branch, and a rollback is the same with the earlier commit.
+Not built yet: the review job that writes `--review`, the workflow route's privilege reader and canary, and the activation digest; until then a `verified` or `workflow` path needs the owner's approval.
+
+`.ci/test-verifier.py` reads the workflow for invariants 3 to 6 and shows each refusing a planted line, then runs `classify.sh`, `post.sh`, `activate.sh` and `ruleset-read.sh` against stub programs, fixture repositories over `file://` and an RSA key made for the run.
+
 ## The documentation rows
 
-`run/docs-truth.py owner|commands|budget|emdash [root]` answers four rules from the tree alone; its docstring owns the exact scope.
+`run/docs-truth.py owner|commands|budget|emdash|shape [root]` answers five rules from the tree alone; its docstring owns the exact scope.
 Path truth (`run/instruction-truth/path-truth.py`) and the instruction size caps (`run/instruction-truth/size-limit.py`) already exist and are not repeated: this script judges what they skip.
 
 - **`owner`**: every `AGENTS.md` and `CLAUDE.md` is listed in `.github/docs.toml` with a non-empty `owner` and a `reader` of `agents`, `compliance` or `clients` (report 7.3's three readers). Any other Markdown file is judged only when it is listed.
@@ -336,10 +406,76 @@ id = "docs-no-em-dash"
 inputs = ["**/*.md"]
 run = 'python3 "$GATES_DIR/run/docs-truth.py" emdash .'
 shadow_since = 2026-10-19
+
+[[gate]]
+id = "docs-shape"
+inputs = ["**/*.md", ".github/docs.toml", ".github/changes.toml"]
+run = 'python3 "$GATES_DIR/run/docs-truth.py" shape .'
+shadow_since = 2026-11-12
 ```
 
-`.ci/test-docs-truth.py` runs the cases of all four rules and runs these rows through `run/gate.py`, which folds each to `shadow` with a `shadow_since` and refuses without one. No workflow calls the script: a step in `shared-instruction-truth.yml` is the maintainer's to add in the weekly batch.
-`.ci/check.sh` runs `owner`, `commands` and `emdash` on this tree and not yet `budget`, though this tree's own `AGENTS.md` now fits it.
+`.ci/test-docs-truth.py` runs the cases of all five rules and runs these rows through `run/gate.py`, which folds each to `shadow` with a `shadow_since` and refuses without one. No workflow calls the script: a step in `shared-instruction-truth.yml` is the maintainer's to add in the weekly batch.
+`.ci/check.sh` runs `owner`, `commands`, `emdash` and `shape` on this tree and not yet `budget`, though this tree's own `AGENTS.md` now fits it.
+
+### The `shape` rule and the templates
+
+`shape` holds every document below the root files to the template of its kind.
+The templates are `policy/docs/<kind>.<n>.md`, one per kind, read from the gates tree the script runs from, never from the caller.
+Each is a heading skeleton: its `##` headings are required in order, other sections may sit between them, and a document's heading may extend the template's after a colon (`## Steps: on macOS`), the rule `repo-standard` applies to READMEs.
+A heading marked `<!-- optional -->` is not required, and a heading holding a placeholder fixes only the text before it, so a tutorial's `## 1. <!-- fill: ... -->` asks for some heading starting `1.`.
+
+| Kind | Template | Place that gives the kind |
+| --- | --- | --- |
+| `tutorial` | `tutorial.1.md` | `docs/getting-started.md` |
+| `howto` | `howto.1.md` | `docs/how-to/` |
+| `reference` | `reference.1.md` (no required headings) | `docs/reference/` |
+| `explanation` | `explanation.1.md` | `docs/explanation/` |
+| `architecture` | `architecture.1.md` | `docs/architecture.md` |
+| `decision` | `decision.1.md` | `docs/decisions/` |
+| `spec` | `spec.1.md` | `docs/spec/` |
+| `runbook` | `runbook.1.md` | `docs/operations.md` |
+| `postmortem` | `postmortem.1.md` | `docs/postmortems/` |
+
+`readme` and `agents` are accepted as kinds and judged by `repo-standard check`, not here, and `docs/README.md` is the index and has no kind.
+A document anywhere else takes its kind from a row of `.github/docs.toml`, whose `path` may be a glob; such a row needs no `owner` or `reader`, and `owner` skips it:
+
+```toml
+surfaces = ["cli", "site"]
+
+[[doc]]
+path = "docs/*.md"
+kind = "explanation"
+
+[[doc]]
+path = "docs/operations.md"
+template = 2
+```
+
+`shape` refuses, each with a line naming the file:
+
+1. a manifest key, surface or kind it does not know, a `path` that matches nothing, a document two rows classify, or a `template` number with no file;
+2. a `.md` under `docs/` with no kind (`unclassified`);
+3. a document missing a required heading of its template version, naming the heading, or carrying them out of order;
+4. a placeholder (`[[FILL:` or `<!-- fill:`) left in prose, outside a fence or code span;
+5. a document the `surfaces` require that does not exist;
+6. a `reference` document that no `[[contract]]` of `.github/changes.toml` names as its `snapshot`, so the `contracts` row of `run/change-gates.py` keeps it true.
+
+The surfaces are `cli`, `plugin`, `library`, `service`, `site` and `app`, and each requires these documents; a document required only once something happens (a second process, a first incident) is the reviewer's to ask for, because no tree shows the trigger:
+
+| Surface | Required |
+| --- | --- |
+| `cli`, `plugin`, `library` | a reference |
+| `service` | a reference, the architecture, `docs/explanation/threat-model.md`, the runbook |
+| `site` | the runbook |
+| `app` | a reference, the tutorial, a how-to, the architecture, the threat model, the runbook, a spec |
+
+A template never changes its required headings in place, because a lock bump would then turn every caller red at once.
+A changed shape is a new file, `runbook.2.md` beside `runbook.1.md`, and a document is held to the version its row names (absent means 1), so after the bump `shape` prints `outdated: docs/operations.md follows runbook 1, newest is 2` and exits 0.
+A docs task per repository reshapes the document and sets `template = 2`; once no caller prints the line, `runbook.1.md` is deleted and a document still on 1 is refused under rule 1.
+A wording-only change, such as guidance text or an optional heading, edits the file in place.
+
+`.ci/test-docs-truth.py` holds a red case for each refusal and a green tree, runs `outdated` against a copy of the script beside a two-version template set, requires a verbatim copy of each template to be refused for its placeholders and an answered copy to pass, and runs `mdcheck.py --strict` over the templates where the `md` skill is installed (it is not on a CI runner, and the suite says it skipped).
+`.ci/gate-registry.toml` proves the row `docs-shape`.
 
 ## The budget monitor
 

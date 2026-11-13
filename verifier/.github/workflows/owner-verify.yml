@@ -1,0 +1,84 @@
+name: owner verify
+
+# The verifier's kernel. It runs only from the admin-only branch `verifier`,
+# the one ref the `verify` and `review` environments admit, dispatched by the
+# stub of the same name on the default branch. It uses no action, no cache and
+# no artifact, and executes nothing from the head; gates README.md, "The
+# verifier branch", owns the invariants and .ci/test-verifier.py holds them.
+on:
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: The pull request number
+        required: true
+        type: string
+      head:
+        description: The pull request's head commit
+        required: true
+        type: string
+      base:
+        description: The default branch's commit the head is compared with
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  classify:
+    name: classify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      verdict: ${{ steps.judge.outputs.verdict }}
+      summary: ${{ steps.judge.outputs.summary }}
+    steps:
+      - name: Fetch this branch's kernel
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
+          git init -q kernel
+          GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth" \
+            git -C kernel fetch -q --no-tags --depth=1 "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" "$GITHUB_SHA"
+          git -C kernel checkout -q --detach FETCH_HEAD
+      - name: Judge the head
+        id: judge
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ inputs.pr }}
+          HEAD_SHA: ${{ inputs.head }}
+          BASE_SHA: ${{ inputs.base }}
+        run: bash kernel/classify.sh
+
+  post:
+    name: post
+    needs: classify
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    environment: verify
+    permissions:
+      contents: read
+    steps:
+      - name: Fetch this branch's kernel
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
+          git init -q kernel
+          GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth" \
+            git -C kernel fetch -q --no-tags --depth=1 "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" "$GITHUB_SHA"
+          git -C kernel checkout -q --detach FETCH_HEAD
+      - name: Post the verdict as the verifier App
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ inputs.head }}
+          VERDICT: ${{ needs.classify.outputs.verdict }}
+          SUMMARY: ${{ needs.classify.outputs.summary }}
+          APP_ID: ${{ vars.VERIFIER_APP_ID }}
+          CHECK_NAME: ${{ vars.VERIFIER_CHECK_NAME || 'owner-verify (shadow)' }}
+          APP_KEY: ${{ secrets.VERIFIER_APP_KEY }}
+        run: bash kernel/post.sh

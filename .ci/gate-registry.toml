@@ -86,29 +86,6 @@ run = 'BASE_SHA=$(git rev-parse base) HEAD_SHA=$(git rev-parse HEAD) ALLOW_FIRST
 finding = "This PR modifies release-please-generated files: CHANGELOG.md"
 
 [[gate]]
-id = "no-mistakes-required"
-surface = "PR checks"
-gates = [".github/workflows/shared-no-mistakes-required.yml", "run/no-mistakes-required.sh"]
-test = ".ci/test-no-mistakes-required.sh"
-suite = "shell"
-command = "run/no-mistakes-required.sh"
-# `gh` serves the body the step reads live; `sleep` is stubbed so the retries are instant.
-red = '''
-mkdir bin && printf '#!/bin/sh\nexit 0\n' > bin/sleep
-printf '#!/bin/sh\necho "A pull request opened by hand."\n' > bin/gh && chmod +x bin/*
-'''
-clean = '''
-mkdir bin && printf '#!/bin/sh\nexit 0\n' > bin/sleep
-printf '#!/bin/sh\necho "Updates from [git push no-mistakes](https://github.com/Abhijeet34/no-mistakes)"\n' > bin/gh
-chmod +x bin/*
-'''
-run = '''
-PATH="$PWD/bin:$PATH" GH_TOKEN=stub PR_REPO=o/r PR_AUTHOR=someone PR_NUMBER=1 \
-  PIPELINE_STEPS=review bash -e "$GATE"
-'''
-finding = "This PR was not raised through no-mistakes."
-
-[[gate]]
 id = "secret-scan-workflow"
 surface = "Security"
 gates = [".github/workflows/shared-secret-scan.yml", "run/secret-scan.sh", "run/secret-scan/verify.sh"]
@@ -597,6 +574,51 @@ chmod +x bin/gh
 run = 'PATH="$PWD/bin:$PATH" python3 "$GATE" --repo o/r --pr 7 --head bbbb'
 finding = "record-approval: refused: Abhijeet34 approved aaaa, not the head bbbb"
 
+# A change to a path the base's .github/owner-verify.toml keeps the maintainer's,
+# with no approving review from the owner at its head; README.md, "The owner-verify judge".
+# `gh` serves the pull request and the base's two lists.
+[[gate]]
+id = "owner-verify"
+surface = "Security"
+gates = ["run/owner-verify.py"]
+test = ".ci/test-owner-verify.py"
+suite = "shell"
+command = "run/owner-verify.py"
+red = '''
+git init -q -b main tree && echo a > tree/README.md && mkdir tree/home && echo a > tree/home/q.toml
+git -C tree add -A && git -C tree commit -qm base && git -C tree rev-parse HEAD > base
+echo b > tree/home/q.toml && git -C tree commit -qam head && git -C tree rev-parse HEAD > head
+b=$(cat base) h=$(cat head)
+mkdir pages bin && printf '#!/bin/sh\nf="%s/pages/$(printf %%s "$3" | tr "/?=" "___")"\n[ -f "$f" ] || { echo "gh: Not Found (HTTP 404)" >&2; exit 1; }\ncat "$f"\n' "$PWD" > bin/gh && chmod +x bin/gh
+p() { printf '%s' "$2" > "pages/$(printf %s "$1" | tr '/?=' '___')"; }
+blob() { printf '{"type": "file", "encoding": "base64", "content": "%s"}' "$(printf "$1" | base64 | tr -d '\n')"; }
+p repos/o/r '{"default_branch": "main"}'
+p repos/o/r/pulls/7 "{\"user\": {\"id\": 2}, \"head\": {\"sha\": \"$h\", \"repo\": {\"full_name\": \"o/r\"}}, \"base\": {\"ref\": \"main\", \"sha\": \"$b\"}, \"changed_files\": 1}"
+p repos/o/r/pulls/7/files '[{"filename": "home/q.toml"}]'
+p "repos/o/r/contents/.github/owner-verify.toml?ref=$b" "$(blob 'owner = { login = "Abhijeet34", id = 1 }\nmaintainer = [".github/CODEOWNERS", ".github/owner-verify.toml", "home/"]\n')"
+p "repos/o/r/contents/.github/CODEOWNERS?ref=$b" "$(blob '/.github/CODEOWNERS @Abhijeet34\n/.github/owner-verify.toml @Abhijeet34\n/home/ @Abhijeet34\n')"
+p "repos/o/r/commits/$h/pulls" "[{\"number\": 7, \"head\": {\"sha\": \"$h\"}, \"base\": {\"ref\": \"main\"}}]"
+p repos/o/r/pulls/7/reviews "[{\"user\": {\"id\": 1}, \"state\": \"APPROVED\", \"commit_id\": \"$b\"}]"
+'''
+clean = '''
+git init -q -b main tree && echo a > tree/README.md && mkdir tree/home && echo a > tree/home/q.toml
+git -C tree add -A && git -C tree commit -qm base && git -C tree rev-parse HEAD > base
+echo b > tree/home/q.toml && git -C tree commit -qam head && git -C tree rev-parse HEAD > head
+b=$(cat base) h=$(cat head)
+mkdir pages bin && printf '#!/bin/sh\nf="%s/pages/$(printf %%s "$3" | tr "/?=" "___")"\n[ -f "$f" ] || { echo "gh: Not Found (HTTP 404)" >&2; exit 1; }\ncat "$f"\n' "$PWD" > bin/gh && chmod +x bin/gh
+p() { printf '%s' "$2" > "pages/$(printf %s "$1" | tr '/?=' '___')"; }
+blob() { printf '{"type": "file", "encoding": "base64", "content": "%s"}' "$(printf "$1" | base64 | tr -d '\n')"; }
+p repos/o/r '{"default_branch": "main"}'
+p repos/o/r/pulls/7 "{\"user\": {\"id\": 2}, \"head\": {\"sha\": \"$h\", \"repo\": {\"full_name\": \"o/r\"}}, \"base\": {\"ref\": \"main\", \"sha\": \"$b\"}, \"changed_files\": 1}"
+p repos/o/r/pulls/7/files '[{"filename": "home/q.toml"}]'
+p "repos/o/r/contents/.github/owner-verify.toml?ref=$b" "$(blob 'owner = { login = "Abhijeet34", id = 1 }\nmaintainer = [".github/CODEOWNERS", ".github/owner-verify.toml", "home/"]\n')"
+p "repos/o/r/contents/.github/CODEOWNERS?ref=$b" "$(blob '/.github/CODEOWNERS @Abhijeet34\n/.github/owner-verify.toml @Abhijeet34\n/home/ @Abhijeet34\n')"
+p "repos/o/r/commits/$h/pulls" "[{\"number\": 7, \"head\": {\"sha\": \"$h\"}, \"base\": {\"ref\": \"main\"}}]"
+p repos/o/r/pulls/7/reviews "[{\"user\": {\"id\": 1}, \"state\": \"APPROVED\", \"commit_id\": \"$h\"}]"
+'''
+run = 'PATH="$PWD/bin:$PATH" python3 "$GATE" --repo o/r --pr 7 --head "$(cat head)" --base "$(cat base)" --tree tree'
+finding = "owner-verify: refused: 1 item(s) above need Abhijeet34's approval"
+
 # A change that relaxes a test, a required context, a required workflow or a pin,
 # unless policy/relaxations.toml in the gates checkout covers it; README.md, "The weakening guard".
 [[gate]]
@@ -736,6 +758,19 @@ red = '''head -c 8001 /dev/zero | tr '\0' x > AGENTS.md'''
 clean = '''head -c 8000 /dev/zero | tr '\0' x > AGENTS.md'''
 run = 'python3 "$GATE" budget .'
 finding = "AGENTS.md: 8001 bytes, over the 8000-byte budget"
+
+# Each document holds its kind's template, read from policy/docs beside the gate.
+[[gate]]
+id = "docs-shape"
+surface = "Documentation"
+gates = ["run/docs-truth.py"]
+test = ".ci/test-docs-truth.py"
+suite = "shell"
+command = "run/docs-truth.py"
+red = '''mkdir -p docs/how-to && printf '# Do x\n\n## Before you start\n\n## Check it worked\n' > docs/how-to/x.md'''
+clean = '''mkdir -p docs/how-to && printf '# Do x\n\n## Before you start\n\n## Steps\n\n## Check it worked\n' > docs/how-to/x.md'''
+run = 'python3 "$GATE" shape .'
+finding = "docs/how-to/x.md: missing the heading `## Steps` that howto 1 requires"
 
 # External tools pinned and run offline; README.md, "The tool rows". Each stub exits 99
 # unless it is called with the flags that keep the tree's own configuration out. The inputs build
