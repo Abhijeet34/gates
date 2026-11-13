@@ -276,6 +276,7 @@ def sit_all(tree, base, head, tiers, mine, others, pr, store, state, say):
                 },
             },
         }
+        answer = None  # never the previous seat's
         for again in (False, True):
             if again:
                 # An unreadable reply is no vote, so the seat sits once more, fresh;
@@ -294,6 +295,8 @@ def sit_all(tree, base, head, tiers, mine, others, pr, store, state, say):
                 if again or UNREADABLE not in str(e):
                     raise Undecided(str(e)) from e
                 say(f"{name} on {model}: {e}; it sits once more")
+        if answer is None:
+            raise Undecided(f"the {name} seat on {model} gave no answer")
         approve, found = findings_of(answer, name)
         for f in found:
             f["stands"] = stands(tree, base, head, f)
