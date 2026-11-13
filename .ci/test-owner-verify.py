@@ -117,18 +117,29 @@ def git(tree, *args):
     ).stdout.strip()
 
 
-def fixture_tree(tmp, name, head_files):
-    """A git directory with a base commit and a head commit that writes head_files."""
+def write(tree, files):
+    """Write each path's text, delete it for None, or link it for ("link", target)."""
+    for path, text in files.items():
+        target = tree / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if target.is_symlink() or target.exists():
+            target.unlink()
+        if isinstance(text, tuple):
+            target.symlink_to(text[1])
+        elif text is not None:
+            target.write_text(text)
+
+
+def fixture_tree(tmp, name, head_files, base_files=None):
+    """A git directory with a base commit holding base_files and a head commit that writes head_files."""
     tree = tmp / name
     tree.mkdir()
     git(tree, "init", "-q", "-b", "main")
-    (tree / "README.md").write_text("base\n")
+    write(tree, {"README.md": "base\n", **(base_files or {})})
     git(tree, "add", "-A")
     git(tree, "commit", "-qm", "base")
     base = git(tree, "rev-parse", "HEAD")
-    for path, text in head_files.items():
-        (tree / path).parent.mkdir(parents=True, exist_ok=True)
-        (tree / path).write_text(text)
+    write(tree, head_files)
     git(tree, "add", "-A")
     git(tree, "commit", "-qm", "head")
     return tree, base, git(tree, "rev-parse", "HEAD")
@@ -244,6 +255,125 @@ def approved(name="clean", user=OWNER):
 
 
 HOME = [{"filename": "home/queue.toml"}]
+BUILD = ".github/workflows/build.yml"
+PIN = "0123456789abcdef0123456789abcdef01234567"
+PIN2 = "89abcdef0123456789abcdef0123456789abcdef"
+# The base's workflow every workflow case edits.
+WORKFLOW = f"""\
+name: build
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{{{ github.ref }}}}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: build
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    strategy:
+      matrix:
+        python: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@{PIN} # v4
+        with:
+          persist-credentials: false
+      - name: Test
+        env:
+          LEVEL: unit
+        run: |
+          python3 -m unittest -q
+"""
+
+
+def edit(old, new, count=1):
+    assert old in WORKFLOW, old
+    return WORKFLOW.replace(old, new, count)
+
+
+# Twelve workflow edits that change no trigger and no permission, each held on
+# main before the workflow route was built.
+CLEAN_EDITS = {
+    "a step added": edit(
+        "      - name: Test\n",
+        "      - name: Lint\n        run: python3 -m pyflakes .\n      - name: Test\n",
+    ),
+    "an action pin bumped": edit(PIN, PIN2),
+    "a run script changed": edit("python3 -m unittest -q", "python3 -m unittest -v"),
+    "a job's display name changed": edit("    name: build\n", "    name: build and test\n"),
+    "a timeout changed": edit("timeout-minutes: 10", "timeout-minutes: 20"),
+    "a step env var added": edit("LEVEL: unit\n", "LEVEL: unit\n          COLUMNS: '120'\n"),
+    "a runner image moved": edit("ubuntu-22.04", "ubuntu-24.04"),
+    "a job added": WORKFLOW
+    + "  docs:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: echo docs\n",
+    "a concurrency group changed": edit("build-${{", "build-pr-${{"),
+    "a comment edited": edit("# v4", "# v4.2.2"),
+    "a matrix entry added": edit('"3.12"]', '"3.12", "3.13"]'),
+    "a step input changed": edit(
+        "persist-credentials: false\n",
+        "persist-credentials: false\n          fetch-depth: 0\n",
+    ),
+}
+# Edits that change a trigger, a permission or a credential, or that the reader
+# cannot read, each held: (head text, the line the hold names).
+HELD_EDITS = {
+    "a trigger added": (
+        edit("on:\n", "on:\n  workflow_dispatch:\n"),
+        "the triggers (on:) changed",
+    ),
+    "a trigger's branches widened": (
+        edit("branches: [main]", "branches: ['**']"),
+        "the triggers (on:) changed",
+    ),
+    "a workflow token's write scope": (
+        edit("contents: read", "contents: write"),
+        "a permissions: block changed",
+    ),
+    "a job's write scope": (
+        edit("    timeout-minutes: 10\n", "    timeout-minutes: 10\n    permissions:\n      pull-requests: write\n"),
+        "a permissions: block changed",
+    ),
+    "a secret read": (
+        edit("LEVEL: unit\n", "LEVEL: unit\n          TOKEN: ${{ secrets.DEPLOY }}\n"),
+        "names secrets",
+    ),
+    "an environment added": (
+        edit("    timeout-minutes: 10\n", "    timeout-minutes: 10\n    environment: release\n"),
+        "an environment: block changed",
+    ),
+    "a self-hosted runner": (
+        edit("ubuntu-22.04", "[self-hosted, linux]"),
+        "names a self-hosted runner",
+    ),
+    "a quoted trigger key": (
+        edit("on:\n  pull_request:\n", "'on':\n  pull_request:\n"),
+        "the top-level key 'on' changed",
+    ),
+    "a YAML 1.1 true key": (
+        edit("on:\n  pull_request:\n", "true:\n  pull_request:\n"),
+        "the top-level key true changed",
+    ),
+    "an anchor beside an edit": (
+        edit("    timeout-minutes: 10\n", "    timeout-minutes: &t 10\n"),
+        "uses a YAML anchor or alias",
+    ),
+    "a flow mapping": (
+        edit("        with:\n          persist-credentials: false\n", "        with: {persist-credentials: false}\n"),
+        "opens a flow mapping",
+    ),
+    "permissions in another form": (
+        edit("LEVEL: unit\n", "LEVEL: unit\n          X: ${{ toJSON(github.permissions) }}\n"),
+        "holds `permissions` outside a plain permissions: key",
+    ),
+}
 PERMIT = [{"filename": "internal/domain/permit/permit.go"}]
 
 
@@ -357,11 +487,78 @@ def cases():
             1,
             "owner-verify: maintainer notes.toml <- home/queue.toml",
         ),
+        *(
+            (
+                f"a workflow edit with {what} passes",
+                dict(tree=f"clean-wf {what}", files=[{"filename": BUILD}]),
+                0,
+                f"owner-verify: workflow {BUILD}: no trigger, permission or credential changed",
+            )
+            for what in CLEAN_EDITS
+        ),
+        *(
+            (
+                f"a workflow edit with {what} is held",
+                dict(tree=f"held-wf {what}", files=[{"filename": BUILD}]),
+                1,
+                f"owner-verify: workflow {BUILD}: {line}",
+            )
+            for what, (_, line) in HELD_EDITS.items()
+        ),
         (
-            "a workflow path is held while its route is not built",
-            dict(files=[{"filename": ".github/workflows/ci.yml"}]),
+            "a held workflow edit the owner approved passes",
+            dict(
+                tree="held-wf a trigger added",
+                files=[{"filename": BUILD}],
+                reviews=approved("held-wf a trigger added"),
+            ),
+            0,
+            "owner-verify: pass: Abhijeet34 approved",
+        ),
+        (
+            "a new workflow is held",
+            dict(tree="new-wf", files=[{"filename": BUILD}]),
             1,
-            "workflow .github/workflows/ci.yml: its reader, canary and review are not built",
+            f"owner-verify: workflow {BUILD}: a new workflow adds its triggers",
+        ),
+        (
+            "a deleted workflow is held",
+            dict(tree="gone-wf", files=[{"filename": BUILD}]),
+            1,
+            f"owner-verify: workflow {BUILD}: deleting a workflow removes its triggers",
+        ),
+        (
+            "a renamed workflow is held",
+            dict(
+                tree="moved-wf",
+                files=[
+                    {
+                        "filename": ".github/workflows/make.yml",
+                        "previous_filename": BUILD,
+                    }
+                ],
+            ),
+            1,
+            "owner-verify: workflow .github/workflows/make.yml <- "
+            f"{BUILD}: a renamed workflow is a new workflow",
+        ),
+        (
+            "a file under the workflow path that is not YAML is held",
+            dict(tree="notes-wf", files=[{"filename": ".github/workflows/NOTES.md"}]),
+            1,
+            "owner-verify: workflow .github/workflows/NOTES.md: not a .yml or .yaml workflow",
+        ),
+        (
+            "a workflow made a link is held",
+            dict(tree="link-wf", files=[{"filename": BUILD}]),
+            1,
+            f"owner-verify: workflow {BUILD}: is not a regular file at the head",
+        ),
+        (
+            "a workflow the tree does not hold cannot decide",
+            dict(files=[{"filename": ".github/workflows/ci.yml"}]),
+            2,
+            "could not decide: .github/workflows/ci.yml is at neither the base nor the head",
         ),
         (
             "a checked path passes",
@@ -780,6 +977,28 @@ def main():
                 ".github/workflows/ci.yml": "on: pull_request\njobs:\n  a:\n    runs-on: ubuntu-24.04\n"
                 "    steps:\n      - uses: actions/checkout@v4\n"
             },
+        )
+        for what, text in CLEAN_EDITS.items():
+            TREES[f"clean-wf {what}"] = fixture_tree(
+                tmp, f"clean-{len(TREES)}", {BUILD: text}, {BUILD: WORKFLOW}
+            )
+        for what, (text, _) in HELD_EDITS.items():
+            TREES[f"held-wf {what}"] = fixture_tree(
+                tmp, f"held-{len(TREES)}", {BUILD: text}, {BUILD: WORKFLOW}
+            )
+        TREES["new-wf"] = fixture_tree(tmp, "new-wf", {BUILD: WORKFLOW})
+        TREES["gone-wf"] = fixture_tree(tmp, "gone-wf", {BUILD: None}, {BUILD: WORKFLOW})
+        TREES["moved-wf"] = fixture_tree(
+            tmp,
+            "moved-wf",
+            {BUILD: None, ".github/workflows/make.yml": WORKFLOW},
+            {BUILD: WORKFLOW},
+        )
+        TREES["notes-wf"] = fixture_tree(
+            tmp, "notes-wf", {".github/workflows/NOTES.md": "notes\n"}
+        )
+        TREES["link-wf"] = fixture_tree(
+            tmp, "link-wf", {BUILD: ("link", "make.yml")}, {BUILD: WORKFLOW}
         )
         for name, case, want_code, want_line in cases():
             total += 1
