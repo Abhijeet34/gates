@@ -479,7 +479,9 @@ def cases():
         ),
         (
             "a timeout reading the tier list cannot decide",
-            dict(files=[], tiers="ERR:Post: context deadline exceeded (Client.Timeout)"),
+            dict(
+                files=[], tiers="ERR:Post: context deadline exceeded (Client.Timeout)"
+            ),
             2,
             "could not decide",
         ),
