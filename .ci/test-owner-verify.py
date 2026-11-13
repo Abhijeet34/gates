@@ -308,9 +308,13 @@ CLEAN_EDITS = {
     ),
     "an action pin bumped": edit(PIN, PIN2),
     "a run script changed": edit("python3 -m unittest -q", "python3 -m unittest -v"),
-    "a job's display name changed": edit("    name: build\n", "    name: build and test\n"),
+    "a job's display name changed": edit(
+        "    name: build\n", "    name: build and test\n"
+    ),
     "a timeout changed": edit("timeout-minutes: 10", "timeout-minutes: 20"),
-    "a step env var added": edit("LEVEL: unit\n", "LEVEL: unit\n          COLUMNS: '120'\n"),
+    "a step env var added": edit(
+        "LEVEL: unit\n", "LEVEL: unit\n          COLUMNS: '120'\n"
+    ),
     "a runner image moved": edit("ubuntu-22.04", "ubuntu-24.04"),
     "a job added": WORKFLOW
     + "  docs:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: echo docs\n",
@@ -338,7 +342,10 @@ HELD_EDITS = {
         "a permissions: block changed",
     ),
     "a job's write scope": (
-        edit("    timeout-minutes: 10\n", "    timeout-minutes: 10\n    permissions:\n      pull-requests: write\n"),
+        edit(
+            "    timeout-minutes: 10\n",
+            "    timeout-minutes: 10\n    permissions:\n      pull-requests: write\n",
+        ),
         "a permissions: block changed",
     ),
     "a secret read": (
@@ -346,7 +353,10 @@ HELD_EDITS = {
         "names secrets",
     ),
     "an environment added": (
-        edit("    timeout-minutes: 10\n", "    timeout-minutes: 10\n    environment: release\n"),
+        edit(
+            "    timeout-minutes: 10\n",
+            "    timeout-minutes: 10\n    environment: release\n",
+        ),
         "an environment: block changed",
     ),
     "a self-hosted runner": (
@@ -366,11 +376,33 @@ HELD_EDITS = {
         "uses a YAML anchor or alias",
     ),
     "a flow mapping": (
-        edit("        with:\n          persist-credentials: false\n", "        with: {persist-credentials: false}\n"),
+        edit(
+            "        with:\n          persist-credentials: false\n",
+            "        with: {persist-credentials: false}\n",
+        ),
         "opens a flow mapping",
     ),
+    "a runner label no hosted image has": (
+        edit("ubuntu-22.04", "build-box"),
+        "runs on 'build-box', not a GitHub-hosted image",
+    ),
+    "a runner from an expression": (
+        edit("ubuntu-22.04", "${{ matrix.runner }}"),
+        "runs on '${{ matrix.runner }}', not a GitHub-hosted image",
+    ),
+    "a matrix edit beside a runner the base already reads from an expression": (
+        edit('"3.12"]', '"3.12", "3.13"]'),
+        "runs on an expression, so an edit elsewhere may move it",
+    ),
+    "a tab": (
+        edit("LEVEL: unit\n", "LEVEL: unit\n          COLUMNS:\t'120'\n"),
+        "holds a tab or a space YAML does not indent with",
+    ),
     "permissions in another form": (
-        edit("LEVEL: unit\n", "LEVEL: unit\n          X: ${{ toJSON(github.permissions) }}\n"),
+        edit(
+            "LEVEL: unit\n",
+            "LEVEL: unit\n          X: ${{ toJSON(github.permissions) }}\n",
+        ),
         "holds `permissions` outside a plain permissions: key",
     ),
 }
@@ -514,6 +546,12 @@ def cases():
             ),
             0,
             "owner-verify: pass: Abhijeet34 approved",
+        ),
+        (
+            "a trigger change in a root mapping indented throughout is held",
+            dict(tree="indented-wf", files=[{"filename": BUILD}]),
+            1,
+            f"owner-verify: workflow {BUILD}: the triggers (on:) changed",
         ),
         (
             "a new workflow is held",
@@ -983,11 +1021,30 @@ def main():
                 tmp, f"clean-{len(TREES)}", {BUILD: text}, {BUILD: WORKFLOW}
             )
         for what, (text, _) in HELD_EDITS.items():
+            base_wf = WORKFLOW
+            if "runner the base already" in what:
+                base_wf, text = (
+                    x.replace("ubuntu-22.04", "${{ matrix.runner }}")
+                    for x in (WORKFLOW, text)
+                )
             TREES[f"held-wf {what}"] = fixture_tree(
-                tmp, f"held-{len(TREES)}", {BUILD: text}, {BUILD: WORKFLOW}
+                tmp, f"held-{len(TREES)}", {BUILD: text}, {BUILD: base_wf}
             )
+        indented = "".join(f"  {x}" if x else x for x in WORKFLOW.splitlines(True))
+        TREES["indented-wf"] = fixture_tree(
+            tmp,
+            "indented-wf",
+            {
+                BUILD: indented.replace(
+                    "    pull_request:\n", "    pull_request_target:\n"
+                )
+            },
+            {BUILD: indented},
+        )
         TREES["new-wf"] = fixture_tree(tmp, "new-wf", {BUILD: WORKFLOW})
-        TREES["gone-wf"] = fixture_tree(tmp, "gone-wf", {BUILD: None}, {BUILD: WORKFLOW})
+        TREES["gone-wf"] = fixture_tree(
+            tmp, "gone-wf", {BUILD: None}, {BUILD: WORKFLOW}
+        )
         TREES["moved-wf"] = fixture_tree(
             tmp,
             "moved-wf",

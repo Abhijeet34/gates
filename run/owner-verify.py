@@ -14,7 +14,8 @@ Each changed path, by both names on a rename, takes the first list of the
 tier list that covers it, in this order:
 
   maintainer  passes only with the owner's approval at the head
-  workflow    held: its reader, canary and review are not built yet
+  workflow    passes when its privilege reader finds no trigger, permission
+              or credential changed; anything it cannot read is held
   verified    passes on a review verdict for this head with no blocking
               finding, never for a head outside the repository
   checked     passes
@@ -43,12 +44,14 @@ tier list, which the verifier posts as neutral so the pull request that adds one
 
 import argparse
 import base64
+import difflib
 import json
 import os
 import re
 import subprocess
 import sys
 import tomllib
+from collections import Counter
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -66,6 +69,61 @@ DECIDING = {"APPROVED", "CHANGES_REQUESTED", "DISMISSED"}
 SHA = re.compile(r"^[0-9a-f]{40}$")
 # No glob, no space, no byte a look-alike could hide in: a listed path is literal.
 PATH = re.compile(r"^[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*/?$")
+
+
+# A workflow's top-level keys that grant nothing; every other one, `on` and
+# `permissions` in any spelling included, is privilege and compared whole.
+PLAIN_TOP = {"name", "run-name", "jobs", "env", "defaults", "concurrency"}
+# Keys at any depth that grant a token's scope or a credential.
+GRANTS = re.compile(r"(\s*)(?:-\s+)?(permissions|secrets|environment)\s*:")
+# A node starts a line, follows `- `, `: ` or `? `, or follows `[`, `{` or `,`.
+NODE = r"(?:^\s*|[-:?]\s+|[\[{,]\s*)"
+ANCHOR = re.compile(NODE + r"[&*][^\s\[\]{},&*>]")
+RUNS_ON = re.compile(r"\s*(?:-\s+)?runs-on\s*:")
+# A runner a GitHub-hosted image names; any other label may be a self-hosted machine.
+HOSTED = re.compile(r"^(?:ubuntu|windows|macos)-[A-Za-z0-9.]+(?:-arm)?$")
+EXPRESSION = re.compile(r"\$\{\{.*?\}\}")
+# What the line reader cannot place on a changed line: (rule, why, whether it
+# reads the line whole rather than with its ${{ }} expressions removed).
+UNREAD = [
+    (
+        re.compile(r"\bpermissions\b"),
+        "holds `permissions` outside a plain permissions: key",
+        True,
+    ),
+    (re.compile(r"\bsecrets\b"), "names secrets", True),
+    (
+        re.compile(r"\benvironment['\"]?\s*:"),
+        "spells environment outside a plain key",
+        True,
+    ),
+    (re.compile(r"\bself-hosted\b"), "names a self-hosted runner", True),
+    (
+        re.compile("[\t\u00a0\u2000-\u200b\u2028\u2029\u3000\ufeff]"),
+        "holds a tab or a space YAML does not indent with",
+        True,
+    ),
+    (
+        re.compile(NODE + r"\{"),
+        "opens a flow mapping, which the line reader does not parse",
+        False,
+    ),
+    (
+        re.compile(r"^\s*\?(\s|$)"),
+        "spells an explicit key, which the line reader does not parse",
+        False,
+    ),
+    (
+        re.compile(NODE + r"!"),
+        "spells a YAML tag, which the line reader does not parse",
+        False,
+    ),
+    (
+        re.compile(r'"[^"]*\\[^"]*"\s*:'),
+        "spells an escaped key, which the line reader does not parse",
+        False,
+    ),
+]
 
 
 class Undecided(Exception):
@@ -266,6 +324,136 @@ def ci_ran(repo, head, base, path):
     return notes, failures
 
 
+def tree_file(tree, rev, path):
+    """(mode, text) of path at rev in the git directory tree, or None when it is absent."""
+
+    def git(*args):
+        proc = subprocess.run(
+            ["git", "--literal-pathspecs", "-C", tree, *args],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+        )
+        if proc.returncode:
+            err = proc.stderr.decode(errors="replace").strip()
+            raise Undecided(f"git {' '.join(args[:2])} {path}: {err}")
+        return proc.stdout
+
+    entry = git("ls-tree", "-z", rev, "--", path).split(b"\0")[0]
+    if not entry:
+        return None
+    mode, kind, oid = entry.split(b"\t", 1)[0].decode().split()
+    if mode != "100644" and mode != "100755":
+        return mode, None
+    try:
+        return mode, git("cat-file", "blob", oid).decode("utf-8")
+    except UnicodeDecodeError:
+        return mode, None
+
+
+def uncomment(line):
+    """The line without a trailing comment; a line with a quote is kept whole, so a `#` in a string hides nothing."""
+    if '"' not in line and "'" not in line:
+        line = re.sub(r"(^|\s)#.*", "", line)
+    return line.rstrip()
+
+
+def blocks(lines, start):
+    """Each line `start` matches, with the more-indented lines after it, by the key it names."""
+    out = []
+    for i, line in enumerate(lines):
+        m = start(line)
+        if not m:
+            continue
+        indent, block = len(line) - len(line.lstrip()), [line.strip()]
+        for nested in lines[i + 1 :]:
+            if nested and len(nested) - len(nested.lstrip()) <= indent:
+                break
+            if nested:
+                block.append(nested.strip())
+        out.append((m, block))
+    return out
+
+
+def privilege(text):
+    """{what: blocks} of a workflow: its top-level keys but PLAIN_TOP, and every GRANTS block at any depth."""
+    lines = [uncomment(x) for x in text.splitlines()]
+    # YAML lets the root mapping sit at any indent, so the root is the shallowest line.
+    root = min((len(x) - len(x.lstrip(" ")) for x in lines if x.strip()), default=0)
+
+    def top(x):
+        return (
+            x.strip()
+            and len(x) - len(x.lstrip(" ")) == root
+            and x.split(":", 1)[0].strip()
+        )
+
+    got = {}
+    for key, block in blocks(lines, top):
+        if key not in PLAIN_TOP:
+            what = "the triggers (on:)" if key == "on" else f"the top-level key {key}"
+            got.setdefault(what, []).append(block)
+    for m, block in blocks(lines, GRANTS.match):
+        article = "an" if m.group(2)[0] == "e" else "a"
+        got.setdefault(f"{article} {m.group(2)}: block", []).append(block)
+    return got
+
+
+def workflow_holds(tree, base, head, names):
+    """Why a workflow edit is held: each trigger, permission or credential it changes, or what cannot be read."""
+    if len(names) > 1:
+        return ["a renamed workflow is a new workflow, so its triggers are new"]
+    path = names[0]
+    if not path.endswith((".yml", ".yaml")):
+        return [
+            "not a .yml or .yaml workflow, which the privilege reader does not read"
+        ]
+    old, new = tree_file(tree, base, path), tree_file(tree, head, path)
+    if old is None and new is None:
+        raise Undecided(f"{path} is at neither the base nor the head of {tree}")
+    if old is None:
+        return ["a new workflow adds its triggers"]
+    if new is None:
+        return ["deleting a workflow removes its triggers"]
+    for side, (mode, text) in (("base", old), ("head", new)):
+        if text is None:
+            return [f"is not a regular file at the {side} (mode {mode}) or not UTF-8"]
+    a, b = privilege(old[1]), privilege(new[1])
+    out = [
+        f"{what} changed"
+        for what in sorted(set(a) | set(b))
+        if a.get(what) != b.get(what)
+    ]
+    la = [x for x in (uncomment(y) for y in old[1].splitlines()) if x]
+    lb = [x for x in (uncomment(y) for y in new[1].splitlines()) if x]
+    ops = difflib.SequenceMatcher(None, la, lb, autojunk=False).get_opcodes()
+    changed = [
+        x for t, i1, i2, j1, j2 in ops if t != "equal" for x in la[i1:i2] + lb[j1:j2]
+    ]
+    for line in changed:
+        if GRANTS.match(line):
+            continue  # its block is compared above
+        # An expression's braces are not a flow mapping; its words still count.
+        bare = EXPRESSION.sub("", line)
+        for rule, why, whole in UNREAD:
+            if rule.search(line if whole else bare) and why not in out:
+                out.append(why)
+    if changed and any(ANCHOR.search(x) for x in la + lb):
+        out.append("uses a YAML anchor or alias, so any edit may change what it grants")
+
+    def runners(lines):
+        return Counter(" ".join(b) for _, b in blocks(lines, RUNS_ON.match))
+
+    if changed and any(EXPRESSION.search(r) for r in runners(lb)):
+        out.append("runs on an expression, so an edit elsewhere may move it")
+    for runner in runners(lb) - runners(la):
+        labels = re.findall(r"[^\s\[\],'\"]+", runner.split(":", 1)[1])
+        if not labels or not all(HOSTED.match(x) for x in labels):
+            out.append(
+                f"runs on {runner.split(':', 1)[1].strip()!r}, not a GitHub-hosted image"
+            )
+    return out
+
+
 def route_of(path, tiers):
     for route in ROUTES:
         for e in tiers[route]:
@@ -370,9 +558,12 @@ def decide(args):
         if route == "maintainer":
             held.append(f"maintainer {shown}: needs the owner's approval at the head")
         elif route == "workflow":
-            held.append(
-                f"workflow {shown}: its reader, canary and review are not built, so it needs the owner's approval"
-            )
+            why = workflow_holds(args.tree, base, head, names)
+            held += [f"workflow {shown}: {w}" for w in why]
+            if not why:
+                notes.append(
+                    f"workflow {shown}: no trigger, permission or credential changed"
+                )
         elif route == "verified":
             verified.append(shown)
         elif route == "checked":
