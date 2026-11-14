@@ -580,7 +580,8 @@ finding = "record-approval: refused: Abhijeet34 approved aaaa, not the head bbbb
 [[gate]]
 id = "owner-verify"
 surface = "Security"
-gates = ["run/owner-verify.py"]
+# The stub dispatches the verifier branch's copy of the judge; it decides nothing itself.
+gates = ["run/owner-verify.py", ".github/workflows/owner-verify.yml"]
 test = ".ci/test-owner-verify.py"
 suite = "shell"
 command = "run/owner-verify.py"

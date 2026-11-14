@@ -1,2 +1,29 @@
-# The maintainer reviews every change to this repository.
-*       @Abhijeet34
+# The maintainer reviews every change to this repository: each top-level entry is
+# listed, because gates' own run/owner-verify.py reads this file beside
+# .github/owner-verify.toml and accepts only literal, root-anchored paths, and
+# .github/CODEOWNERS and .github/owner-verify.toml by name.
+# A new top-level entry needs its line here and in owner-verify.toml.
+/.github/              @Abhijeet34
+/.github/CODEOWNERS    @Abhijeet34
+/.github/owner-verify.toml @Abhijeet34
+/.ci/                  @Abhijeet34
+/.githooks/            @Abhijeet34
+/.gitignore            @Abhijeet34
+/.gitleaks.toml        @Abhijeet34
+/.no-mistakes.yaml     @Abhijeet34
+/AGENTS.md             @Abhijeet34
+/bin/                  @Abhijeet34
+/CLAUDE.md             @Abhijeet34
+/CODE_OF_CONDUCT.md    @Abhijeet34
+/CONTRIBUTING.md       @Abhijeet34
+/corpus/               @Abhijeet34
+/LICENSE               @Abhijeet34
+/NOTICE                @Abhijeet34
+/policy/               @Abhijeet34
+/README.md             @Abhijeet34
+/ruff.toml             @Abhijeet34
+/run/                  @Abhijeet34
+/SECURITY.md           @Abhijeet34
+/SUPPORT.md            @Abhijeet34
+/system-maintenance/   @Abhijeet34
+/verifier/             @Abhijeet34

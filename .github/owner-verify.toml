@@ -1,0 +1,12 @@
+# The verifier's tier list, read from the base commit by run/owner-verify.py, never
+# from the change it judges; README.md, "The owner-verify judge", owns the format.
+# maintainer must equal .github/CODEOWNERS. Every path owned today stays under
+# maintainer until the verifier's acceptance run, so the check changes nothing he approves.
+owner = { login = "Abhijeet34", id = 27002551 }
+maintainer = [
+  ".github/", ".github/CODEOWNERS", ".github/owner-verify.toml",
+  ".ci/", ".githooks/", ".gitignore", ".gitleaks.toml", ".no-mistakes.yaml",
+  "AGENTS.md", "bin/", "CLAUDE.md", "CODE_OF_CONDUCT.md", "CONTRIBUTING.md", "corpus/",
+  "LICENSE", "NOTICE", "policy/", "README.md", "ruff.toml", "run/", "SECURITY.md",
+  "SUPPORT.md", "system-maintenance/", "verifier/",
+]

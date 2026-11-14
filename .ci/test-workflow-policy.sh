@@ -11,6 +11,11 @@
 #      machine that outlives the job;
 #   3. no secret but GITHUB_TOKEN, and no `secrets: inherit`.
 #
+# One named exception: the trigger key line of owner-verify.yml, the verifier's
+# stub, which must run in the default branch's context so a pull request cannot
+# change what dispatches its own judge. It checks out and runs nothing of the
+# pull request; any other forbidden word in that file is still refused.
+#
 # Each property is then shown refusing a deliberately added line, so the check
 # cannot pass by matching nothing.
 
@@ -31,7 +36,8 @@ violations() { # <workflow dir>
     files=$(find "$dir" -type f \( -name '*.yml' -o -name '*.yaml' \) | sort)
     [ -n "$files" ] || { echo "$dir: no workflow files found"; return; }
     # shellcheck disable=SC2086 # word-splitting the sorted file list is the point
-    grep -HnE 'pull_request_target|workflow_run|issue_comment|self-hosted' $files
+    grep -HnE 'pull_request_target|workflow_run|issue_comment|self-hosted' $files \
+        | grep -vE '(^|/)owner-verify\.yml:[0-9]+:  pull_request_target:$'
     # shellcheck disable=SC2086
     grep -HnE 'secrets[[:space:]]*:[[:space:]]*inherit|secrets\[|secrets\.[A-Za-z0-9_]+' $files \
         | grep -vE 'secrets\.GITHUB_TOKEN([^A-Za-z0-9_]|$)'
@@ -77,6 +83,16 @@ refuses 'issue_comment trigger'           '  issue_comment:'
 refuses 'named secret'                    '          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}'
 refuses 'secret beside GITHUB_TOKEN'      '          X: ${{ secrets.GITHUB_TOKEN }}${{ secrets.DEPLOY_KEY }}'
 refuses 'secrets: inherit'                '    secrets: inherit'
+
+# The stub's exception covers its trigger key line and nothing else in it.
+dir="$workdir/stub"
+cp -R "$WORKFLOWS" "$dir"
+printf '%s\n' '# pull_request_target' 'on: [push, workflow_run]' >>"$dir/owner-verify.yml"
+if [ "$(violations "$dir" | grep -c 'owner-verify\.yml:')" -eq 2 ]; then
+    pass "refuses a forbidden word elsewhere in owner-verify.yml"
+else
+    fail "owner-verify.yml's exception reached past its trigger key line: $(violations "$dir" | grep 'owner-verify\.yml:')"
+fi
 
 # And the one secret that is allowed must stay allowed, or the check is
 # refusing everything rather than measuring.
