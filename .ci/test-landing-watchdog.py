@@ -219,7 +219,9 @@ def a_failed_write_is_undecided(script):
 
 def a_wrong_shaped_answer_is_undecided(script):
     fixture = answer("stale")
-    fixture["answers"][f"repos/{REPO}/events?per_page=100"] = {"message": "an object, not the list"}
+    fixture["answers"][f"repos/{REPO}/events?per_page=100"] = {
+        "message": "an object, not the list"
+    }
     rc, out, _ = run(script, fixture)
     if why := expect(rc, out, 2):
         return why
