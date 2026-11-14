@@ -223,7 +223,7 @@ It reads that file from `$GATES_DIR`, the gates checkout at the locked commit, n
 | --- | --- | --- |
 | `test-exemption` | a line added to a file `--tests` names that skips, ignores or marks a test todo, or a `continue`; a line moved within the file is not new | `ref`: the line holds exactly one regex or string literal, whose source with `\/` unescaped equals `ref`, and nothing that combines or negates it |
 | `context-removed` | a required status context gone from `.github/ruleset*.json` or `.github/rulesets/*.json`, or a ruleset that is not JSON | `context_to`: a pattern with `{from}` in it that one of the contexts the change added must fullmatch |
-| `workflow-condition` | `paths-ignore`, `continue-on-error` other than `false`, or a job `if:` other than `always()` added to a job a required context names, or one such a job needs | none yet |
+| `workflow-condition` | `paths-ignore`, `continue-on-error` other than `false`, or a job `if:` other than `always()` added to a job a required context names, or one such a job needs | `condition`: `<path>: <finding>`, such as `.github/workflows/ci.yml: job ledger: if: github.event_name == 'push'`, fullmatches it; the line number is left out |
 | `moving-ref` | a `uses:` added at a ref that is neither a commit nor a `sha256:` digest; a ref already present at the base is not new | `ref`: the whole `uses:` value fullmatches it |
 
 A moving ref that replaces a commit pin of the same workflow or action is refused whatever the records say.
@@ -257,6 +257,7 @@ shadow_since = 2026-10-26
 ```
 
 `.ci/test-weakening.py` runs an inline job moved into a shared workflow at `@main`, with the test that requires a commit pin taught to skip exactly that ref, with and without the record, then a widened literal, a third-party ref, a repository outside the record's scope, a commit pin turned back into `@main`, a caller's own `policy/relaxations.toml`, each finding kind and each schema refusal.
+It runs factory's proved-tree ledger against the two `workflow-condition` records, and the same conditions on another job, in another workflow, widened, or in another repository, each refused.
 `.ci/gate-registry.toml` proves the rows `weakening-test-exemption`, `weakening-context-removed`, `weakening-workflow-condition` and `weakening-moving-ref`.
 
 ## The record-approval check

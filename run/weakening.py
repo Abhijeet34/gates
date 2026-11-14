@@ -59,8 +59,14 @@ PINNED = re.compile(r"@(?:[0-9a-f]{40}|sha256:[0-9a-f]{64})$")
 KEY = re.compile(r"^(\s*)(?:-\s+)?['\"]?([A-Za-z0-9_-]+)['\"]?\s*:\s*(.*)$")
 ALWAYS = re.compile(r"^(?:\$\{\{\s*always\(\)\s*\}\}|always\(\))$")
 
-KINDS = {"moving-ref": "ref", "test-exemption": "ref", "context-removed": "context_to"}
-RECORD_KEYS = {"id", "ratified", "by", "kinds", "repos", "ref", "context_to"}
+KINDS = {
+    "moving-ref": "ref",
+    "test-exemption": "ref",
+    "context-removed": "context_to",
+    "workflow-condition": "condition",
+}
+MATCHERS = set(KINDS.values())
+RECORD_KEYS = {"id", "ratified", "by", "kinds", "repos"} | MATCHERS
 REPO = re.compile(r"^[A-Za-z0-9-]+/[A-Za-z0-9._*-]+$")
 
 
@@ -128,13 +134,14 @@ def load_policy():
         ):
             raise Undecided(f"{where}: `repos` must list OWNER/NAME patterns")
         needed = {KINDS[k] for k in kinds}
-        for key in {"ref", "context_to"}:
+        for key in MATCHERS:
             if (key in rec) != (key in needed):
                 state = "missing" if key in needed else "matches none of its kinds"
                 raise Undecided(f"{where}: `{key}` {state}")
         try:
-            if "ref" in rec:
-                re.compile(rec["ref"])
+            for key in ("ref", "condition"):
+                if key in rec:
+                    re.compile(rec[key])
             if "context_to" in rec:
                 if "{from}" not in rec["context_to"]:
                     raise Undecided(f"{where}: `context_to` must hold {{from}}")
@@ -376,7 +383,7 @@ def literals(line):
         yield m, next(g for g in m.groups() if g is not None).replace("\\/", "/")
 
 
-def covers(rec, kind, subject, repo):
+def covers(rec, kind, subject, repo, where=""):
     if kind not in rec["kinds"] or not any(
         glob_re(r).match(repo) for r in rec["repos"]
     ):
@@ -390,6 +397,11 @@ def covers(rec, kind, subject, repo):
             return False
         m = found[0][0]
         return not COMBINES.search(subject[: m.start()] + subject[m.end() :])
+    if kind == "workflow-condition":
+        # The path keeps a record to the one workflow it was ratified for; the line
+        # number is left out because any edit above the condition moves it.
+        path = where.rsplit(":", 1)[0]
+        return re.fullmatch(rec["condition"], f"{path}: {subject}") is not None
     if kind == "context-removed" and subject.startswith("{"):
         moved = json.loads(subject)
         want = re.compile(rec["context_to"].replace("{from}", re.escape(moved["from"])))
@@ -425,7 +437,9 @@ def main():
                 f"weakening: {kind} at {where}: {subject} replaces a commit pin, which no recorded policy covers"
             )
             continue
-        rec = next((r for r in records if covers(r, kind, subject, args.repo)), None)
+        rec = next(
+            (r for r in records if covers(r, kind, subject, args.repo, where)), None
+        )
         if rec:
             print(f"weakening: {kind} at {where} matches recorded policy {rec['id']}")
         else:
