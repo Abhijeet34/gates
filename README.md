@@ -31,6 +31,7 @@ The checks that stand between a commit and a public push: a gitleaks pre-push ho
 | `run/owner-verify.py`, `verifier/` | The verifier's judge, which decides `owner-verify` from the base's tier list, and the content of the admin-only `verifier` branch that runs it with the verifier App's key; see "The owner-verify judge" and "The verifier branch". |
 | `run/licence.py` | The licence row: dependency and vendored-file licences against a caller's `.github/licence-policy.toml`; see "The licence row". |
 | `run/budget-monitor.py` | The gate budget monitor: prints each budgeted step's weekly p50/p95, the alarm and the fix task text; see "The budget monitor". |
+| `run/landing-watchdog.py` | The landing watchdog: opens one issue assigned to the maintainer when ready pull requests wait on a silent merger App, and closes it when landing resumes; see "The landing watchdog". |
 | `bin/gates.py`, `bin/rollout.toml` | `gates bump` and `gates rollback`, which move callers' locks; see "Bumping". |
 | `.ci/` | The contract test for each gate script, the gitleaks rule and allowlist suites, and `check.sh`, which runs all of them. |
 
@@ -501,6 +502,24 @@ A series is a repository, workflow, job and optional step with a `budget_s`, for
 
 The design says "fix task after 14 days over" without saying over what; this reads it as the budget itself and keeps the 70% line as the early alarm.
 No workflow runs it: a scheduled run is the maintainer's to add in the weekly batch.
+
+## The landing watchdog
+
+`run/landing-watchdog.py --repo OWNER/NAME` decides whether landing has stopped from what GitHub knows alone, so the page does not come from the machine that stopped.
+It reads the REST API through `gh api` and needs no secret; its docstring owns the rule, the flags and the exit status.
+
+- **STOPPED** (exit 1) when an open pull request has been ready to land for over 90 minutes and the merger App, `hw-milan[bot]`, has neither merged nor updated anything in the last 90 minutes.
+  Ready is `mergeable_state` `clean` or `has_hooks`, with every check run and commit status on the head passed; ready since is the latest of its creation, its last check and its last approval.
+- A `behind` pull request does not count: it cannot land without an update, and when the merger stops nothing merges, so the ready ones stay `clean`.
+  Counting it would page on every Dependabot pull request left behind for days.
+- With `--act` it keeps one issue in the repository it runs in, found by a marker among the open issues the run's own identity opened.
+  It opens it assigned to the maintainer ("no landing for N h, M pull requests wait"), retitles it while landing stays stopped, and comments and closes it on the first run that finds landing resumed.
+- A failed or unexpected answer, or a failed issue write, exits 2: silence is not a pass.
+
+The merger's actions are read from the repository's newest 100 issue events and newest 100 events, which is ample for a 90-minute window.
+The scheduled workflow that runs it hourly on `ubuntu-slim` is the maintainer's to add, with `issues: write` on the run's token and read on contents, pull requests, checks and statuses, which a private repository needs for the reads.
+That token reads only the repository it runs in, so each caller watches and pages for itself.
+`.ci/test-landing-watchdog.py` replays two answers gates gave on 2026-11-14, fresh (exit 0) and stale (exit 1), with each control removed in turn.
 
 ## The tool rows
 
