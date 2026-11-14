@@ -14,3 +14,22 @@ by = "maintainer decision"
 kinds = ["moving-ref", "test-exemption"]
 repos = ["Abhijeet34/*"]
 ref = '^Abhijeet34/gates/\.github/workflows/shared-[a-z-]+\.yml@main$'
+
+# Maintainer decision 2026-11-15: a push to main of a tree a green run already proved
+# may skip factory's test shards. The `ledger` lookup runs on push only, and the `go`
+# shards skip only when it reports the tree proved; a failed or skipped lookup runs them.
+[[relaxation]]
+id = "factory-ledger-on-push"
+ratified = 2026-11-15
+by = "maintainer decision"
+kinds = ["workflow-condition"]
+repos = ["Abhijeet34/factory"]
+condition = '''^\.github/workflows/ci\.yml: job ledger: if: github\.event_name == 'push'$'''
+
+[[relaxation]]
+id = "factory-shards-skip-proved-tree"
+ratified = 2026-11-15
+by = "maintainer decision"
+kinds = ["workflow-condition"]
+repos = ["Abhijeet34/factory"]
+condition = '''^\.github/workflows/ci\.yml: job go: if: \$\{\{ !cancelled\(\) && needs\.ledger\.outputs\.proved != 'true' \}\}$'''

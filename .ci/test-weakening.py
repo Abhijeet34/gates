@@ -103,6 +103,57 @@ PR114 = {
     "test/architecture/supply-chain.test.ts": with_exemption(),
 }
 
+# Factory PR 557's shape: a `ledger` lookup on push, and the `go` shards the required
+# `checks` aggregate needs skipped when the lookup reports the tree proved.
+FACTORY = "Abhijeet34/factory"
+LEDGER_IF = "github.event_name == 'push'"
+GO_IF = "${{ !cancelled() && needs.ledger.outputs.proved != 'true' }}"
+FACTORY_CI = """name: ci
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  go:
+    name: go
+    runs-on: ubuntu-24.04
+    steps:
+      - run: go test ./...
+  checks:
+    name: checks
+    needs: [go]
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    steps:
+      - run: echo ok
+"""
+
+
+def ledger(ledger_if=LEDGER_IF, go_if=GO_IF):
+    return FACTORY_CI.replace(
+        "  go:\n    name: go\n",
+        f"""  ledger:
+    name: ledger
+    if: {ledger_if}
+    runs-on: ubuntu-24.04
+    outputs:
+      proved: ${{{{ steps.lookup.outputs.proved }}}}
+    steps:
+      - id: lookup
+        run: go run ./tools/testshards ledger
+  go:
+    name: go
+    needs: [ledger]
+    if: {go_if}
+""",
+    )
+
+
+FACTORY_BASE = {**BASE, ".github/workflows/ci.yml": FACTORY_CI}
+PR557 = {".github/workflows/ci.yml": ledger()}
+
 workdir = Path(tempfile.mkdtemp())
 ENV = {
     **os.environ,
@@ -448,6 +499,80 @@ CASES = [
         0,
         "weakening: no weakening",
     ),
+    (
+        "factory PR 557's ledger with no record",
+        PR557,
+        1,
+        [
+            f"workflow-condition at .github/workflows/ci.yml:11: job ledger: if: {LEDGER_IF}",
+            f"workflow-condition at .github/workflows/ci.yml:21: job go: if: {GO_IF}",
+            "refused: 2 weakening(s)",
+        ],
+        FACTORY,
+        FACTORY_BASE,
+        gates_with(NO_POLICY),
+    ),
+    (
+        "factory PR 557's ledger with the records",
+        PR557,
+        0,
+        [
+            "workflow-condition at .github/workflows/ci.yml:11 matches recorded policy factory-ledger-on-push",
+            "workflow-condition at .github/workflows/ci.yml:21 matches recorded policy factory-shards-skip-proved-tree",
+            "weakening: every weakening matches a recorded policy",
+        ],
+        FACTORY,
+        FACTORY_BASE,
+    ),
+    (
+        "factory's ledger in another repository",
+        PR557,
+        1,
+        [
+            f"workflow-condition at .github/workflows/ci.yml:11: job ledger: if: {LEDGER_IF}",
+            "refused: 2 weakening(s)",
+        ],
+        "Abhijeet34/treadling",
+        FACTORY_BASE,
+    ),
+    (
+        "the ledger's condition on another required job",
+        {
+            ".github/workflows/ci.yml": ledger().replace(
+                "    if: ${{ always() }}\n", f"    if: {LEDGER_IF}\n"
+            )
+        },
+        1,
+        [
+            f"workflow-condition at .github/workflows/ci.yml:28: job checks: if: {LEDGER_IF}",
+            "refused: 1 weakening(s)",
+        ],
+        FACTORY,
+        FACTORY_BASE,
+    ),
+    (
+        "the shards' condition widened",
+        {".github/workflows/ci.yml": ledger(go_if=GO_IF[:-3] + " || true }}")},
+        1,
+        [
+            "workflow-condition at .github/workflows/ci.yml:21: job go: if: ${{ !cancelled() && needs.ledger.outputs.proved != 'true' || true }}",
+            "refused: 1 weakening(s)",
+        ],
+        FACTORY,
+        FACTORY_BASE,
+    ),
+    (
+        "the ledger's conditions in another workflow",
+        {**PR557, ".github/workflows/nightly.yml": ledger()},
+        1,
+        [
+            f"workflow-condition at .github/workflows/nightly.yml:11: job ledger: if: {LEDGER_IF}",
+            f"workflow-condition at .github/workflows/nightly.yml:21: job go: if: {GO_IF}",
+            "refused: 2 weakening(s)",
+        ],
+        FACTORY,
+        FACTORY_BASE,
+    ),
 ]
 
 SCHEMA = [
@@ -460,6 +585,21 @@ SCHEMA = [
         "`context_to` matches none",
     ),
     ("a missing matcher", record(ref=None), "`ref` missing"),
+    (
+        "a workflow-condition record without a condition",
+        record(kinds='["workflow-condition"]', ref=None),
+        "`condition` missing",
+    ),
+    (
+        "a condition on a record of another kind",
+        record(condition="'^x$'"),
+        "`condition` matches none",
+    ),
+    (
+        "a condition that does not compile",
+        record(kinds='["workflow-condition"]', ref=None, condition="'^x($'"),
+        "bad pattern",
+    ),
     ("no ratified date", record(ratified='"soon"'), "`ratified` must be a date"),
     ("a repository glob without an owner", record(repos='["*"]'), "`repos` must list"),
     ("an unknown table", "[grant]\nall = true\n", "unknown table ['grant']"),
