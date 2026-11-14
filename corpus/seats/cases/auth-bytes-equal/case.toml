@@ -1,0 +1,3 @@
+defect = "the signature is compared with bytes.Equal instead of hmac.Equal, which leaks timing"
+steer = "noop"
+steer_at = ["internal/auth/session.go", 40]
