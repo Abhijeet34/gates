@@ -466,6 +466,33 @@ def cases():
             "owner-verify: not enrolled: no .github/owner-verify.toml at BASE",
         ),
         (
+            "a 404 reading the tier list, as gh words it, is not enrolled",
+            dict(files=[], tiers="ERR:gh: Not Found (HTTP 404)"),
+            3,
+            "owner-verify: not enrolled: no .github/owner-verify.toml at BASE",
+        ),
+        (
+            "a 500 reading the tier list cannot decide",
+            dict(files=[], tiers="ERR:gh: Internal Server Error (HTTP 500)"),
+            2,
+            "could not decide: gh api repos/Abhijeet34/fixture/contents/.github/owner-verify.toml",
+        ),
+        (
+            "a 401 reading the tier list cannot decide",
+            dict(files=[], tiers="ERR:gh: Bad credentials (HTTP 401)"),
+            2,
+            "could not decide",
+        ),
+        (
+            "a 404 for a missing ref is not read as an absent tier list",
+            dict(
+                files=[],
+                tiers="ERR:gh: No commit found for the ref BASE (HTTP 404)",
+            ),
+            2,
+            "could not decide",
+        ),
+        (
             "a malformed tier list still cannot decide",
             dict(files=[], tiers=file_page("owner = [\n")),
             2,
