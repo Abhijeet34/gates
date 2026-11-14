@@ -349,8 +349,10 @@ def decide(args):
     try:
         raw = blob(repo, TIERS, base)
     except Undecided as e:
-        # Only a 404 on this one read; a 5xx, a timeout or a non-file stays undecided.
-        if str(e).endswith("(HTTP 404)"):
+        # Only GitHub's plain Not Found on this one read: the contents API's answer for an
+        # absent path. A 404 with another message (no commit for the ref), a 5xx, a 401,
+        # a timeout or a non-file stays undecided.
+        if str(e).endswith(": gh: Not Found (HTTP 404)"):
             raise NotEnrolled(f"not enrolled: no {TIERS} at {base}") from e
         raise
     owner, tiers = load_tiers(raw)
