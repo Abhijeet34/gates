@@ -1,0 +1,100 @@
+name: landing watchdog (shared)
+
+# Callable watchdog that pages the maintainer when landing stops: an open pull
+# request has been ready to land for over 90 minutes and the merger App has
+# neither merged nor updated anything in 90 minutes. It opens one issue in the
+# calling repository, assigned to the maintainer, and closes it when landing
+# resumes. README.md, "The landing watchdog", owns the rule.
+#
+# It reads only what GitHub knows, so the page does not come from the machine
+# that stopped, and it needs no secret: the run's own token reads the caller's
+# pull requests and writes its issue. That token reads only the caller, so each
+# caller watches and pages for itself.
+#
+# A called workflow cannot carry a schedule; each caller runs it hourly.
+#
+# This file is a BOOTSTRAP: the trigger, the token's permissions, the runner
+# and the checkouts. The watchdog itself runs from the gates commit the
+# caller's .github/gates.lock names, or from this file's own commit when there
+# is no lock; README.md, "Pinning", owns the design.
+
+on:
+  workflow_call:
+    inputs:
+      minutes:
+        description: How long a ready pull request may wait, and the merger stay silent, before the page.
+        type: number
+        default: 90
+      merger:
+        description: The merger App's login.
+        type: string
+        default: hw-milan[bot]
+      assignee:
+        description: Who the issue is assigned to.
+        type: string
+        default: Abhijeet34
+
+# A called workflow narrows its caller's token, never widens it. The reads are
+# what a private caller needs for its pull requests, checks and statuses.
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+  checks: read
+  statuses: read
+
+jobs:
+  watchdog:
+    name: landing watchdog
+    runs-on: ubuntu-slim
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: read
+      checks: read
+      statuses: read
+    steps:
+      # The caller's tree, for run/lock.sh to read its .github/gates.lock.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .gates
+          # The whole of main, so run/lock.sh can decide ancestry on it.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Resolve the locked gates commit
+        env:
+          GATES_REPOSITORY: ${{ job.workflow_repository }}
+          BOOTSTRAP_SHA: ${{ job.workflow_sha }}
+          EVENT_NAME: ${{ github.event_name }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          [ -n "$GATES_REPOSITORY" ] && [ -n "$BOOTSTRAP_SHA" ] || {
+            echo "::error::job.workflow_repository or job.workflow_sha is empty, so the gates source cannot be named." >&2
+            exit 1
+          }
+          mv .gates "$RUNNER_TEMP/gates"
+          echo "GATES_DIR=$RUNNER_TEMP/gates" >>"$GITHUB_ENV"
+          GATES_DIR="$RUNNER_TEMP/gates" bash -e "$RUNNER_TEMP/gates/run/lock.sh"
+
+      # Exit 1 while landing is stopped, so the run is red beside the issue;
+      # exit 2 when it could not decide, never read as landing.
+      - name: Watch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          MINUTES: ${{ inputs.minutes }}
+          MERGER: ${{ inputs.merger }}
+          ASSIGNEE: ${{ inputs.assignee }}
+        run: >-
+          python3 "$GATES_DIR/run/landing-watchdog.py" --act
+          --repo "$REPO" --issue-repo "$REPO" --minutes "$MINUTES"
+          --merger "$MERGER" --assignee "$ASSIGNEE"

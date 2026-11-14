@@ -493,7 +493,7 @@ finding = "ALARM: p95 300 s is 83% of the 360 s budget (alarm at 70%)"
 [[gate]]
 id = "landing-watchdog"
 surface = "Landing"
-gates = ["run/landing-watchdog.py"]
+gates = ["run/landing-watchdog.py", ".github/workflows/shared-landing-watchdog.yml", ".github/workflows/landing-watchdog.yml"]
 test = ".ci/test-landing-watchdog.py"
 suite = "shell"
 command = "run/landing-watchdog.py"
