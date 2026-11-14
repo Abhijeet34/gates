@@ -1,0 +1,24 @@
+name: landing watchdog
+
+# Hourly: pages the maintainer with one issue when ready pull requests here
+# wait over 90 minutes on a silent merger, and closes it when landing resumes.
+on:
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: landing-watchdog
+  cancel-in-progress: false
+
+# A called workflow narrows its caller's token, never widens it.
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+  checks: read
+  statuses: read
+
+jobs:
+  watchdog:
+    uses: ./.github/workflows/shared-landing-watchdog.yml

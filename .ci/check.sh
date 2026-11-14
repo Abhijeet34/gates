@@ -96,6 +96,8 @@ check_shell() {
     python3 .ci/test-gate-shadow.py || rc=1
     # The budget monitor's alarm and fix task, replayed over pointback's check step.
     python3 .ci/test-budget-monitor.py || rc=1
+    # The landing watchdog's page and its one issue, replayed over gates' recorded answers, stale and fresh.
+    python3 .ci/test-landing-watchdog.py || rc=1
     # The protected surface of security design 7.2, and its row in shadow under the runner.
     python3 .ci/test-permissions-diff.py || rc=1
     # Each of its repository-specific globs against that repository's tracked files.

@@ -488,6 +488,26 @@ chmod +x bin/gh
 run = 'PATH="$PWD/bin:$PATH" python3 "$GATE" --budgets budgets.toml --now 2026-10-19T12:00:00Z'
 finding = "ALARM: p95 300 s is 83% of the 360 s budget (alarm at 70%)"
 
+# The landing watchdog's page is a gate too: green pull requests waiting on a
+# silent merger must be named STOPPED. README.md, "The landing watchdog".
+[[gate]]
+id = "landing-watchdog"
+surface = "Landing"
+gates = ["run/landing-watchdog.py", ".github/workflows/shared-landing-watchdog.yml", ".github/workflows/landing-watchdog.yml"]
+test = ".ci/test-landing-watchdog.py"
+suite = "shell"
+command = "run/landing-watchdog.py"
+red = '''
+mkdir bin && cp "$ROOT/.ci/fixtures/landing-watchdog/stale.json" answers.json
+printf '#!/bin/sh\njq -c --arg p "$2" ".answers[\\$p]" answers.json\n' > bin/gh && chmod +x bin/gh
+'''
+clean = '''
+mkdir bin && cp "$ROOT/.ci/fixtures/landing-watchdog/fresh.json" answers.json
+printf '#!/bin/sh\njq -c --arg p "$2" ".answers[\\$p]" answers.json\n' > bin/gh && chmod +x bin/gh
+'''
+run = 'PATH="$PWD/bin:$PATH" python3 "$GATE" --repo Abhijeet34/gates --now "$(jq -r .now answers.json)"'
+finding = "STOPPED: 2 pull request(s) ready for over 90 min"
+
 # Security design 7.2's protected surface; README.md, "The permissions-diff gate".
 [[gate]]
 id = "permissions-diff"
