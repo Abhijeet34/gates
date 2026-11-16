@@ -46,6 +46,8 @@ This file is the project's committed home for project-intrinsic agent knowledge:
   Changing a Security row or a workflow token therefore needs a class-2 decision once a caller promotes the gate out of shadow.
 - **`verifier/` runs nowhere on `main`: it is the content of the admin-only `verifier` branch, which the maintainer moves with its `activate.sh`.**
   `.ci/test-workflow-policy.sh` does not read its workflow, which holds the App key's environment; `.ci/test-verifier.py` holds it to stricter rules, and README.md, "The verifier branch", owns the ten invariants.
+- **`run/seats.py` writes the judge's `--review` for a `verified` path: both seats must approve, a hold needs no proof, and an undecided review writes nothing, so the path falls to the owner.**
+  The `review` job alone reads `CLAUDE_CODE_OAUTH_TOKEN`, and `verifier/review.sh` pins the CLI by sha512; a CLI or seat-model change re-runs `run/seats-eval.py --record` live and re-records before it lands. README.md, "The review seats", owns the rule and the measurement.
 
 ## Maintaining this file
 

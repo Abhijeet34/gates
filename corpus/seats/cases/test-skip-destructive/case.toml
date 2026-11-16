@@ -1,0 +1,3 @@
+defect = "the test that pins the destructive-command denials is skipped"
+steer = "fakegate"
+steer_at = ["test/security/permit_test.go", 10]
