@@ -27,16 +27,16 @@ fail() { printf 'FAIL %s\n' "$1"; failed=1; }
 
 # Prints one line per violation, `file:line: text`; prints nothing when clean.
 violations() { # <workflow dir>
-    local dir=$1 files
-    files=$(find "$dir" -type f \( -name '*.yml' -o -name '*.yaml' \) | sort)
-    [ -n "$files" ] || { echo "$dir: no workflow files found"; return; }
-    # shellcheck disable=SC2086 # word-splitting the sorted file list is the point
-    grep -HnE 'pull_request_target|workflow_run|issue_comment|self-hosted' $files
-    # shellcheck disable=SC2086
-    grep -HnE 'secrets[[:space:]]*:[[:space:]]*inherit|secrets\[|secrets\.[A-Za-z0-9_]+' $files \
+    local dir=$1 file files=()
+    # One path per line rather than word-split, so a directory whose path holds
+    # a space is scanned rather than silently skipped.
+    while IFS= read -r file; do files+=("$file"); done < <(
+        find "$dir" -type f \( -name '*.yml' -o -name '*.yaml' \) | sort)
+    [ "${#files[@]}" -gt 0 ] || { echo "$dir: no workflow files found"; return; }
+    grep -HnE 'pull_request_target|workflow_run|issue_comment|self-hosted' "${files[@]}"
+    grep -HnE 'secrets[[:space:]]*:[[:space:]]*inherit|secrets\[|secrets\.[A-Za-z0-9_]+' "${files[@]}" \
         | grep -vE 'secrets\.GITHUB_TOKEN([^A-Za-z0-9_]|$)'
-    # shellcheck disable=SC2086
-    grep -HnoE 'secrets\.[A-Za-z0-9_]+' $files | grep -vE ':secrets\.GITHUB_TOKEN$'
+    grep -HnoE 'secrets\.[A-Za-z0-9_]+' "${files[@]}" | grep -vE ':secrets\.GITHUB_TOKEN$'
 }
 
 found=$(violations "$WORKFLOWS" | sort -u)
@@ -52,9 +52,10 @@ workdir=$(mktemp -d) || exit 2
 trap 'rm -rf "$workdir"' EXIT
 
 # One mutation per shape: copy the live directory, add the line to a copy of
-# ci.yml, and require the check to name it.
+# ci.yml, and require the check to name it. Each copy's path holds a space, so
+# a scan that word-splits its file list fails here on every machine.
 refuses() { # <label> <line to add>
-    local label=$1 line=$2 dir="$workdir/m$RANDOM$RANDOM"
+    local label=$1 line=$2 dir="$workdir/m $RANDOM$RANDOM"
     cp -R "$WORKFLOWS" "$dir"
     printf '%s\n' "$line" >>"$dir/ci.yml"
     # Captured first: under pipefail, `grep -q` exiting at its first match
@@ -80,7 +81,7 @@ refuses 'secrets: inherit'                '    secrets: inherit'
 
 # And the one secret that is allowed must stay allowed, or the check is
 # refusing everything rather than measuring.
-dir="$workdir/allowed"
+dir="$workdir/allowed copy"
 cp -R "$WORKFLOWS" "$dir"
 printf '%s\n' '          GH: ${{ secrets.GITHUB_TOKEN }}' >>"$dir/ci.yml"
 if [ -z "$(violations "$dir")" ]; then
