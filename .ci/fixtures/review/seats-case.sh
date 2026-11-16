@@ -25,7 +25,7 @@ git -C repo rev-parse HEAD >base
 cp -R "$corpus/cases/$1/change/." repo/
 git -C repo add -A
 git -C repo commit -qm change
-git -C repo rev-parse HEAD >head
+git -C repo rev-parse HEAD >./head
 printf '{"title": "", "body": ""}\n' >pr.json
 printf '%s\n' "$1" >case
 [[ $# -lt 4 ]] && exit 0
