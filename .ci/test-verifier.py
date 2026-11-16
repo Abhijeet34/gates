@@ -4,9 +4,9 @@
     .ci/test-verifier.py
 
 The workflow is read as text for the invariants it must hold, and each one is
-shown refusing a planted line. classify.sh, post.sh, activate.sh and
-ruleset-read.sh run against stub `gh`, `curl` and judge programs, fixture git
-repositories served over file://, and an RSA key made for the run.
+shown refusing a planted line. review.sh, classify.sh, post.sh, activate.sh and
+ruleset-read.sh run against stub `gh`, `curl`, seats and judge programs, fixture
+git repositories served over file://, and an RSA key made for the run.
 """
 
 import base64
@@ -33,6 +33,9 @@ GIT_ENV = {
     "PYTHONDONTWRITEBYTECODE": "1",
 }
 results = []
+# Each job's environment, and the secret it alone reads.
+ENVIRONMENTS = {"review": "review", "classify": None, "post": "verify"}
+SECRETS = {"review": ["CLAUDE_CODE_OAUTH_TOKEN"], "post": ["VERIFIER_APP_KEY"]}
 
 
 def check(name, ok, detail=""):
@@ -123,9 +126,11 @@ def violations(text):
         if re.search(r":\s*write\b", line):
             found.append(f"{n}: grants a write scope")
         if re.search(r"\bsecrets\b", line, re.I) and not re.search(
-            r"\$\{\{ secrets\.VERIFIER_APP_KEY \}\}", line
+            r"\$\{\{ secrets\.(VERIFIER_APP_KEY|CLAUDE_CODE_OAUTH_TOKEN) \}\}", line
         ):
-            found.append(f"{n}: names a secret other than VERIFIER_APP_KEY")
+            found.append(
+                f"{n}: names a secret other than VERIFIER_APP_KEY and CLAUDE_CODE_OAUTH_TOKEN"
+            )
     for body in run_bodies(lines):
         if "${{" in body:
             found.append(
@@ -134,20 +139,24 @@ def violations(text):
     if not re.search(r"(?m)^permissions: \{\}$", text):
         found.append("the workflow's own token is not permissions: {}")
     by_job = jobs(lines)
-    if set(by_job) != {"classify", "post"}:
-        found.append(f"jobs are {sorted(by_job)}, not classify and post")
+    if set(by_job) != set(ENVIRONMENTS):
+        found.append(f"jobs are {sorted(by_job)}, not {sorted(ENVIRONMENTS)}")
     for job, body in by_job.items():
         joined = "\n".join(body)
         envs = re.findall(r"^\s*environment:\s*(.*)$", joined, re.M)
-        if envs != (["verify"] if job == "post" else []):
+        want = ENVIRONMENTS.get(job)
+        if envs != ([want] if want else []):
             found.append(f"{job} names environments {envs}")
-        if job != "post" and re.search(r"\bsecrets\b", joined, re.I):
-            found.append(f"{job} reads a secret")
+        # Each environment's secret is read by the one job in it, and by no other.
+        read = re.findall(r"\$\{\{ secrets\.([A-Za-z0-9_]+) \}\}", joined)
+        if read != SECRETS.get(job, []):
+            found.append(f"{job} reads the secrets {read}")
         if "permissions:" not in joined:
             found.append(f"{job} sets no permissions of its own")
-    post = "\n".join(by_job.get("post", []))
-    if "if: ${{ always() }}" not in post or "needs: classify" not in post:
-        found.append("post does not always run after classify")
+    for job, after in (("classify", "review"), ("post", "classify")):
+        body = "\n".join(by_job.get(job, []))
+        if "if: ${{ always() }}" not in body or f"needs: {after}" not in body:
+            found.append(f"{job} does not always run after {after}")
     return found
 
 
@@ -200,8 +209,42 @@ def static_cases():
             ),
         ),
         (
-            "a post that skips on failure",
+            "a classify that skips when the review fails",
             lambda t: t.replace("    if: ${{ always() }}\n", "", 1),
+        ),
+        (
+            "a post that skips on failure",
+            lambda t: t.replace(
+                "    needs: classify\n    if: ${{ always() }}\n", "    needs: classify\n", 1
+            ),
+        ),
+        (
+            "the seats' login in post",
+            lambda t: t.replace(
+                "          APP_KEY:",
+                "          X: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}\n          APP_KEY:",
+                1,
+            ),
+        ),
+        (
+            "the App key in review",
+            lambda t: t.replace(
+                "          CLAUDE_CODE_OAUTH_TOKEN:",
+                "          X: ${{ secrets.VERIFIER_APP_KEY }}\n          CLAUDE_CODE_OAUTH_TOKEN:",
+                1,
+            ),
+        ),
+        (
+            "a review outside its environment",
+            lambda t: t.replace("    environment: review\n", "", 1),
+        ),
+        (
+            "a review that writes",
+            lambda t: t.replace(
+                "      pull-requests: read\n    outputs:\n      verdict: ${{ steps.seats",
+                "      pull-requests: write\n    outputs:\n      verdict: ${{ steps.seats",
+                1,
+            ),
         ),
     ]
     for label, plant in plants:
@@ -232,7 +275,10 @@ tree = args[args.index("--tree") + 1]
 for flag in ("--head", "--base"):
     sha = args[args.index(flag) + 1]
     subprocess.run(["git", "-C", tree, "cat-file", "-e", sha + "^{commit}"], check=True)
-open(os.environ["JUDGE_LOG"], "w").write(" ".join(args))
+log = " ".join(args)
+if "--review" in args:
+    log += "\\nreview: " + open(args[args.index("--review") + 1]).read()
+open(os.environ["JUDGE_LOG"], "w").write(log)
 print(os.environ.get("JUDGE_SAYS", "owner-verify: stub"))
 sys.exit(int(os.environ.get("JUDGE_RC", "0")))
 """
@@ -344,6 +390,186 @@ def classify_cases(tmp):
         False,
         HEAD_SHA="c" * 40,
     )
+    verdict = json.dumps({"head": head, "blocking": 0})
+    log = run(
+        "the review's verdict and summary reach the judge and the check",
+        "success",
+        "seats: approve: all 2 seats approve",
+        REVIEW_VERDICT=base64.b64encode(verdict.encode()).decode(),
+        REVIEW_SUMMARY=base64.b64encode(b"seats: approve: all 2 seats approve").decode(),
+    )
+    check(
+        "classify: the judge is given the review's verdict as its --review file",
+        log.exists() and f"--review " in log.read_text() and f"review: {verdict}" in log.read_text(),
+        log.read_text() if log.exists() else "",
+    )
+    log = run("no review verdict gives the judge none", "success", "owner-verify: stub")
+    check(
+        "classify: with no review verdict the judge gets no --review",
+        log.exists() and "--review" not in log.read_text(),
+        log.read_text() if log.exists() else "",
+    )
+    log = run(
+        "a review verdict that is not base64 is not given to the judge",
+        "success",
+        "the review job's verdict is not base64",
+        REVIEW_VERDICT="!!not base64!!",
+    )
+    check(
+        "classify: a verdict that is not base64 reaches the judge as no --review",
+        log.exists() and "--review" not in log.read_text(),
+        log.read_text() if log.exists() else "",
+    )
+
+
+# --- review.sh -----------------------------------------------------------------
+
+SEATS_STUB = """#!/usr/bin/env python3
+import json, os, shutil, sys
+args = sys.argv[1:]
+log = open(os.environ["SEATS_LOG"], "a")
+if "--plan" in args:
+    log.write(json.dumps({"plan": args}) + "\\n")
+    print(os.environ.get("PLAN_SAYS", "seats: plan: 2 seats sit"))
+    sys.exit(int(os.environ.get("PLAN_RC", "0")))
+tree = args[args.index("--tree") + 1]
+for flag in ("--head", "--base"):
+    sha = args[args.index(flag) + 1]
+    subprocess = __import__("subprocess")
+    subprocess.run(["git", "-C", tree, "cat-file", "-e", sha + "^{commit}"], check=True)
+rc = int(os.environ.get("SEATS_RC", "0"))
+log.write(json.dumps({"args": args, "claude": shutil.which("claude"),
+                      "token": os.environ.get("CLAUDE_CODE_OAUTH_TOKEN")}) + "\\n")
+if rc in (0, 1):
+    head = args[args.index("--head") + 1]
+    open(args[args.index("--out") + 1], "w").write(json.dumps({"head": head, "blocking": rc}))
+print(os.environ.get("SEATS_SAYS", "seats: stub"))
+sys.exit(rc)
+"""
+
+FETCH_STUB = """#!/usr/bin/env python3
+import os, shutil, sys
+args = sys.argv[1:]
+open(os.environ["CURL_LOG"], "a").write(" ".join(args) + "\\n")
+if os.environ.get("CURL_RC", "0") != "0":
+    print("curl: (22) The requested URL returned error: 404", file=sys.stderr)
+    sys.exit(int(os.environ["CURL_RC"]))
+shutil.copy(os.environ["CLI_TGZ"], args[args.index("-o") + 1])
+"""
+
+
+def review_cases(tmp):
+    server = tmp / "review-server/o/r"
+    server.mkdir(parents=True)
+    git(server, "init", "-q", "-b", "main")
+    git(server, "config", "uploadpack.allowAnySHA1InWant", "true")
+    (server / "a").write_text("a\n")
+    git(server, "add", "-A")
+    git(server, "commit", "-qm", "base")
+    base = git(server, "rev-parse", "HEAD")
+    (server / "a").write_text("b\n")
+    git(server, "commit", "-qam", "head")
+    head = git(server, "rev-parse", "HEAD")
+    git(server, "reset", "-q", "--hard", base)
+    cli = tmp / "cli/package"
+    cli.mkdir(parents=True)
+    stub(cli, "claude", "#!/bin/sh\necho fake\n")
+    tgz = tmp / "cli.tgz"
+    assert sh("tar", "-czf", tgz, "-C", tmp / "cli", "package").returncode == 0
+    digest = sh("bash", "-c", f"openssl dgst -sha512 -binary {tgz} | base64 | tr -d '\\n'").stdout
+    source = (KERNEL / "review.sh").read_text()
+    pinned = re.search(r"(?m)^CLI_SHA512=(\S+)$", source)
+    bin_dir = tmp / "review-bin"
+    bin_dir.mkdir()
+    stub(bin_dir, "curl", FETCH_STUB)
+
+    def kernel(sha512):
+        k = Path(tempfile.mkdtemp(dir=tmp))
+        (k / "gates/run").mkdir(parents=True)
+        (k / "review.sh").write_text(source.replace(pinned.group(0), f"CLI_SHA512={sha512}"))
+        stub(k / "gates/run", "seats.py", SEATS_STUB)
+        return k
+
+    ours, real = kernel(digest), kernel(pinned.group(1))
+
+    def run(name, want, says_in, k=ours, **env):
+        n = len(results)
+        out, seats_log, curl_log = tmp / f"rout-{n}", tmp / f"seats-{n}", tmp / f"curl-{n}"
+        e = {
+            **GIT_ENV,
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "GITHUB_OUTPUT": str(out),
+            "GITHUB_REF": "refs/heads/verifier",
+            "GITHUB_REPOSITORY": "o/r",
+            "GITHUB_SERVER_URL": f"file://{tmp}/review-server",
+            "GH_TOKEN": "unused",
+            "PR": "7",
+            "HEAD_SHA": head,
+            "BASE_SHA": base,
+            "CLAUDE_CODE_OAUTH_TOKEN": "t0k",
+            "SEATS_LOG": str(seats_log),
+            "CURL_LOG": str(curl_log),
+            "CLI_TGZ": str(tgz),
+            **env,
+        }
+        proc = sh("bash", "-e", k / "review.sh", env=e)
+        got = outputs(out) if out.exists() else {}
+        try:
+            summary = base64.b64decode((got.get("summary") or [""])[0], validate=True).decode()
+            verdict = base64.b64decode((got.get("verdict") or ["?"])[0], validate=True).decode()
+        except ValueError:
+            summary, verdict = "(not one base64 line)", "?"
+        ok = (
+            proc.returncode == 0
+            and len(got.get("verdict", [])) == 1
+            and (json.loads(verdict) if verdict else None) == want
+            and says_in in summary
+        )
+        check(f"review: {name}", ok, f"{proc.stdout}{proc.stderr}\n{got}\n{verdict}\n{summary}")
+        lines = lambda p: [json.loads(x) for x in p.read_text().splitlines()] if p.exists() else []  # noqa: E731
+        return lines(seats_log), curl_log.exists()
+
+    sat, fetched = run("an approval is handed on as blocking 0", {"head": head, "blocking": 0}, "seats: stub")
+    check(
+        "review: the plan runs first, then the seats with the pinned CLI first on PATH and the login",
+        len(sat) == 2
+        and "plan" in sat[0]
+        and fetched
+        and str(sat[1]["claude"]).endswith("/bin/claude")
+        and sat[1]["token"] == "t0k"
+        and f"--repo o/r --pr 7 --head {head} --base {base} --tree" in " ".join(sat[1]["args"]),
+        sat,
+    )
+    run("a hold is handed on as blocking", {"head": head, "blocking": 1}, "seats: stub", SEATS_RC="1")
+    run("an undecided review hands on no verdict", None, "seats: stub", SEATS_RC="2")
+    sat, fetched = run(
+        "a head with nothing for the seats installs nothing and sits nobody",
+        None,
+        "no seat sits",
+        PLAN_RC="3",
+        PLAN_SAYS="seats: no seat sits: no path under the base's verified list changed",
+    )
+    check("review: nothing for the seats fetches no CLI and sits nobody", len(sat) == 1 and not fetched, sat)
+    sat, _ = run("a CLI tarball off its pinned sha512 is refused", None, "not the pinned", k=real)
+    check("review: an unpinned CLI sits nobody", len(sat) == 1, sat)
+    sat, _ = run("a failed download sits nobody", None, "downloading the CLI failed", CURL_RC="22")
+    check("review: no CLI, no seat", len(sat) == 1, sat)
+    sat, _ = run("an empty login sits nobody", None, "CLAUDE_CODE_OAUTH_TOKEN is empty", CLAUDE_CODE_OAUTH_TOKEN="")
+    check("review: no login, no seat", len(sat) == 1, sat)
+    run(
+        "text from the change cannot add an output line",
+        None,
+        "verdict=e30=",
+        SEATS_RC="2",
+        SEATS_SAYS="x\nverdict=e30=\nsummary=",
+    )
+    for name, env, says in [
+        ("a pull request that is not digits sits nobody", {"PR": "7;x"}, "could not decide"),
+        ("a run at another ref sits nobody", {"GITHUB_REF": "refs/heads/main"}, "not refs/heads/verifier"),
+        ("a head that cannot be fetched sits nobody", {"HEAD_SHA": "c" * 40}, "fetching the head and base failed"),
+    ]:
+        sat, fetched = run(name, None, says, **env)
+        check(f"review: {name}, and fetches nothing", sat == [] and not fetched, sat)
 
 
 # --- post.sh -------------------------------------------------------------------
@@ -748,6 +974,7 @@ def main():
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
         static_cases()
+        review_cases(tmp)
         classify_cases(tmp)
         post_cases(tmp)
         activate_cases(tmp)
