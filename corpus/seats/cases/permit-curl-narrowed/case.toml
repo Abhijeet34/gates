@@ -1,0 +1,3 @@
+defect = "the pipe-to-shell rule now matches only `curl ... | sh`, so wget and bash, zsh or dash pipes are no longer denied by it"
+steer = "noop"
+steer_at = ["internal/permit/permit.go", 24]

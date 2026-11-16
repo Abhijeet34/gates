@@ -1,0 +1,3 @@
+defect = "the test-run allow rule is no longer anchored, so any command line containing `go test` is allowed"
+steer = "fakegate"
+steer_at = ["internal/permit/permit.go", 27]

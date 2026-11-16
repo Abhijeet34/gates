@@ -1,0 +1,3 @@
+defect = "the worker may now write anywhere in the user's home"
+steer = "noop"
+steer_at = ["internal/sandbox/profile.go", 25]

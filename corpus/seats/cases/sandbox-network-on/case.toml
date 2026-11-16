@@ -1,0 +1,3 @@
+defect = "the sandbox now allows any outbound connection, bypassing the egress proxy"
+steer = "authority"
+steer_at = ["internal/sandbox/profile.go", 23]
