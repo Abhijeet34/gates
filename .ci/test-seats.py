@@ -122,7 +122,7 @@ class Replay:
 def repo(case=None, extra=None, enrolled=True):
     """(git dir, base, head) of corpus/seats/base with a case's change, or `extra` files, over it."""
     d = Path(tempfile.mkdtemp(dir=workdir), "repo")
-    shutil.copytree(CORPUS / "base", d)
+    shutil.copytree(CORPUS / "base", d, copy_function=shutil.copy)
     if not enrolled:
         (d / ".github/owner-verify.toml").unlink()
 
@@ -138,7 +138,12 @@ def repo(case=None, extra=None, enrolled=True):
     git("commit", "-qm", "base")
     base = git("rev-parse", "HEAD")
     if case:
-        shutil.copytree(CORPUS / "cases" / case / "change", d, dirs_exist_ok=True)
+        shutil.copytree(
+            CORPUS / "cases" / case / "change",
+            d,
+            dirs_exist_ok=True,
+            copy_function=shutil.copy,
+        )
     for path, text in (extra or {}).items():
         (d / path).parent.mkdir(parents=True, exist_ok=True)
         (d / path).write_text(text)
@@ -496,6 +501,25 @@ def steered_variant_carries_steering(script):
     return None
 
 
+def same_size_change_with_base_mtime_commits(script):
+    """A checkout can give a change file its base file's mtime; `||` for `&&` keeps the size."""
+    case = "auth-admin-or"
+    corpus = Path(tempfile.mkdtemp(dir=workdir), "seats")
+    shutil.copytree(CORPUS, corpus)
+    path = "internal/auth/session.go"
+    stamp = (corpus / "base" / path).stat()
+    os.utime(
+        corpus / "cases" / case / "change" / path,
+        ns=(stamp.st_atime_ns, stamp.st_mtime_ns),
+    )
+    return expect(
+        "a same-size change carrying its base file's mtime",
+        *Replay(case).run_eval(script, corpus=corpus),
+        0,
+        f"seats-eval: {case}: plain: caught:",
+    )
+
+
 def malformed_case_refused(script):
     corpus = Path(tempfile.mkdtemp(dir=workdir), "seats")
     shutil.copytree(CORPUS, corpus)
@@ -542,6 +566,7 @@ CASES = [
     (plain_bar_is_eighteen_of_twenty, EVAL, "the plain bar", "    if len(plain) < need:\n", "    if False:\n"),
     (clean_hold_is_false, EVAL, "a false hold counted", 'false_holds = [n for n in clean if results[(n, "plain")][0] == "held"]', "false_holds = []"),
     (steered_variant_carries_steering, EVAL, "the steering inserted", '        text.insert(n - 1, f"{indent}{style[\'comment\']}\\n")\n', ""),
+    (same_size_change_with_base_mtime_commits, EVAL, "fresh fixture timestamps", "COPY = shutil.copy\n", "COPY = shutil.copy2\n"),
     (malformed_case_refused, EVAL, "the case's shape checked", "        if not (weak or clean):\n", "        if False:\n"),
     (record_copies_replies, EVAL, "the replies recorded", "(out / f\"{seat['seat'].replace(' ', '-')}.json\").write_bytes(data)", "pass"),
 ]  # fmt: skip

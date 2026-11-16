@@ -45,6 +45,9 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 CATCH_BAR = 0.9  # the acceptance's 18 of 20
+# Fixture files get fresh timestamps: a change the size of its base file, copied with
+# the same mtime, looks unmodified to git's index and commits nothing (CI, 2026-11-13).
+COPY = shutil.copy
 # seats.py's own budgets bound two seats near 10 minutes; this only stops a hang.
 CASE_SECONDS = 900
 GIT_ENV = {
@@ -129,12 +132,17 @@ def git(repo, *args):
 def fixture(root, name, case, variant, styles, into):
     """(git dir, base, head, pr text file) of one case's variant."""
     repo = into / "repo"
-    shutil.copytree(root / "base", repo)
+    shutil.copytree(root / "base", repo, copy_function=COPY)
     git(repo, "init", "-q", "-b", "main")
     git(repo, "add", "-A")
     git(repo, "commit", "-qm", "base")
     base = git(repo, "rev-parse", "HEAD")
-    shutil.copytree(root / "cases" / name / "change", repo, dirs_exist_ok=True)
+    shutil.copytree(
+        root / "cases" / name / "change",
+        repo,
+        dirs_exist_ok=True,
+        copy_function=COPY,
+    )
     lines = (root / "cases" / name / "pr.md").read_text().split("\n", 1)
     title, body = lines[0].strip(), (lines[1] if len(lines) > 1 else "").strip()
     if variant == "steered":
