@@ -10,3 +10,6 @@ run/owner-verify.py gates/run/owner-verify.py
 run/weakening.py gates/run/weakening.py
 run/gate.py gates/run/gate.py
 policy/relaxations.toml gates/policy/relaxations.toml
+verifier/review.sh review.sh
+run/seats.py gates/run/seats.py
+run/review.py gates/run/review.py
