@@ -58,7 +58,9 @@ _spec.loader.exec_module(owner_verify)
 SEATS = ("claude-sonnet-5-5", "claude-opus-5-5")
 AUTHOR = "unknown"
 SEAT_SECONDS = 300
-CONTEXT = 15  # lines around each hunk: a weakening often reads only against its neighbours
+CONTEXT = (
+    15  # lines around each hunk: a weakening often reads only against its neighbours
+)
 SIDES = ("head", "base")
 SHA = re.compile(r"^[0-9a-f]{40}$")
 # review.sit's words for a reply it could not read an answer from; pinned by .ci/test-seats.py.
@@ -152,7 +154,9 @@ def pull_request(repo, pr, head, base):
             )
         return {"title": got.get("title") or "", "body": got.get("body") or ""}
     except (KeyError, TypeError, AttributeError) as e:
-        raise Undecided(f"gh api repos/{repo}/pulls/{pr}: unexpected shape ({e})") from e
+        raise Undecided(
+            f"gh api repos/{repo}/pulls/{pr}: unexpected shape ({e})"
+        ) from e
 
 
 def text_of(path):
@@ -237,7 +241,8 @@ def stands(tree, base, head, finding):
     """Whether the finding's quote is its line on its side; recorded, never a filter."""
     ref = head if finding["side"] == "head" else base
     proc = subprocess.run(
-        ["git", "-C", str(tree), "show", f"{ref}:{finding['path']}"], capture_output=True
+        ["git", "-C", str(tree), "show", f"{ref}:{finding['path']}"],
+        capture_output=True,
     )
     if proc.returncode:
         return False
@@ -310,7 +315,9 @@ def sit_all(tree, base, head, tiers, mine, others, pr, store, state, say):
         for f in found:
             where = f"{review.printable(f['path'], 120)}:{f['line']} ({f['side']})"
             note = "" if f["stands"] else " (its quote does not stand)"
-            say(f"{name} on {model}: holds: {where}: {review.printable(f['claim'])}{note}")
+            say(
+                f"{name} on {model}: holds: {where}: {review.printable(f['claim'])}{note}"
+            )
     return blocking
 
 
@@ -336,7 +343,9 @@ def main():
         or not SHA.match(args.base)
         or live == (args.pr_text is not None)
         or (live and not (args.pr or "").isdigit())
-        or (live and not re.fullmatch(r"[A-Za-z0-9-]+/[A-Za-z0-9._-]+", args.repo or ""))
+        or (
+            live and not re.fullmatch(r"[A-Za-z0-9-]+/[A-Za-z0-9._-]+", args.repo or "")
+        )
     ):
         say(
             "could not decide: --head and --base must be 40 hex, with --repo OWNER/NAME"
@@ -356,7 +365,9 @@ def main():
             if live
             else text_of(args.pr_text)
         )
-        say(f"safeguard paths changed: {', '.join(review.printable(p, 120) for p in mine)}")
+        say(
+            f"safeguard paths changed: {', '.join(review.printable(p, 120) for p in mine)}"
+        )
         if args.plan:
             say(f"plan: {len(SEATS)} seats sit")
             return 0
@@ -386,7 +397,9 @@ def main():
         say(f"could not decide: {detail}")
         return 2
     if args.out:
-        args.out.write_text(json.dumps({"head": args.head, "blocking": blocking}) + "\n")
+        args.out.write_text(
+            json.dumps({"head": args.head, "blocking": blocking}) + "\n"
+        )
     say(f"{verdict}: {detail}")
     return 0 if verdict == "approve" else 1
 

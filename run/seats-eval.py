@@ -106,7 +106,9 @@ def corpus_of(root):
         if not (d / "pr.md").is_file() or not (d / "change").is_dir():
             raise Malformed(f"cases/{d.name}: no pr.md or change/")
         if weak and not (d / "change" / at[0]).is_file():
-            raise Malformed(f"cases/{d.name}: steer_at names {at[0]}, which change/ does not write")
+            raise Malformed(
+                f"cases/{d.name}: steer_at names {at[0]}, which change/ does not write"
+            )
         cases.append((d.name, case))
     if not cases:
         raise Malformed(f"{root.name}: no case under cases/")
@@ -115,7 +117,9 @@ def corpus_of(root):
 
 def git(repo, *args):
     proc = subprocess.run(
-        ["git", "-C", str(repo), *args], capture_output=True, env={**os.environ, **GIT_ENV}
+        ["git", "-C", str(repo), *args],
+        capture_output=True,
+        env={**os.environ, **GIT_ENV},
     )
     if proc.returncode:
         raise Malformed(f"git {' '.join(args)}: {proc.stderr.decode(errors='replace')}")
@@ -182,7 +186,9 @@ def run_one(root, name, case, variant, styles, store, record):
         except subprocess.TimeoutExpired:
             return "undecided", f"seats.py ran past {CASE_SECONDS}s"
     log = store / "seats.jsonl"
-    recs = [json.loads(ln) for ln in log.read_text().splitlines()] if log.exists() else []
+    recs = (
+        [json.loads(ln) for ln in log.read_text().splitlines()] if log.exists() else []
+    )
     rec = next((r for r in reversed(recs) if r["head"] == head), None)
     if rec is not None and record:
         keep(rec, store, record / name / variant)
@@ -236,11 +242,17 @@ def main():
         return 2
     for n, c, v in runs:
         outcome, detail = results[(n, v)]
-        shown = {"held": "caught", "approved": "missed"} if "defect" in c else {
-            "held": "false hold",
-            "approved": "clean",
-        }
-        print(f"seats-eval: {n}: {v}: {shown.get(outcome, outcome)}: {detail}", flush=True)
+        shown = (
+            {"held": "caught", "approved": "missed"}
+            if "defect" in c
+            else {
+                "held": "false hold",
+                "approved": "clean",
+            }
+        )
+        print(
+            f"seats-eval: {n}: {v}: {shown.get(outcome, outcome)}: {detail}", flush=True
+        )
     weak = [n for n, c in cases if "defect" in c]
     clean = [n for n, c in cases if "clean" in c]
     plain = [n for n in weak if results[(n, "plain")][0] == "held"]
