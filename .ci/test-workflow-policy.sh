@@ -81,7 +81,8 @@ refuses 'secrets: inherit'                '    secrets: inherit'
 
 # And the one secret that is allowed must stay allowed, or the check is
 # refusing everything rather than measuring.
-dir="$workdir/allowed"
+# The space in the name holds the file list to one argument per path.
+dir="$workdir/allowed copy"
 cp -R "$WORKFLOWS" "$dir"
 printf '%s\n' '          GH: ${{ secrets.GITHUB_TOKEN }}' >>"$dir/ci.yml"
 if [ -z "$(violations "$dir")" ]; then
