@@ -33,10 +33,10 @@ violations() { # <workflow dir>
     while IFS= read -r f; do files+=("$f"); done \
         < <(find "$dir" -type f \( -name '*.yml' -o -name '*.yaml' \) | sort)
     [ "${#files[@]}" -gt 0 ] || { echo "$dir: no workflow files found"; return; }
-    grep -HnE 'pull_request_target|workflow_run|issue_comment|self-hosted' "${files[@]}"
+    grep -HnE 'pull_request_target|workflow_run|issue_comment|self-hosted' "${files[@]}" || :
     grep -HnE 'secrets[[:space:]]*:[[:space:]]*inherit|secrets\[|secrets\.[A-Za-z0-9_]+' "${files[@]}" \
-        | grep -vE 'secrets\.GITHUB_TOKEN([^A-Za-z0-9_]|$)'
-    grep -HnoE 'secrets\.[A-Za-z0-9_]+' "${files[@]}" | grep -vE ':secrets\.GITHUB_TOKEN$'
+        | grep -vE 'secrets\.GITHUB_TOKEN([^A-Za-z0-9_]|$)' || :
+    grep -HnoE 'secrets\.[A-Za-z0-9_]+' "${files[@]}" | grep -vE ':secrets\.GITHUB_TOKEN$' || :
 }
 
 found=$(violations "$WORKFLOWS" | sort -u)
