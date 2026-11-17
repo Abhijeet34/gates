@@ -217,7 +217,11 @@ check_secrets() {
 # then neutered to prove the red verdict came from it. The cases run in
 # parallel, so the whole suite costs seconds, but it needs every gate's tools.
 check_gates-proof() {
-    need gitleaks 'brew install gitleaks' || return 1
+    # A Linux worker without gitleaks gets the pinned, digest-checked release CI installs.
+    if ! command -v gitleaks >/dev/null 2>&1 && [ "$(uname -sm)" = "Linux x86_64" ]; then
+        bash -e run/install-gitleaks.sh
+    fi
+    need gitleaks 'brew install gitleaks, or run/install-gitleaks.sh on Linux x86_64' || return 1
     need exiftool 'brew install exiftool' || return 1
     need yq 'brew install yq' || return 1
     need jq 'brew install jq' || return 1
