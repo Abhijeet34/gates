@@ -11,6 +11,7 @@ A case that names no CI is served one green pull_request run of the base's CI.
 """
 
 import base64
+import importlib.util
 import json
 import os
 import subprocess
@@ -213,6 +214,30 @@ def run(case):
             *("--repo", REPO, "--pr", case.get("pr", "7")),
             *("--head", head_in, "--base", base_in, "--tree", str(tree)),
         ]
+        if "train" in case:
+            base_tree = git(tree, "rev-parse", f"{base}^{{tree}}")
+            head_tree = git(tree, "rev-parse", f"{head}^{{tree}}")
+            main_tree = "f" * 40 if case["train"] == "moved" else base_tree
+            page(
+                f"repos/{REPO}/branches/main",
+                {"commit": {"sha": base, "commit": {"tree": {"sha": main_tree}}}},
+            )
+            # The train is this head alone, so its runs are the head's runs.
+            for r in ci["runs"]:
+                r.setdefault("head_commit", {"tree_id": head_tree})
+                r.setdefault("conclusion", "success")
+            page(
+                f"repos/{REPO}/actions/runs?head_sha={head}&per_page=100",
+                {"total_count": len(ci["runs"]), "workflow_runs": ci["runs"]},
+            )
+            members = [OLD] if case["train"] == "stranger" else [head]
+            train = tmp / "train.json"
+            train.write_text(
+                json.dumps(
+                    {"base": base, "members": members, "member": 1, "head": head}
+                )
+            )
+            argv += ["--train", str(train)]
         if "review" in case:
             verdict = tmp / "review.json"
             verdict.write_text(json.dumps(case["review"]))
@@ -759,6 +784,204 @@ def cases():
     ]
 
 
+def judge_module():
+    """run/owner-verify.py imported in this process, for its pure functions."""
+    # A .pyc under run/ would read as an unregistered gate to gates-proof.
+    sys.dont_write_bytecode = True
+    spec = importlib.util.spec_from_file_location("owner_verify", JUDGE)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def train_fixture(tmp):
+    """A train base and three members branched from it: two that compose and one that conflicts with the first."""
+    tree = tmp / "train"
+    tree.mkdir()
+    git(tree, "init", "-q", "-b", "main")
+    (tree / "a.txt").write_text("a\n")
+    (tree / "b.txt").write_text("b\n")
+    git(tree, "add", "-A")
+    git(tree, "commit", "-qm", "base")
+    base = git(tree, "rev-parse", "HEAD")
+    heads = {}
+    for name, path, text in (
+        ("m1", "a.txt", "a1\n"),
+        ("m2", "b.txt", "b2\n"),
+        ("clash", "a.txt", "a9\n"),
+    ):
+        git(tree, "checkout", "-q", "-b", name, base)
+        (tree / path).write_text(text)
+        git(tree, "commit", "-qam", name)
+        heads[name] = git(tree, "rev-parse", "HEAD")
+    git(tree, "checkout", "-q", "main")
+    # The train head factory would push: m1 then m2 merged onto the base.
+    git(tree, "checkout", "-q", "-b", "train", base)
+    git(tree, "merge", "-q", "--no-ff", "-m", "m1", heads["m1"])
+    after_m1 = git(tree, "rev-parse", "HEAD^{tree}")
+    git(tree, "merge", "-q", "--no-ff", "-m", "m2", heads["m2"])
+    git(tree, "checkout", "-q", "main")
+    trees = {
+        "base": git(tree, "rev-parse", f"{base}^{{tree}}"),
+        "after_m1": after_m1,
+        "train": git(tree, "rev-parse", "train^{tree}"),
+        "m1": git(tree, "rev-parse", f"{heads['m1']}^{{tree}}"),
+    }
+    return tree, base, heads, trees, git(tree, "rev-parse", "train")
+
+
+def tree_cases(mod, tmp):
+    """(name, thunk, want_ok, want_line): the tree rule of README.md, "The tree rule"."""
+    tree, base, heads, trees, train_head = train_fixture(tmp)
+    two = [heads["m1"], heads["m2"]]
+
+    def green(tree_id, number=1, conclusion="success", head=train_head):
+        return {
+            "id": number,
+            "head_sha": head,
+            "tree": tree_id,
+            "conclusion": conclusion,
+        }
+
+    def rule(members, member, main_tree, runs):
+        return lambda: mod.tree_rule(str(tree), base, members, member, main_tree, runs)
+
+    other = "f" * 40
+    return [
+        (
+            "tree rule: member 2 passes while main has the tree the train gives before it, on a green run of the train's tree",
+            rule(two, 2, trees["after_m1"], [green(trees["train"])]),
+            True,
+            "pass: main has the tree of the train before member 2",
+        ),
+        (
+            "tree rule: member 1 passes while main still has the base's tree",
+            rule(two, 1, trees["base"], [green(trees["train"])]),
+            True,
+            "pass: main has the tree of the train before member 1",
+        ),
+        (
+            "tree rule: member 2 fails once main moved to another tree",
+            rule(two, 2, other, [green(trees["train"])]),
+            False,
+            f"main is at tree {other[:12]}, not {trees['after_m1'][:12]}",
+        ),
+        (
+            "tree rule: member 2 fails while main is still at the base, before member 1 landed",
+            rule(two, 2, trees["base"], [green(trees["train"])]),
+            False,
+            f"main is at tree {trees['base'][:12]}, not {trees['after_m1'][:12]}",
+        ),
+        (
+            "tree rule: no run of the train's tree fails",
+            rule(two, 2, trees["after_m1"], []),
+            False,
+            f"no run of the base's CI has the train's tree {trees['train'][:12]}",
+        ),
+        (
+            "tree rule: a green run of another tree is no run of the train's",
+            rule(two, 2, trees["after_m1"], [green(trees["after_m1"])]),
+            False,
+            f"no run of the base's CI has the train's tree {trees['train'][:12]}",
+        ),
+        (
+            "tree rule: a red run of the train's tree fails",
+            rule(
+                two, 2, trees["after_m1"], [green(trees["train"], conclusion="failure")]
+            ),
+            False,
+            "concluded failure",
+        ),
+        (
+            "tree rule: the newest run of the train's tree decides, so a red re-run fails",
+            rule(
+                two,
+                2,
+                trees["after_m1"],
+                [green(trees["train"], 1), green(trees["train"], 2, "failure")],
+            ),
+            False,
+            "run 2",
+        ),
+        (
+            "tree rule: a run not yet ended fails",
+            rule(two, 2, trees["after_m1"], [green(trees["train"], conclusion=None)]),
+            False,
+            "concluded None",
+        ),
+        (
+            "tree rule: a single-member train passes on its own green head while main has the tree before it",
+            rule(
+                [heads["m1"]],
+                1,
+                trees["base"],
+                [green(trees["m1"], head=heads["m1"])],
+            ),
+            True,
+            "pass: main has the tree of the train before member 1",
+        ),
+        (
+            "tree rule: a single-member train fails once main moved",
+            rule([heads["m1"]], 1, other, [green(trees["m1"], head=heads["m1"])]),
+            False,
+            f"main is at tree {other[:12]}",
+        ),
+        (
+            "tree rule: members that conflict cannot be composed and fail",
+            rule(
+                [heads["m1"], heads["clash"]],
+                2,
+                trees["after_m1"],
+                [green(trees["train"])],
+            ),
+            False,
+            "does not compose",
+        ),
+        (
+            "tree rule: a member index outside the train fails",
+            rule(two, 3, trees["after_m1"], [green(trees["train"])]),
+            False,
+            "member 3 is not in a train of 2",
+        ),
+        (
+            "tree rule: the pure judgement passes on the composition it is handed",
+            lambda: mod.judge_tree(2, ["t0", "t1", "t2"], "t1", [green("t2")]),
+            True,
+            "pass: main has the tree of the train before member 2",
+        ),
+        (
+            "tree rule: the pure judgement fails on a main that is the train's own final tree",
+            lambda: mod.judge_tree(2, ["t0", "t1", "t2"], "t2", [green("t2")]),
+            False,
+            "main is at tree t2, not t1",
+        ),
+    ]
+
+
+def shadow_cases():
+    """The tree rule wired into the judge in shadow: its line is printed and the exit status is the head rule's."""
+    return [
+        (
+            "tree rule in shadow: a passing member prints its line and the head rule decides",
+            dict(files=[{"filename": "README.md"}], train="pass"),
+            0,
+            "owner-verify: tree rule (shadow): pass: main has the tree of the train before member 1",
+        ),
+        (
+            "tree rule in shadow: a failing member prints its line and does not refuse",
+            dict(files=[{"filename": "README.md"}], train="moved"),
+            0,
+            "owner-verify: tree rule (shadow): fail:",
+        ),
+        (
+            "tree rule in shadow: a train that does not name the judged head is undecided in shadow only",
+            dict(files=[{"filename": "README.md"}], train="stranger"),
+            0,
+            "owner-verify: tree rule (shadow): could not decide:",
+        ),
+    ]
+
+
 def resolve(value, head):
     """Replace the placeholder HEAD with the case's head commit."""
     if isinstance(value, dict):
@@ -781,7 +1004,20 @@ def main():
                 "    steps:\n      - uses: actions/checkout@v4\n"
             },
         )
-        for name, case, want_code, want_line in cases():
+        for name, thunk, want_ok, want_line in tree_cases(judge_module(), tmp):
+            total += 1
+            try:
+                ok, lines = thunk()
+            # A missing or broken rule is a failed case, not a crash.
+            except Exception as e:
+                ok, lines = None, [f"{type(e).__name__}: {e}"]
+            if ok == want_ok and any(want_line in ln for ln in lines):
+                print(f"ok   {name}")
+            else:
+                failed += 1
+                print(f"FAIL {name}: {ok} (want {want_ok}), want {want_line!r} in:")
+                print("     " + "\n     ".join(lines))
+        for name, case, want_code, want_line in cases() + shadow_cases():
             total += 1
             head = head_of(case.get("tree", "clean"))
             case = resolve(case, head)

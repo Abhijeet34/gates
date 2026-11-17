@@ -327,6 +327,24 @@ It cannot decide when an input is not digits or 40 hex, a list holds an unknown 
 `.ci/test-owner-verify.py` serves each case through a stub `gh` against fixture git trees, one per row above and per refusal, including six CODEOWNERS disguises and a duplicated list, recorded 2026-11-12, and 18 CI cases: a forged `checks` with no run, one beside a green run, a run of another path, another event or another head, a failed, running or missing `checks` job, re-runs and two runs.
 `.ci/gate-registry.toml` proves the rows `owner-verify` and `owner-verify-ci`.
 
+### The tree rule
+
+The tree rule judges a tree instead of a head, so a merge train can batch members with strict "require branches up to date" off (CI cost design 5.2, approved 2026-11-13 as `verifier-tree-rule`, option a).
+For member i of a train it composes the train with `git merge-tree --write-tree`, from the train's base through each member in order, giving trees T0 (the base) to Tn, and passes member i only when both hold:
+
+- the newest run of the base's CI workflow at the train head whose tree is Tn concluded `success`;
+- main's tip has T(i-1), the tree the composition gives before member i.
+
+That is the equality factory's train checks after each landing (`ErrBatchMismatch`), moved to the side the builders cannot write.
+A single-member train is its own head: it passes on a green run of that head while main has the base's tree.
+A member that does not compose, an index outside the train, no run of Tn or a newest one not `success` fails.
+
+`judge_tree` is the pure judgement over a composition, `compose` writes the composition into `DIR`, and `tree_rule` joins them.
+The judge runs it only with `--train FILE`, `{"base", "members", "member", "head"}` naming the judged head as the member, and only in shadow: its lines are printed as `tree rule (shadow):` and the exit status stays the head rule's.
+Main's tree is read from `repos/{repo}/branches/{default}` and each run's tree from its `head_commit.tree_id`.
+The kernel's workflow does not pass `--train` yet; promoting the rule out of shadow, and retiring the up-to-date head it replaces, is a later change.
+`.ci/test-owner-verify.py` composes a fixture train with real git and runs the rule's cases, then the shadow wiring through the stub `gh`.
+
 ## The verifier branch
 
 `verifier/` is the content of a branch `verifier` in each repository that runs the verifier, the only ref its `verify` and `review` environments admit; a ruleset lets only a repository admin create, update or delete it.

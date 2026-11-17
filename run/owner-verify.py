@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The verifier's judge: whether a head may merge into the default branch, by the base's tier list.
 
-Usage: owner-verify.py --repo OWNER/NAME --pr N --head SHA --base SHA --tree DIR [--review FILE]
+Usage: owner-verify.py --repo OWNER/NAME --pr N --head SHA --base SHA --tree DIR [--review FILE] [--train FILE]
 
 Reads the pull request, its files, the base's `.github/owner-verify.toml` and
 `.github/CODEOWNERS`, the owner's reviews, and the head's workflow runs, their
@@ -36,6 +36,14 @@ owner's latest approving, changes-requested or dismissed review on some pull
 request at that head into the default branch is APPROVED on that commit, so
 the verdict depends on the commit and not on which pull request asked.
 README.md, "The owner-verify judge", owns the design.
+
+With --train FILE, `{"base": SHA, "members": [SHA, ...], "member": I, "head": SHA}`
+naming the judged head as member I, the judge also prints the tree rule's
+verdict in shadow, which never changes its exit status: member I passes while
+main's tip has the tree `git merge-tree` composes from the base and members
+before I, on a green run of the base's CI at the train head whose tree is the
+whole train's. DIR must then hold the base and every member. README.md,
+"The tree rule", owns it.
 
 Exit status: 0 pass, 1 refused, 2 could not decide, 3 not enrolled (the base has no
 tier list, which the verifier posts as neutral so the pull request that adds one can go green).
@@ -333,6 +341,160 @@ def review_verdict(path, head):
     return got["blocking"]
 
 
+# A composed commit is a scratch object of DIR, so its identity and date are fixed.
+COMPOSE_ENV = {
+    "GIT_CONFIG_GLOBAL": "/dev/null",
+    "GIT_CONFIG_SYSTEM": "/dev/null",
+    "GIT_AUTHOR_NAME": "owner-verify",
+    "GIT_AUTHOR_EMAIL": "owner-verify@invalid",
+    "GIT_AUTHOR_DATE": "1970-01-01T00:00:00Z",
+    "GIT_COMMITTER_NAME": "owner-verify",
+    "GIT_COMMITTER_EMAIL": "owner-verify@invalid",
+    "GIT_COMMITTER_DATE": "1970-01-01T00:00:00Z",
+}
+
+
+class NoCompose(Exception):
+    pass
+
+
+def compose(tree, base, members):
+    """[T0, ..., Tn]: the base's tree, then the tree after each member is merged in order.
+
+    Each step is `git merge-tree --write-tree` of the train so far with the
+    member, at their merge base, as a sequence of merges would give it; the
+    step's commit is written to DIR so the next step finds its merge base.
+    """
+
+    def git(*argv):
+        return subprocess.run(
+            ["git", "-C", str(tree), *argv],
+            env={**os.environ, **COMPOSE_ENV},
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+        )
+
+    got = git("rev-parse", "--verify", "--end-of-options", f"{base}^{{tree}}")
+    if got.returncode:
+        raise NoCompose(f"the train's base {base[:12]} is not in the tree")
+    trees, at = [got.stdout.strip()], base
+    for i, member in enumerate(members, 1):
+        merged = git("merge-tree", "--write-tree", "--no-messages", at, member)
+        if merged.returncode:
+            raise NoCompose(
+                f"member {i} ({member[:12]}) does not compose onto the train before it"
+            )
+        made = merged.stdout.split()[0]
+        step = git("commit-tree", made, "-p", at, "-p", member, "-m", f"train {i}")
+        if step.returncode:
+            raise NoCompose(f"member {i}: {step.stderr.strip()}")
+        trees.append(made)
+        at = step.stdout.strip()
+    return trees
+
+
+def judge_tree(member, composed, main_tree, runs):
+    """(passes, lines): the tree rule for member i of a train, from its composition alone.
+
+    composed is [T0, ..., Tn], the train's base tree and its tree after each
+    member; runs are runs of the base's CI as {id, head_sha, tree, conclusion}.
+    Member i passes only when the newest run whose tree is Tn concluded
+    success, and main's tip has T(i-1), the tree the train gives before
+    member i: the equality factory's train checks after each landing.
+    """
+    n = len(composed) - 1
+    if not 1 <= member <= n:
+        return False, [f"fail: member {member} is not in a train of {n}"]
+    want, final = composed[member - 1], composed[n]
+    ours = [r for r in runs if r.get("tree") == final]
+    if not ours:
+        return False, [
+            f"fail: no run of the base's CI has the train's tree {final[:12]}"
+        ]
+    run = max(ours, key=lambda r: r["id"])
+    which = f"run {run['id']} at {str(run.get('head_sha'))[:12]}"
+    if run.get("conclusion") != "success":
+        return False, [
+            f"fail: {which}, the newest of the train's tree {final[:12]}, concluded {run.get('conclusion')}"
+        ]
+    if main_tree != want:
+        return False, [
+            f"{which} of the train's tree {final[:12]} concluded success",
+            f"fail: main is at tree {main_tree[:12]}, not {want[:12]}, the tree of the train before member {member}",
+        ]
+    return True, [
+        f"{which} of the train's tree {final[:12]} concluded success",
+        f"pass: main has the tree of the train before member {member} ({want[:12]})",
+    ]
+
+
+def tree_rule(tree, base, members, member, main_tree, runs):
+    """judge_tree over the composition of members onto base in the git directory tree."""
+    try:
+        composed = compose(tree, base, members)
+    except NoCompose as e:
+        return False, [f"fail: {e}"]
+    return judge_tree(member, composed, main_tree, runs)
+
+
+def load_train(path, head):
+    """The train file, {base, members, member, head}, whose member is the judged head."""
+    try:
+        got = json.loads(Path(path).read_text())
+    except (OSError, ValueError) as e:
+        raise Undecided(f"train {path}: {e}") from e
+    if (
+        not isinstance(got, dict)
+        or set(got) != {"base", "members", "member", "head"}
+        or not isinstance(got["members"], list)
+        or not got["members"]
+        or not all(
+            isinstance(s, str) and SHA.match(s)
+            for s in [got["base"], got["head"], *got["members"]]
+        )
+        or type(got["member"]) is not int
+    ):
+        raise Undecided(
+            f"train {path}: not {{base, members, member, head}} of 40-hex commits"
+        )
+    if (
+        not 1 <= got["member"] <= len(got["members"])
+        or got["members"][got["member"] - 1] != head
+    ):
+        raise Undecided(
+            f"train {path}: its member {got['member']} is not the judged head {head[:12]}"
+        )
+    return got
+
+
+def tree_shadow(args, repo, default, ci):
+    """The tree rule's lines, judged in shadow: they never change the exit status."""
+    try:
+        train = load_train(args.train, args.head)
+        branch = api(f"repos/{repo}/branches/{default}")
+        main_tree = branch["commit"]["commit"]["tree"]["sha"]
+        runs = [
+            {
+                "id": r["id"],
+                "head_sha": r["head_sha"],
+                "tree": (r.get("head_commit") or {}).get("tree_id"),
+                "conclusion": r.get("conclusion"),
+            }
+            for r in listed(
+                f"repos/{repo}/actions/runs?head_sha={train['head']}&per_page=100",
+                "workflow_runs",
+            )
+            if r["head_sha"] == train["head"] and r["path"] == ci
+        ]
+        _, lines = tree_rule(
+            args.tree, train["base"], train["members"], train["member"], main_tree, runs
+        )
+    except (Undecided, KeyError, TypeError) as e:
+        lines = [f"could not decide: {e}"]
+    return [f"tree rule (shadow): {ln}" for ln in lines]
+
+
 def decide(args):
     repo, head, base = args.repo, args.head, args.base
     default = api(f"repos/{repo}")["default_branch"]
@@ -356,6 +518,8 @@ def decide(args):
     owner, tiers = load_tiers(raw)
     check_owners(blob(repo, OWNERS, base), owner, tiers["maintainer"])
     ci_notes, ci_failures = ci_ran(repo, head, base, tiers["ci"])
+    if args.train:
+        ci_notes += tree_shadow(args, repo, default, tiers["ci"])
     files = api(f"repos/{repo}/pulls/{args.pr}/files")
     if len(files) < pr["changed_files"]:
         # The files endpoint stops at 3000, so an unlisted verdict would be a guess.
@@ -444,6 +608,7 @@ def main():
     ap.add_argument("--base", required=True)
     ap.add_argument("--tree", required=True)
     ap.add_argument("--review")
+    ap.add_argument("--train")
     args = ap.parse_args()
     if (
         not args.pr.isdigit()
