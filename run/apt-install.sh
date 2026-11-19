@@ -8,9 +8,9 @@
 #
 # A slow mirror is not killed for being slow, only for stopping. 2026-10-26 one runner
 # fetched at about 150 kB/s what main fetched at 21 MB/s, never idle long enough for
-# apt's own Timeout. A fixed 75s kill then failed gates CI 17 times in 30 runs by
-# 2026-11-19, and retrying through archive.ubuntu.com and azure.archive.ubuntu.com
-# timed out the same way, because every host was slow and a switch forces a fresh
+# apt's own Timeout. By 2026-11-19, 17 of gates' last 30 CI runs had failed, and that
+# day a fixed 75s kill timed out on the regional mirror, then archive.ubuntu.com, then
+# azure.archive.ubuntu.com: every host was slow, and a host switch forces a fresh
 # package-list update. So an attempt is killed and retried only when the bytes apt
 # has fetched stop changing for APT_STALL_SECS; finished debs stay in apt's cache, so a
 # retry resumes. APT_TOTAL_SECS still bounds the whole install, so a job never hangs.
