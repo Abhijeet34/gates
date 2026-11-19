@@ -755,7 +755,13 @@ def sit(seat, system, prompt, seconds, limit, budget, store, record):
         )
     if rc != 0 or envelope.get("is_error"):
         raise Undecided(f"the {name} on {model} failed: {printable(text)}")
-    if int(envelope.get("safety_stops") or 0) > 0:
+    stops = envelope.get("safety_stops") or 0
+    if type(stops) is not int:
+        # A count that is not one cannot show the reply was never stopped.
+        raise Undecided(
+            f"the {name} on {model} gave safety_stops {printable(stops, 40)}, not a count"
+        )
+    if stops > 0:
         # A safety classifier cut the reply short, whatever stop_reason says (two real
         # Opus seats, 2026-11-13, ended end_turn with no verdict after one).
         raise Undecided(f"the {name} on {model} was stopped by a safety classifier")
