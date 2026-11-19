@@ -7,9 +7,9 @@
 #   3. an archive source failing still fails the step,
 #   4. a host with no archive source refuses rather than updating nothing.
 #   5. lookalike hosts are refused and the retry and timeout options reach apt-get,
-#   6. a download slower than its bound is killed and retried, then gives up named,
-#   7. a mirror slow on every attempt is left for another ubuntu.com host, and only
-#      ubuntu.com hosts are ever used.
+#   6. a download that stops sending is killed and retried, then gives up named,
+#   7. a download that keeps sending runs past the old fixed bound to completion,
+#   8. the overall ceiling fails the install, naming bytes fetched and time taken.
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 
@@ -25,29 +25,11 @@ cat >"$workdir/apt-get" <<'STUB'
 #!/usr/bin/env bash
 echo "$*" >>"$STUB_LOG"
 parts= list=
-# Every host the sources handed to this call name, a mirror+file: list's included.
-hosts() {
-  local f m
-  for f in "$parts"/* "$list"; do
-    [ -f "$f" ] || continue
-    grep -oE 'https?://[^/[:space:]]+' "$f" || true
-    for m in $(grep -oE 'mirror\+file:[^[:space:]]+' "$f" | sed 's/^mirror+file://'); do
-      [ -f "$m" ] || m="$APT_ETC/$(basename "$m")"
-      grep -oE '^https?://[^/[:space:]]+' "$m" || true
-    done
-  done
-}
-# A mirror slow on every attempt: any call whose sources name SLOW_HOST outlives its bound.
-slow_host() {
-  hosts >>"${STUB_HOSTS:-/dev/null}"
-  [ -z "${SLOW_HOST:-}" ] || ! hosts | grep -Eq "$SLOW_HOST" || sleep 5
-}
 while [ "$#" -gt 0 ]; do
   case "$1" in
     Dir::Etc::sourceparts=*) parts=${1#*=} ;;
     Dir::Etc::sourcelist=*) list=${1#*=} ;;
     update)
-      slow_host
       for f in "$parts"/* "$list"; do
         [ -f "$f" ] || continue
         if grep -Eq "${FAIL_ON:-packages\.microsoft\.com}" "$f"; then
@@ -56,11 +38,17 @@ while [ "$#" -gt 0 ]; do
         fi
       done ;;
     install)
-      # A trickling mirror: the first SLOW_ATTEMPTS downloads outlive their bound.
+      # The download writes into apt's cache the way apt does: the first SLOW_ATTEMPTS
+      # send a little and then stop; with TRICKLE_SECS set, a byte every half second.
       case " ${*} " in *" --no-download "*) ;; *)
-        slow_host
         n=$(($(cat "$STUB_STATE" 2>/dev/null || echo 0) + 1)); echo "$n" >"$STUB_STATE"
-        [ "$n" -gt "${SLOW_ATTEMPTS:-0}" ] || sleep 5 ;;
+        mkdir -p "$APT_ARCHIVES/partial"
+        if [ "$n" -le "${SLOW_ATTEMPTS:-0}" ]; then
+          printf 'started' >>"$APT_ARCHIVES/partial/pkg.deb"; sleep 30
+        fi
+        for ((t = 0; t < ${TRICKLE_SECS:-0} * 2; t++)); do
+          printf x >>"$APT_ARCHIVES/partial/pkg.deb"; sleep 0.5
+        done ;;
       esac ;;
   esac
   shift
@@ -78,8 +66,11 @@ mketc() {
 run() { # run <etc> -> sets rc, log
   : >"$workdir/log"
   rc=0
-  rm -f "$workdir/state" "$workdir/hosts"
-  APT_ETC=$1 APT_GET="$workdir/apt-get" APT_SUDO='' STUB_LOG="$workdir/log" STUB_STATE="$workdir/state" STUB_HOSTS="$workdir/hosts" \
+  rm -f "$workdir/state"
+  rm -rf -- "${workdir:?}/cache"
+  mkdir -p "$workdir/cache/lists/partial" "$workdir/cache/archives/partial"
+  APT_ETC=$1 APT_GET="$workdir/apt-get" APT_SUDO='' STUB_LOG="$workdir/log" STUB_STATE="$workdir/state" \
+    APT_LISTS="$workdir/cache/lists" APT_ARCHIVES="$workdir/cache/archives" \
     bash -e run/apt-install.sh libimage-exiftool-perl >"$workdir/out" 2>&1 || rc=$?
 }
 
@@ -118,45 +109,34 @@ run "$etc5"
 FAIL_ON='mirror\+file'; export FAIL_ON; run "$etc5"; unset FAIL_ON
 [ "$rc" -ne 0 ] && pass "runner layout: the mirror-listed archive failing still fails" || fail "mirror archive failure was swallowed"
 
-# A slow mirror (2026-10-26: 67.9 MB at about 150 kB/s, where main fetched it at
-# 21 MB/s): each download is bounded, retried, and the install never downloads.
-export APT_ATTEMPT_SECS=1 SLOW_ATTEMPTS=1; run "$workdir/etc1"
-[ "$rc" -eq 0 ] && [ "$(grep -c 'install -y --no-install-recommends --download-only libimage-exiftool-perl' "$workdir/log")" -eq 2 ] \
+# A download that stops sending is killed once no byte has moved for APT_STALL_SECS,
+# well before its 30s sleep ends, and retried; the install never downloads.
+# APT_ATTEMPT_SECS is the fixed bound the watchdog replaced (75s, here 2s), set so that
+# on the old script these cases show what it did instead.
+export APT_STALL_SECS=2 APT_ATTEMPT_SECS=2 SLOW_ATTEMPTS=1
+SECONDS=0; run "$workdir/etc1"; took=$SECONDS
+[ "$rc" -eq 0 ] && [ "$took" -lt 15 ] && [ "$(grep -c 'install -y --no-install-recommends --download-only libimage-exiftool-perl' "$workdir/log")" -eq 2 ] \
   && grep -q 'install -y --no-install-recommends --no-download libimage-exiftool-perl' "$workdir/log" \
-  && grep -q 'apt-install: download attempt 1 of 3 exceeded 1s, retrying' "$workdir/out" \
-  && pass "a slow download is killed at its bound and retried" || fail "slow download not bounded and retried (rc=$rc): $(cat "$workdir/out" "$workdir/log")"
-SLOW_ATTEMPTS=9; run "$workdir/etc1"; unset APT_ATTEMPT_SECS SLOW_ATTEMPTS
-[ "$rc" -ne 0 ] && grep -q 'apt-install: download gave up after 3 attempts of 1s each' "$workdir/out" \
+  && grep -q 'apt-install: download attempt 1 of 3 made no progress for 2s, retrying' "$workdir/out" \
+  && pass "a download that stops sending is killed after APT_STALL_SECS and retried" || fail "stalled download not killed and retried (rc=$rc, ${took}s): $(cat "$workdir/out" "$workdir/log")"
+SLOW_ATTEMPTS=9; run "$workdir/etc1"; unset SLOW_ATTEMPTS
+[ "$rc" -ne 0 ] && grep -q 'apt-install: download gave up after 3 attempts that each made no progress for 2s' "$workdir/out" \
   && ! grep -q -- '--no-download' "$workdir/log" \
-  && pass "a mirror slow on every attempt fails named, not at the step timeout" || fail "persistently slow mirror (rc=$rc): $(cat "$workdir/out")"
+  && pass "a mirror that stops on every attempt fails named, not at the step timeout" || fail "persistently stalled mirror (rc=$rc): $(cat "$workdir/out")"
 
-# 2026-11-19: the runner's mirror list put a regional EC2 mirror first, and every
-# retry went back to it. A retry now moves the archive to the next ubuntu.com host;
-# ports.ubuntu.com's /ubuntu-ports/ path keeps its host, and the third-party source
-# is still left out.
-etc6="$workdir/etc6"; mkdir -p "$etc6/sources.list.d"
-printf 'Types: deb\nURIs: mirror+file:/etc/apt/apt-mirrors.txt\nSuites: noble noble-updates\nComponents: main\n\nTypes: deb\nURIs: http://security.ubuntu.com/ubuntu/\nSuites: noble-security\nComponents: main\n' >"$etc6/sources.list.d/ubuntu.sources"
-printf 'http://us-east-2.ec2.archive.ubuntu.com/ubuntu/\tpriority:1\nhttp://archive.ubuntu.com/ubuntu/\tpriority:2\nhttp://security.ubuntu.com/ubuntu/\tpriority:3\n' >"$etc6/apt-mirrors.txt"
-printf 'deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble main\n' >"$etc6/sources.list"
-printf 'deb [arch=amd64,arm64,armhf signed-by=/usr/share/keyrings/microsoft-prod.gpg] https://packages.microsoft.com/ubuntu/24.04/prod noble main\n' >"$etc6/sources.list.d/microsoft-prod.list"
-ubuntu_only() { ! grep -Ev '^https?://([A-Za-z0-9-]+\.)*ubuntu\.com$' "$workdir/hosts"; }
-export APT_ATTEMPT_SECS=1 SLOW_HOST='us-east-2\.ec2\.archive\.ubuntu\.com'; run "$etc6"
-last=$(tail -1 "$workdir/log")
-[ "$rc" -eq 0 ] && grep -q 'apt-install: update attempt 1 of 3 exceeded 1s, retrying via archive.ubuntu.com' "$workdir/out" \
-  && [[ $last == *'install -y --no-install-recommends --no-download libimage-exiftool-perl' ]] \
-  && [[ $last == *'sourceparts='*'/via/archive.ubuntu.com '* ]] \
-  && [ "$(grep -c '^http://archive.ubuntu.com$' "$workdir/hosts")" -ge 2 ] \
-  && [ "$(tail -4 "$workdir/hosts" | sort -u | tr '\n' ' ')" = 'http://archive.ubuntu.com http://ports.ubuntu.com ' ] \
-  && pass "a mirror slow on every attempt is left for archive.ubuntu.com, ports kept" || fail "slow regional mirror not left (rc=$rc): $(cat "$workdir/out" "$workdir/log" "$workdir/hosts")"
-ubuntu_only && pass "the fallback never uses a host outside ubuntu.com" || fail "a non-ubuntu.com host was used"
-SLOW_HOST='ubuntu\.com'; run "$etc6"; unset APT_ATTEMPT_SECS SLOW_HOST
-[ "$rc" -eq 124 ] && grep -q 'apt-install: update gave up after 3 attempts of 1s each (the configured mirror, archive.ubuntu.com, azure.archive.ubuntu.com)' "$workdir/out" \
-  && ! grep -q -- '--download-only' "$workdir/log" && ubuntu_only \
-  && pass "an archive slow from every ubuntu.com host fails naming each one" || fail "slow everywhere (rc=$rc): $(cat "$workdir/out" "$workdir/hosts")"
-FAIL_ON='ubuntu\.com'; export FAIL_ON; run "$etc6"; unset FAIL_ON
-[ "$rc" -eq 100 ] && grep -q 'apt-install: update failed (exit 100) via the configured mirror; not a timeout, so not retried' "$workdir/out" \
-  && [ "$(grep -c ' update$' "$workdir/log")" -eq 1 ] \
-  && pass "an archive source that is down fails at once, named" || fail "down source (rc=$rc): $(cat "$workdir/out")"
+# 2026-11-19: every ubuntu.com host was slow but sending. A download that keeps
+# writing for twice the old bound and twice APT_STALL_SECS runs once, to completion.
+TRICKLE_SECS=4; export TRICKLE_SECS; run "$workdir/etc1"; unset TRICKLE_SECS
+[ "$rc" -eq 0 ] && [ "$(grep -c -- '--download-only' "$workdir/log")" -eq 1 ] \
+  && grep -q -- '--no-download libimage-exiftool-perl' "$workdir/log" && ! grep -q 'apt-install:' "$workdir/out" \
+  && pass "a slow download that keeps making progress runs to completion" || fail "a progressing download was killed (rc=$rc): $(cat "$workdir/out" "$workdir/log")"
+
+# The ceiling: a download still sending at APT_TOTAL_SECS fails, naming bytes and time.
+export TRICKLE_SECS=60 APT_TOTAL_SECS=4
+SECONDS=0; run "$workdir/etc1"; took=$SECONDS; unset TRICKLE_SECS APT_TOTAL_SECS APT_STALL_SECS APT_ATTEMPT_SECS
+[ "$rc" -eq 124 ] && [ "$took" -lt 20 ] && ! grep -q -- '--no-download' "$workdir/log" \
+  && grep -Eq 'apt-install: download stopped at the APT_TOTAL_SECS ceiling of 4s after [0-9]+s, [1-9][0-9]* bytes fetched' "$workdir/out" \
+  && pass "the overall ceiling fails the install, naming bytes fetched and elapsed time" || fail "ceiling (rc=$rc, ${took}s): $(cat "$workdir/out")"
 
 # Control: handing apt-get every source reproduces the original failure.
 mkdir -p "$workdir/etc3"; cp -R "$workdir/etc1/." "$workdir/etc3/"
