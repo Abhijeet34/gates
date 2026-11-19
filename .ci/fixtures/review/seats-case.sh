@@ -4,7 +4,7 @@
 #   seats-case.sh CASE [VARIANT SEAT TEXT]
 #
 # Builds `repo/` from corpus/seats/base with the case's change committed over it,
-# writing its commits to `base` and `head` and an empty title and body to
+# writing its commits to `base.sha` and `head.sha` and an empty title and body to
 # `pr.json`; copies the case's recorded replies (corpus/seats/CASE) under
 # replies/seats/, installs claude-recorded.py as `.stub/claude`, and writes CASE
 # to `case`. TEXT replaces the reply of SEAT (`sonnet`, `opus`) in VARIANT
@@ -21,11 +21,11 @@ cp -R "$corpus/base" repo
 git -C repo init -q -b main
 git -C repo add -A
 git -C repo commit -qm base
-git -C repo rev-parse HEAD >base
+git -C repo rev-parse HEAD >base.sha
 cp -R "$corpus/cases/$1/change/." repo/
 git -C repo add -A
 git -C repo commit -qm change
-git -C repo rev-parse HEAD >head
+git -C repo rev-parse HEAD >head.sha
 printf '{"title": "", "body": ""}\n' >pr.json
 printf '%s\n' "$1" >case
 [[ $# -lt 4 ]] && exit 0
