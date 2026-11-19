@@ -134,15 +134,20 @@ jobs:
       # runs. Only .deb files are cached, never package lists: apt fetches those
       # fresh each run and checks every cached deb against their signed hashes,
       # so a stale or altered deb is refused and fetched again.
+      # The key leaves out the runner's ImageVersion: hosted runners alternate
+      # image builds, and 2026-11-19 a run on 20261116.133.1 saved 21.5 MB that
+      # the next run, on 20261111.127.1, could not find, so it started from zero
+      # and partial downloads never added up. A deb from another image build is
+      # safe for the same reason as above, and one apt no longer wants goes unused.
       - name: Key the apt cache
         id: apt
         run: |
           packages='libimage-exiftool-perl qpdf ffmpeg imagemagick'
           echo "packages=$packages" >> "$GITHUB_OUTPUT"
-          echo "prefix=apt-debs-$RUNNER_OS-$RUNNER_ARCH-$ImageOS-$ImageVersion-" >> "$GITHUB_OUTPUT"
+          echo "prefix=apt-debs-$RUNNER_OS-$RUNNER_ARCH-$ImageOS-" >> "$GITHUB_OUTPUT"
           echo "list=$(printf '%s' "$packages" | sha256sum | cut -c1-16)" >> "$GITHUB_OUTPUT"
 
-      # A changed package list restores the newest set for this image and fetches
+      # A changed package list restores the newest set for this OS and fetches
       # only what it lacks. A pull request restores its own entries or main's, and
       # CI runs on main only when dispatched, so a dispatched run seeds every PR.
       - name: Restore the cached debs
