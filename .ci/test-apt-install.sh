@@ -9,7 +9,8 @@
 #   5. lookalike hosts are refused and the retry and timeout options reach apt-get,
 #   6. a download that stops sending is killed and retried, then gives up named,
 #   7. a download that keeps sending runs past the old fixed bound to completion,
-#   8. the overall ceiling fails the install, naming bytes fetched and time taken.
+#   8. the overall ceiling fails the install, naming bytes fetched and time taken,
+#   9. APT_ARCHIVES is apt's archive cache: a deb already there is used, not refetched.
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 
@@ -24,11 +25,12 @@ fail() { printf 'FAIL %s\n' "$1"; failed=1; }
 cat >"$workdir/apt-get" <<'STUB'
 #!/usr/bin/env bash
 echo "$*" >>"$STUB_LOG"
-parts= list=
+parts= list= cache=$STUB_DEFAULT_CACHE
 while [ "$#" -gt 0 ]; do
   case "$1" in
     Dir::Etc::sourceparts=*) parts=${1#*=} ;;
     Dir::Etc::sourcelist=*) list=${1#*=} ;;
+    Dir::Cache::archives=*) cache=${1#*=} ;;
     update)
       for f in "$parts"/* "$list"; do
         [ -f "$f" ] || continue
@@ -38,17 +40,26 @@ while [ "$#" -gt 0 ]; do
         fi
       done ;;
     install)
-      # The download writes into apt's cache the way apt does: the first SLOW_ATTEMPTS
-      # send a little and then stop; with TRICKLE_SECS set, a byte every half second.
-      case " ${*} " in *" --no-download "*) ;; *)
-        n=$(($(cat "$STUB_STATE" 2>/dev/null || echo 0) + 1)); echo "$n" >"$STUB_STATE"
-        mkdir -p "$APT_ARCHIVES/partial"
-        if [ "$n" -le "${SLOW_ATTEMPTS:-0}" ]; then
-          printf 'started' >>"$APT_ARCHIVES/partial/pkg.deb"; sleep 30
-        fi
-        for ((t = 0; t < ${TRICKLE_SECS:-0} * 2; t++)); do
-          printf x >>"$APT_ARCHIVES/partial/pkg.deb"; sleep 0.5
-        done ;;
+      # The download fills Dir::Cache::archives the way apt does: a deb already there
+      # is used, and anything else is written to partial/ and moved in when complete.
+      # The first SLOW_ATTEMPTS send a little and then stop; with TRICKLE_SECS set,
+      # a byte every half second. The install that may not download needs the deb.
+      case " ${*} " in
+        *" --no-download "*)
+          [ -f "$cache/pkg.deb" ] || { echo "E: pkg.deb is not in $cache" >&2; exit 100; } ;;
+        *)
+          n=$(($(cat "$STUB_STATE" 2>/dev/null || echo 0) + 1)); echo "$n" >"$STUB_STATE"
+          [ -f "$cache/pkg.deb" ] && exit 0
+          echo "fetched pkg.deb" >>"$STUB_LOG"
+          mkdir -p "$cache/partial"
+          if [ "$n" -le "${SLOW_ATTEMPTS:-0}" ]; then
+            printf 'started' >>"$cache/partial/pkg.deb"; sleep 30
+          fi
+          for ((t = 0; t < ${TRICKLE_SECS:-0} * 2; t++)); do
+            printf x >>"$cache/partial/pkg.deb"; sleep 0.5
+          done
+          printf 'deb' >>"$cache/partial/pkg.deb"
+          mv "$cache/partial/pkg.deb" "$cache/pkg.deb" ;;
       esac ;;
   esac
   shift
@@ -68,8 +79,10 @@ run() { # run <etc> -> sets rc, log
   rc=0
   rm -f "$workdir/state"
   rm -rf -- "${workdir:?}/cache"
-  mkdir -p "$workdir/cache/lists/partial" "$workdir/cache/archives/partial"
+  mkdir -p "$workdir/cache/lists/partial" "$workdir/cache/archives/partial" "$workdir/cache/default/partial"
+  [ -z "${PREPLACE:-}" ] || printf '%s' "$PREPLACE" >"$workdir/cache/archives/pkg.deb"
   APT_ETC=$1 APT_GET="$workdir/apt-get" APT_SUDO='' STUB_LOG="$workdir/log" STUB_STATE="$workdir/state" \
+    STUB_DEFAULT_CACHE="$workdir/cache/default" \
     APT_LISTS="$workdir/cache/lists" APT_ARCHIVES="$workdir/cache/archives" \
     bash -e run/apt-install.sh libimage-exiftool-perl >"$workdir/out" 2>&1 || rc=$?
 }
@@ -137,6 +150,19 @@ SECONDS=0; run "$workdir/etc1"; took=$SECONDS; unset TRICKLE_SECS APT_TOTAL_SECS
 [ "$rc" -eq 124 ] && [ "$took" -lt 20 ] && ! grep -q -- '--no-download' "$workdir/log" \
   && grep -Eq 'apt-install: download stopped at the APT_TOTAL_SECS ceiling of 4s after [0-9]+s, [1-9][0-9]* bytes fetched' "$workdir/out" \
   && pass "the overall ceiling fails the install, naming bytes fetched and elapsed time" || fail "ceiling (rc=$rc, ${took}s): $(cat "$workdir/out")"
+
+# The secret scan caches APT_ARCHIVES between runs: a deb restored there is what the
+# download finds, so nothing is fetched and the install uses the restored file.
+PREPLACE='restored deb'; export PREPLACE; run "$workdir/etc1"; unset PREPLACE
+[ "$rc" -eq 0 ] && grep -q "Dir::Cache::archives=$workdir/cache/archives/" "$workdir/log" \
+  && grep -q -- '--download-only libimage-exiftool-perl' "$workdir/log" && ! grep -q '^fetched' "$workdir/log" \
+  && grep -q -- '--no-download libimage-exiftool-perl' "$workdir/log" \
+  && [ "$(cat "$workdir/cache/archives/pkg.deb")" = 'restored deb' ] \
+  && pass "a deb already in APT_ARCHIVES is used and nothing is re-downloaded" || fail "archive cache not honoured (rc=$rc): $(cat "$workdir/out" "$workdir/log")"
+run "$workdir/etc1"
+[ "$rc" -eq 0 ] && [ "$(grep -c '^fetched' "$workdir/log")" -eq 1 ] && [ -f "$workdir/cache/archives/pkg.deb" ] \
+  && [ "$(ls -A "$workdir/cache/default")" = partial ] && [ -z "$(ls -A "$workdir/cache/default/partial")" ] \
+  && pass "control: an empty APT_ARCHIVES is downloaded into, not apt's default cache" || fail "download did not land in APT_ARCHIVES (rc=$rc): $(cat "$workdir/out" "$workdir/log"; ls -R "$workdir/cache")"
 
 # Control: handing apt-get every source reproduces the original failure.
 mkdir -p "$workdir/etc3"; cp -R "$workdir/etc1/." "$workdir/etc3/"

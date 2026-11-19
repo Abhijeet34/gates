@@ -15,7 +15,12 @@
 # has fetched stop changing for APT_STALL_SECS; finished debs stay in apt's cache, so a
 # retry resumes. APT_TOTAL_SECS still bounds the whole install, so a job never hangs.
 #
-# APT_ETC, APT_GET, APT_SUDO, APT_LISTS and APT_ARCHIVES exist for .ci/test-apt-install.sh.
+# APT_ARCHIVES moves apt's archive cache (Dir::Cache::archives) to a directory a job
+# can carry between runs; ci.yml's secret scan does, because at the 30-50 kB/s seen
+# 2026-11-19 its 70 MB of debs outlasts the step. apt checks each cached deb against
+# the signed package lists it fetches fresh, so a stale or altered one is refetched.
+#
+# APT_ETC, APT_GET, APT_SUDO and APT_LISTS exist for .ci/test-apt-install.sh.
 set -euo pipefail
 
 [ "$#" -gt 0 ] || { echo "apt-install: no packages named" >&2; exit 2; }
@@ -57,12 +62,14 @@ else
 fi
 [ "$kept" -gt 0 ] || { echo "apt-install: no Ubuntu archive source under $etc" >&2; exit 1; }
 
+archives=${APT_ARCHIVES:-/var/cache/apt/archives}
+mkdir -p "$archives/partial" 2>/dev/null || ${sudo[@]+"${sudo[@]}"} mkdir -p "$archives/partial"
 opts=(-o "Dir::Etc::sourcelist=$main_list" -o "Dir::Etc::sourceparts=$parts"
-  -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30)
+  -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30
+  -o "Dir::Cache::archives=$archives/")
 stall=${APT_STALL_SECS:-60}
 total=${APT_TOTAL_SECS:-900}
 lists=${APT_LISTS:-/var/lib/apt/lists}
-archives=${APT_ARCHIVES:-/var/cache/apt/archives}
 attempts=3
 # apt's partial dirs are readable by root alone, hence sudo.
 fetched() {
