@@ -65,6 +65,9 @@ SIDES = ("head", "base")
 SHA = re.compile(r"^[0-9a-f]{40}$")
 # review.sit's words for a reply it could not read an answer from; pinned by .ci/test-seats.py.
 UNREADABLE = "gave no readable answer"
+# A closing code fence, the one thing an answer may have after it.
+FENCE = re.compile(r"\n?```[A-Za-z]*[ \t]*$")
+APPROVE_KEY = re.compile(r"""["']?\bapprove\b["']?\s*:""")
 
 SYSTEM = """You are one of two review seats that stand in for the repository owner's \
 review of a change to its safeguard paths, inside a merge gate. Each safeguard path \
@@ -131,10 +134,21 @@ def tiers_at(tree, base):
 
 
 def safeguards(tree, base, head, tiers):
-    """(paths the seats read, other paths touched), each changed path by both names on a rename."""
+    """(paths the seats read, other paths touched), each changed path by both names on a rename.
+    A safeguard file moved out of the list goes to the seats under its new name too, so
+    they read what it now holds, not only its deletion (verification of PR 116, case a2)."""
     out = git(tree, "diff", "--name-only", "--no-renames", "-z", base, head)
     paths = [p for p in out.decode(errors="replace").split("\0") if p]
     mine = [p for p in paths if owner_verify.route_of(p, tiers) == "verified"]
+    moved = git(tree, "diff", "--name-status", "-M", "-z", base, head).decode(
+        errors="replace"
+    )
+    fields = [f for f in moved.split("\0") if f]
+    while fields:
+        status = fields.pop(0)
+        names = [fields.pop(0) for _ in range(2 if status[:1] in "RC" else 1)]
+        if status[:1] == "R" and names[0] in mine and names[1] not in mine:
+            mine.append(names[1])
     return mine, [p for p in paths if p not in mine]
 
 
@@ -189,24 +203,33 @@ def prompt_for(seat, tiers, mine, others, pr, diff):
 
 
 def answer_of(text):
-    """The answer object in a reply: a seat may write prose with braces in it first, which
-    review.answer_of would read from. Two answers that disagree are no answer, so a seat
-    that quotes a planted `"approve": true` beside its hold is never read as approving."""
+    """A seat's answer: the one object with an `approve` key, on its own line, ending the
+    reply but for a closing fence. A reply that quotes another answer object or an
+    approve key, or whose object sits inside a sentence or has text after it, is no
+    answer, so a planted `{"approve": true}` quoted by a seat cut off mid-reply is
+    undecided, never an approval (verification of PR 116, cases r12, r13, r15)."""
+    body = FENCE.sub("", text.rstrip()).rstrip()
     decoder, found, i = json.JSONDecoder(), [], 0
-    while (i := text.find("{", i)) >= 0:
+    while (i := body.find("{", i)) >= 0:
         try:
-            obj, end = decoder.raw_decode(text, i)
+            obj, end = decoder.raw_decode(body, i)
         except ValueError:
             i += 1
             continue
         if isinstance(obj, dict) and "approve" in obj:
-            found.append(obj)
+            found.append((i, end, obj))
         i = end
     if not found:
         raise ValueError("no JSON object with an approve key")
-    if len({json.dumps(o.get("approve")) for o in found}) > 1:
-        raise ValueError("answers that disagree on approve")
-    return found[-1]
+    start, end, obj = found[-1]
+    if end != len(body):
+        raise ValueError("text follows its last answer object")
+    lead = FENCE.sub("", body[:start]).rstrip(" \t")
+    if lead and not lead.endswith("\n"):
+        raise ValueError("its answer object sits inside a sentence")
+    if APPROVE_KEY.search(lead):
+        raise ValueError("it quotes an approve key before its answer")
+    return obj
 
 
 # review.sit reads each reply with its module's answer_of; a seats process reads with this one.
@@ -258,7 +281,7 @@ def stands(tree, base, head, finding):
 def sit_all(tree, base, head, tiers, mine, others, pr, store, state, say):
     spec = [f":(literal){p}" for p in mine]
     diff = git(
-        tree, "diff", "--no-color", "--no-ext-diff", "--no-renames", f"-U{CONTEXT}",
+        tree, "diff", "--no-color", "--no-ext-diff", "-M", f"-U{CONTEXT}",
         base, head, "--", *spec,
     ).decode(errors="replace")  # fmt: skip
     try:

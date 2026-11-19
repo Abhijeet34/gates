@@ -755,6 +755,13 @@ def sit(seat, system, prompt, seconds, limit, budget, store, record):
         )
     if rc != 0 or envelope.get("is_error"):
         raise Undecided(f"the {name} on {model} failed: {printable(text)}")
+    stop = envelope.get("stop_reason")
+    if stop != "end_turn":
+        # A reply cut off by a refusal or a limit holds a partial text whose JSON is
+        # not an answer, however it reads (verification of PR 116, case r12).
+        raise Undecided(
+            f"the {name} on {model} stopped with {printable(stop, 40)}, not end_turn"
+        )
     over = [
         f"{used:,} {kind} tokens of {budget[f'{kind}_tokens']:,}"
         for kind, used in (("input", tokens_in), ("output", tokens_out))
