@@ -1,0 +1,9 @@
+{
+  "status": "done",
+  "followups": [
+    {
+      "text": "Land the sr-25 fix as a class-2, size-L change by a person, since permissions-diff refuses any change to run/review.py. Build the review seat's environment (cli and sit) from an allowlist SEAT_ENV plus LC_*, as change-gates does. Record env names in the recorded CLI, add seat_env_is_an_allowlist, move the seats_get_no_credentials mutation row and reword README.md:1408. report.md has the trial diff, which passes.",
+      "acceptance": "out=$(python3 .ci/test-review.py) && printf '%s\\n' \"$out\" | grep -qx 'ok   seat_env_is_an_allowlist'"
+    }
+  ]
+}
