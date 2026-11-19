@@ -1,0 +1,14 @@
+{
+  "status": "needs-decision",
+  "questions": [
+    {
+      "key": "sr-25-class-2-landing",
+      "q": "fix-sr-25 must edit run/review.py, which permissions-diff refuses on any change (run/permissions-diff.py:486), so no automatic worker can land it. Re-file the fix row in report.md as an L change under a class-2 decision for a person to land, or accept the residual until review is wired?",
+      "options": ["refile-as-class-2", "accept-residual-until-review-wired"],
+      "default": "refile-as-class-2",
+      "class": 2,
+      "why": "The trial fix passes the requested regression test and the corpus, lens-eval, critic and critic-eval suites, but permissions-diff refuses every change to run/review.py; only the captain's class-2 decision lets a person land it, and re-dispatching it to an automatic worker would be cancelled the same way."
+    }
+  ],
+  "followups": []
+}
