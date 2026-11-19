@@ -755,9 +755,10 @@ def sit(seat, system, prompt, seconds, limit, budget, store, record):
         )
     if rc != 0 or envelope.get("is_error"):
         raise Undecided(f"the {name} on {model} failed: {printable(text)}")
-    stops = envelope.get("safety_stops") or 0
-    if type(stops) is not int:
-        # A count that is not one cannot show the reply was never stopped.
+    stops = envelope.get("safety_stops", 0)
+    if type(stops) is not int or stops < 0:
+        # A count that is not one, false, empty or negative included, cannot show the
+        # reply was never stopped; `type` keeps a bool from passing as an int.
         raise Undecided(
             f"the {name} on {model} gave safety_stops {printable(stops, 40)}, not a count"
         )
