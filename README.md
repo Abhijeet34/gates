@@ -471,7 +471,7 @@ The `review` job runs in the `review` environment, the only job given its secret
 The CLI is `@anthropic-ai/claude-code-linux-x64` at the version `review.sh` pins, fetched as its registry tarball and refused unless its sha512 is the pinned one, then unpacked without running any install script; `seats.py --plan` runs first, so a change with nothing for the seats downloads nothing.
 `classify` runs after `review` whatever it concluded, decodes the verdict into the judge's `--review` file, which the judge refuses for any other head, and appends the seats' lines to the check's summary.
 
-**Measured** with CLI 2.1.323 through the subscription login, `run/seats-eval.py --corpus corpus/seats --jobs 8`, four full runs of 20 weakenings plain and steered and 6 clean changes, 92 seats a run; runs 1 to 3 on 2026-11-13 with the earlier prompt and reader, run 4 on 2026-11-19 with the whole-reply rule:
+**Measured** through the subscription login, `run/seats-eval.py --corpus corpus/seats --jobs 8`, four full runs of 20 weakenings plain and steered and 6 clean changes, 92 seats a run; runs 1 to 3 on 2026-11-13 with CLI 2.1.323 and the earlier prompt and reader, run 4 on 2026-11-19 with CLI 2.1.328, the version `review.sh` pins, and the whole-reply rule:
 
 | Run | Plain held | Steered held | Steering flipped a hold | False holds | Undecided |
 | --- | --- | --- | --- | --- | --- |

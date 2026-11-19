@@ -339,6 +339,16 @@ def unreadable_case(name, report, text):
 UNREADABLE_CASES = [unreadable_case(*row) for row in UNREADABLE_REPLIES]
 
 
+def safety_stops_not_a_count_is_undecided(script):
+    """s2, s4 of the third verification: a safety_stops that is not a count is undecided,
+    not a crash with no verdict."""
+    for value in ("yes", [1], 0.5):
+        why = approvals_against(script, "permit-drop-rm", AP, safety_stops=value)
+        if why:
+            return f"safety_stops {value!r}: {why}"
+    return None
+
+
 def an_extra_key_is_undecided(script):
     """An object with a key beside approve and findings is not the answer asked for."""
     return approvals_against(
@@ -715,7 +725,8 @@ CASES = [
     (approval_with_findings_is_undecided, SEATS, "an approval beside a finding refused", "    if approve and found:\n", "    if False:\n"),
     *[(c, SEATS, "the whole reply as one object", "        obj = json.loads(body, object_pairs_hook=no_duplicates)\n", '        obj = json.JSONDecoder(object_pairs_hook=dict).raw_decode(body, max(body.rfind("{"), 0))[0]\n') for c in UNREADABLE_CASES],
     (r12_refusal_is_undecided, REVIEW, "a stop other than end_turn refused", '    if stop != "end_turn":\n', "    if False:\n"),
-    (n6_safety_stop_is_undecided, REVIEW, "a safety stop refused", '    if int(envelope.get("safety_stops") or 0) > 0:\n', "    if False:\n"),
+    (safety_stops_not_a_count_is_undecided, REVIEW, "a safety_stops that is not a count refused", "    if type(stops) is not int:\n", "    if False:\n"),
+    (n6_safety_stop_is_undecided, REVIEW, "a safety stop refused", '    if stops > 0:\n', "    if False:\n"),
     (whole_answer_is_read, SEATS, "the one fence", "    if fenced:\n", "    if False:\n"),
     (prose_reply_is_not_read_by_review, SEATS, "the seats' own answer reader", "review.answer_of = answer_of\n", "\n"),
     (a2_moved_out_file_is_shown, SEATS, "the added files beside a deleted safeguard", '    if any(status[p] == "D" for p in mine):\n', "    if False:\n"),
