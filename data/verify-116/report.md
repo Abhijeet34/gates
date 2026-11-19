@@ -331,7 +331,36 @@ Even with that fix, a seat that ends on a quoted approval with no safety stop wo
 
 ## 3. Neighbours: `.ci/check.sh`
 
-CHECK_RESULTS_PLACEHOLDER
+I ran `.ci/check.sh all` on the head (7ede1f49) and on `main` (cc7e3c4) at the same time, with shellcheck 0.11.0 and qpdf installed. It took 629 s.
+
+```
+$ (cd $S/new && .ci/check.sh all)    -> failed: shell secrets gates-proof   rc=1
+$ (cd $S/main && .ci/check.sh all)   -> failed: shell secrets gates-proof   rc=1
+head: ok python; seats tests passed; verifier: all 114 checks pass; owner-verify: all 117 cases pass
+main: ok python;                     verifier: all 84 checks pass;  owner-verify: all 117 cases pass
+```
+
+I took the distinct FAIL lines of each tree, with hashes and temporary paths normalised, and compared the two sets. The head failed one thing `main` did not:
+
+- `FAIL run/__pycache__/owner-verify.cpython-313.pyc: an unregistered gate`, and the gates-proof regression failures that follow from it ("the live registry is refused", "clean input was refused").
+- **I caused this.** My own `review-job.sh` and `attack.sh` runs imported `run/owner-verify.py` from that worktree. The `.pyc` is time-stamped 03:35:53, and the check started at 03:36:16.
+- I removed that directory (`rm -rf -- "${S:?}/new/run/__pycache__"`) and re-ran `.ci/check.sh gates-proof` on the head. Its FAIL set is now identical to `main`'s: `artifact-scan: red input was not refused`, which comes from this machine.
+- The PR's rows `ok seats-hold`, `ok seats-quoted-approval` and `ok seats-eval-steered` pass.
+
+Failures on both trees, all environmental and the same as in the previous report:
+
+- `artifact-scan` red input not refused ("no machine identifier found").
+- The exposure-gate and hook checks that depend on this machine.
+- `dependency-advisories`.
+- `test-watermark-scan-workflow` (".gates/ is missing").
+- The review-suite mutant `reproduction_reads_no_home`.
+
+That `reproduction_reads_no_home` mutant fails on `main` too, so it is not the head's `run/review.py` change. Every other review case passes on the head, including the 405 recorded non-seat replies under the new `stop_reason` rule.
+
+`python3 .ci/test-seats.py` on the head runs `r12_refusal_is_undecided`, `r13_cut_off_quote_is_undecided`, `echo_ending_the_reply_is_undecided`, `r15_text_after_the_answer_is_undecided` and `a2_moved_out_file_is_shown`.
+Each case passes, and each goes red when its control is removed. "seats tests passed".
+
+**The fix adds no failure. Every failure that is left also fails on `main`.**
 
 ## 4. Security
 
@@ -351,7 +380,7 @@ CHECK_RESULTS_PLACEHOLDER
 
 ## Spend
 
-- Wall time: SPEND_PLACEHOLDER.
+- Wall time about 50 minutes, of which `.ci/check.sh all` on two trees took about 11 minutes and a gates-proof re-run about 4.
 - No model calls: every seat answered from recorded replies through the repository's stub. No CI was triggered and nothing was posted on GitHub.
 - Installs, in this container only: `shellcheck-py` (shellcheck 0.11.0) and `qpdf`.
 - This session's own token usage is not visible to me here.
