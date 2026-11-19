@@ -1,0 +1,14 @@
+{
+  "status": "needs-decision",
+  "questions": [
+    {
+      "key": "sr-25-class-2-landing",
+      "q": "Should a person land the sr-25 fix under a class-2 decision, or do you accept the residual?\nThe fix must edit run/review.py. permissions-diff refuses any change to that file (run/permissions-diff.py:486), so an automatic worker cannot land it. report.md has the fix row, proven by the regression test on a trial commit, and the residual if accepted.",
+      "options": ["refile-as-class-2", "accept-residual-until-review-wired"],
+      "default": "refile-as-class-2",
+      "class": 2,
+      "why": "permissions-diff refuses every change to run/review.py, and only the captain's class-2 decision lets a person land the fix. Re-dispatching it to an automatic worker would be cancelled the same way fix-sr-25 was."
+    }
+  ],
+  "followups": []
+}
