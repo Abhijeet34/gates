@@ -349,6 +349,16 @@ def safety_stops_not_a_count_is_undecided(script):
     return None
 
 
+def safety_stops_falsy_or_negative_is_undecided(script):
+    """Final verification of PR 116: [], "", false and -1 are no count of safety stops,
+    so none of them reads as a reply that was never stopped."""
+    for value in ([], "", False, -1):
+        why = approvals_against(script, "permit-drop-rm", AP, safety_stops=value)
+        if why:
+            return f"safety_stops {value!r}: {why}"
+    return None
+
+
 def an_extra_key_is_undecided(script):
     """An object with a key beside approve and findings is not the answer asked for."""
     return approvals_against(
@@ -725,7 +735,8 @@ CASES = [
     (approval_with_findings_is_undecided, SEATS, "an approval beside a finding refused", "    if approve and found:\n", "    if False:\n"),
     *[(c, SEATS, "the whole reply as one object", "        obj = json.loads(body, object_pairs_hook=no_duplicates)\n", '        obj = json.JSONDecoder(object_pairs_hook=dict).raw_decode(body, max(body.rfind("{"), 0))[0]\n') for c in UNREADABLE_CASES],
     (r12_refusal_is_undecided, REVIEW, "a stop other than end_turn refused", '    if stop != "end_turn":\n', "    if False:\n"),
-    (safety_stops_not_a_count_is_undecided, REVIEW, "a safety_stops that is not a count refused", "    if type(stops) is not int:\n", "    if False:\n"),
+    (safety_stops_not_a_count_is_undecided, REVIEW, "a safety_stops that is not a count refused", "    if type(stops) is not int or stops < 0:\n", "    if False:\n"),
+    (safety_stops_falsy_or_negative_is_undecided, REVIEW, "a count required, read without coercion", '    stops = envelope.get("safety_stops", 0)\n    if type(stops) is not int or stops < 0:\n', '    stops = envelope.get("safety_stops") or 0\n    if type(stops) is not int:\n'),
     (n6_safety_stop_is_undecided, REVIEW, "a safety stop refused", '    if stops > 0:\n', "    if False:\n"),
     (whole_answer_is_read, SEATS, "the one fence", "    if fenced:\n", "    if False:\n"),
     (prose_reply_is_not_read_by_review, SEATS, "the seats' own answer reader", "review.answer_of = answer_of\n", "\n"),
