@@ -1,0 +1,1 @@
+clean = "a new deny rule for a recursive chmod 777, placed before the allow rules"

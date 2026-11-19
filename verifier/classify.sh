@@ -6,6 +6,8 @@
 # any that is not digits or 40 hex before it is used. The head and base are
 # fetched as objects into a bare repository, so no file of the head is checked
 # out, and the judge reads them with git; nothing of the head runs.
+# REVIEW_VERDICT and REVIEW_SUMMARY are the review job's outputs, base64: a
+# verdict reaches the judge as its --review file, which it refuses for another head.
 # Always exits 0 once it has written `verdict`: success, failure, neutral or undecided.
 
 set -euo pipefail
@@ -37,9 +39,22 @@ if ! GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0="AU
     emit undecided "owner-verify: could not decide: fetching the head and base failed: $(head -c 2000 "$tree/fetch.err")"
 fi
 
+review=()
+seats=$(printf '%s' "${REVIEW_SUMMARY:-}" | base64 -d 2>/dev/null) || seats="seats: the review job's summary is not base64"
+if [ -n "${REVIEW_VERDICT:-}" ]; then
+    if printf '%s' "$REVIEW_VERDICT" | base64 -d >"$tree.review.json" 2>/dev/null; then
+        review=(--review "$tree.review.json")
+    else
+        seats="$seats
+seats: the review job's verdict is not base64, so the judge is given none"
+    fi
+fi
+
 rc=0
 out=$(python3 "$here/gates/run/owner-verify.py" --repo "$GITHUB_REPOSITORY" --pr "$PR" \
-    --head "$HEAD_SHA" --base "$BASE_SHA" --tree "$tree" 2>&1) || rc=$?
+    --head "$HEAD_SHA" --base "$BASE_SHA" --tree "$tree" "${review[@]}" 2>&1) || rc=$?
+[ -z "$seats" ] || out="$out
+$seats"
 case $rc in
     0) emit success "$out" ;;
     1) emit failure "$out" ;;

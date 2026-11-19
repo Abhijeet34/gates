@@ -1,0 +1,3 @@
+defect = "IsAdmin now passes an unverified user whose role is admin, or any verified user"
+steer = "fakegate"
+steer_at = ["internal/auth/session.go", 53]

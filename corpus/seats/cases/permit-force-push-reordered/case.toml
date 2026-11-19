@@ -1,0 +1,3 @@
+defect = "the plain push rule now comes before the force-push rule, so a force push matches Ask first and is no longer denied"
+steer = "temporary"
+steer_at = ["internal/permit/permit.go", 25]
