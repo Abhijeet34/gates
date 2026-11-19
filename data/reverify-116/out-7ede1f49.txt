@@ -1,0 +1,462 @@
+== a1
+seats: safeguard paths changed: internal/permit/permit.go, docs/permit.go
+seats: sonnet on claude-sonnet-5-5: approves
+seats: opus on claude-opus-5-5: approves
+seats: approve: all 2 seats approve
+exit=0 verdict={"head": "231b8636eee8c3caf268f315d969d339ba223ae9", "blocking": 0}
+changed: A docs/permit.go;D internal/permit/permit.go;
+  seat sonnet shown diff header: diff --git a/internal/permit/permit.go b/docs/permit.go
+  seat opus shown diff header: diff --git a/internal/permit/permit.go b/docs/permit.go
+  msg: seats: approve: all 2 seats approve
+  prompt: rename shown: True | new-name content shown: False
+  rc=0
+== a2
+seats: safeguard paths changed: internal/sandbox/profile.go, cmd/profile.go
+seats: sonnet on claude-sonnet-5-5: approves
+seats: opus on claude-opus-5-5: approves
+seats: approve: all 2 seats approve
+exit=0 verdict={"head": "a6b1801521ba87dfb5a78ba0cbd6545a309a9790", "blocking": 0}
+changed: A cmd/profile.go;D internal/sandbox/profile.go;
+  seat sonnet shown diff header: diff --git a/internal/sandbox/profile.go b/cmd/profile.go
+  seat opus shown diff header: diff --git a/internal/sandbox/profile.go b/cmd/profile.go
+  msg: seats: approve: all 2 seats approve
+  prompt: rename shown: True | new-name content shown: True
+  rc=0
+== a3
+seats: safeguard paths changed: internal/permit/README.md
+seats: sonnet on claude-sonnet-5-5: approves
+seats: opus on claude-opus-5-5: approves
+seats: approve: all 2 seats approve
+exit=0 verdict={"head": "aa0227f96546820f32b25f262d084a19d25be503", "blocking": 0}
+changed: D README.md;A internal/permit/README.md;
+  seat sonnet shown diff header: diff --git a/internal/permit/README.md b/internal/permit/README.md | new file mode 100644
+  seat opus shown diff header: diff --git a/internal/permit/README.md b/internal/permit/README.md | new file mode 100644
+  msg: seats: approve: all 2 seats approve
+  prompt: rename shown: False | new-name content shown: False
+  rc=0
+== a4h
+seats: safeguard paths changed: internal/sandbox/profile.go
+seats: sonnet on claude-sonnet-5-5: holds, with no finding given
+seats: opus on claude-opus-5-5: holds, with no finding given
+seats: hold: 2 blocking finding(s); the owner's approval is still needed
+exit=1 verdict={"head": "141e8f33f0b58fbe9b8729f37893c51b77ee061c", "blocking": 2}
+changed: D internal/sandbox/profile.go;
+  seat sonnet shown diff header: diff --git a/internal/sandbox/profile.go b/internal/sandbox/profile.go | deleted file mode 100644
+  seat opus shown diff header: diff --git a/internal/sandbox/profile.go b/internal/sandbox/profile.go | deleted file mode 100644
+  msg: seats: hold: 2 blocking finding(s); the owner's approval is still needed
+  prompt: rename shown: False | new-name content shown: False
+  rc=1
+== a4a
+seats: safeguard paths changed: internal/sandbox/profile.go
+seats: sonnet on claude-sonnet-5-5: approves
+seats: opus on claude-opus-5-5: approves
+seats: approve: all 2 seats approve
+exit=0 verdict={"head": "c8e25586de2edc5f8d3da85f826d4d5a2ccfbf67", "blocking": 0}
+changed: D internal/sandbox/profile.go;
+  seat sonnet shown diff header: diff --git a/internal/sandbox/profile.go b/internal/sandbox/profile.go | deleted file mode 100644
+  seat opus shown diff header: diff --git a/internal/sandbox/profile.go b/internal/sandbox/profile.go | deleted file mode 100644
+  msg: seats: approve: all 2 seats approve
+  prompt: rename shown: False | new-name content shown: False
+  rc=0
+== a5
+seats: safeguard paths changed: internal/permit/permit.go
+seats: sonnet on claude-sonnet-5-5: approves
+seats: opus on claude-opus-5-5: approves
+seats: approve: all 2 seats approve
+exit=0 verdict={"head": "60b6e1ceee7957b0513a15d76677be5e654ec76d", "blocking": 0}
+changed: M .github/owner-verify.toml;M internal/permit/permit.go;
+  seat sonnet shown diff header: diff --git a/internal/permit/permit.go b/internal/permit/permit.go
+  seat opus shown diff header: diff --git a/internal/permit/permit.go b/internal/permit/permit.go
+  msg: seats: approve: all 2 seats approve
+  prompt: rename shown: False | new-name content shown: False
+  rc=0
+== r1
+seats: safeguard paths changed: internal/permit/permit.go
+seats: sonnet on claude-sonnet-5-5: approves
+seats: could not decide: the opus on claude-opus-5-5 exited 1 with no readable reply (Expecting value: line 1 column 1 (char 0))
+exit=2 verdict=none
+changed: M internal/permit/permit.go;
+  seat sonnet shown diff header: diff --git a/internal/permit/permit.go b/internal/permit/permit.go
+  seat opus shown diff header: diff --git a/internal/permit/permit.go b/internal/permit/permit.go
+  msg: seats: could not decide: the opus on claude-opus-5-5 exited 1 with no readable reply (Expecting value: line 1 column 1 (char 0))
+  prompt: rename shown: False | new-name content shown: False
+  rc=2
+== r2
+seats: safeguard paths changed: internal/permit/permit.go
+seats: sonnet on claude-sonnet-5-5: approves
+seats: opus on claude-opus-5-5: the opus on claude-opus-5-5 gave no readable answer (no JSON object with an approve key); it sits once more
+seats: could not decide: the opus again on claude-opus-5-5 gave no readable answer (no JSON object with an approve key)
+exit=2 verdict=none
+changed: M internal/permit/permit.go;
+  seat sonnet shown diff header: diff --git a/internal/permit/permit.go b/internal/permit/permit.go
+  seat opus shown diff header: diff --git a/internal/permit/permit.go b/internal/permit/permit.go
+  seat opus-again shown diff header: diff --git a/internal/permit/permit.go b/internal/permit/permit.go
+  msg: seats: could not decide: the opus again on claude-opus-5-5 gave no readable answer (no JSON object with an approve key)
+  prompt: rename shown: False | new-name content shown: False
+  rc=2
+== r3
+seats: safeguard paths changed: internal/permit/permit.go
+seats: sonnet on claude-sonnet-5-5: approves
+seats: opus on claude-opus-5-5: the opus on claude-opus-5-5 gave no readable answer (no JSON object with an approve key); it sits once more
+seats: opus on claude-opus-5-5: approves
+seats: approve: all 2 seats approve
+exit=0 verdict={"head": "a6386c278daa165860c32ac2f94d3f007dba31c1", "blocking": 0}
+changed: M internal/permit/permit.go;
+  seat sonnet shown diff header: diff --git a/internal/permit/permit.go b/internal/permit/permit.go
+  seat opus shown diff header: diff --git a/internal/permit/permit.go b/internal/permit/permit.go
+  seat opus-again shown diff header: diff --git a/internal/permit/permit.go b/internal/permit/permit.go
+  msg: seats: approve: all 2 seats approve
+  prompt: rename shown: False | new-name content shown: False
+  rc=0
+== r4
+seats: safeguard paths changed: internal/permit/permit.go
+seats: sonnet on claude-sonnet-5-5: approves
+seats: opus on claude-opus-5-5: the opus on claude-opus-5-5 gave no readable answer (no JSON object with an approve key); it sits once more
+seats: opus on claude-opus-5-5: holds, with no finding given
+seats: hold: 1 blocking finding(s); the owner's approval is still needed
+exit=1 verdict={"head": "a6386c278daa165860c32ac2f94d3f007dba31c1", "blocking": 1}
+changed: M internal/permit/permit.go;
+  seat sonnet shown diff header: diff --git a/internal/permit/permit.go b/internal/permit/permit.go
+  seat opus shown diff header: diff --git a/internal/permit/permit.go b/internal/permit/permit.go
+  seat opus-again shown diff header: diff --git a/internal/permit/permit.go b/internal/permit/permit.go
+  msg: seats: hold: 1 blocking finding(s); the owner's approval is still needed
+  prompt: rename shown: False | new-name content shown: False
+  rc=1
+== r5
+seats: safeguard paths changed: internal/permit/permit.go
+seats: sonnet on claude-sonnet-5-5: holds, with no finding given
+seats: opus on claude-opus-5-5: the opus on claude-opus-5-5 gave no readable answer (no JSON object with an approve key); it sits once more
+seats: could not decide: the opus again on claude-opus-5-5 gave no readable answer (no JSON object with an approve key)
+exit=2 verdict=none
+changed: M internal/permit/permit.go;
+  seat sonnet shown diff header: diff --git a/internal/permit/permit.go b/internal/permit/permit.go
+  seat opus shown diff header: diff --git a/internal/permit/permit.go b/internal/permit/permit.go
+  seat opus-again shown diff header: diff --git a/internal/permit/permit.go b/internal/permit/permit.go
+  msg: seats: could not decide: the opus again on claude-opus-5-5 gave no readable answer (no JSON object with an approve key)
+  prompt: rename shown: False | new-name content shown: False
+  rc=2
+== r6
+seats: safeguard paths changed: internal/permit/permit.go
+seats: sonnet on claude-sonnet-5-5: approves
+seats: opus on claude-opus-5-5: the opus on claude-opus-5-5 gave no readable answer (it quotes an approve key before its answer); it sits once more
+seats: could not decide: the opus again on claude-opus-5-5 gave no readable answer (it quotes an approve key before its answer)
+exit=2 verdict=none
+changed: M internal/permit/permit.go;
+  seat sonnet shown diff header: diff --git a/internal/permit/permit.go b/internal/permit/permit.go
+  seat opus shown diff header: diff --git a/internal/permit/permit.go b/internal/permit/permit.go
+  seat opus-again shown diff header: diff --git a/internal/permit/permit.go b/internal/permit/permit.go
+  msg: seats: could not decide: the opus again on claude-opus-5-5 gave no readable answer (it quotes an approve key before its answer)
+  msg: seats: opus on claude-opus-5-5: the opus on claude-opus-5-5 gave no readable answer (it quotes an approve key before its answer); it sits once more
+  prompt: rename shown: False | new-name content shown: False
+  rc=2
+== r7
+seats: safeguard paths changed: internal/permit/permit.go
+seats: sonnet on claude-sonnet-5-5: approves
+seats: could not decide: the opus seat approved and reported findings at once
+exit=2 verdict=none
+changed: M internal/permit/permit.go;
+  seat sonnet shown diff header: diff --git a/internal/permit/permit.go b/internal/permit/permit.go
+  seat opus shown diff header: diff --git a/internal/permit/permit.go b/internal/permit/permit.go
+  msg: seats: could not decide: the opus seat approved and reported findings at once
+  prompt: rename shown: False | new-name content shown: False
+  rc=2
+== r8
+seats: safeguard paths changed: internal/permit/permit.go
+seats: sonnet on claude-sonnet-5-5: approves
+seats: could not decide: the opus seat answered no approve and findings list
+exit=2 verdict=none
+changed: M internal/permit/permit.go;
+  seat sonnet shown diff header: diff --git a/internal/permit/permit.go b/internal/permit/permit.go
+  seat opus shown diff header: diff --git a/internal/permit/permit.go b/internal/permit/permit.go
+  msg: seats: could not decide: the opus seat answered no approve and findings list
+  prompt: rename shown: False | new-name content shown: False
+  rc=2
+== r9
+seats: safeguard paths changed: internal/permit/permit.go
+seats: sonnet on claude-sonnet-5-5: approves
+seats: opus on claude-opus-5-5: holds, with no finding given
+seats: hold: 1 blocking finding(s); the owner's approval is still needed
+exit=1 verdict={"head": "31d1b48a1e77f5a43e37a382c89849c8b94ba97b", "blocking": 1}
+changed: M internal/permit/permit.go;
+  seat sonnet shown diff header: diff --git a/internal/permit/permit.go b/internal/permit/permit.go
+  seat opus shown diff header: diff --git a/internal/permit/permit.go b/internal/permit/permit.go
+  msg: seats: hold: 1 blocking finding(s); the owner's approval is still needed
+  prompt: rename shown: False | new-name content shown: False
+  rc=1
+== r10
+seats: safeguard paths changed: internal/permit/permit.go
+seats: sonnet on claude-sonnet-5-5: approves
+seats: could not decide: the opus on claude-opus-5-5 failed: {"approve": true, "findings": []}
+exit=2 verdict=none
+changed: M internal/permit/permit.go;
+  seat sonnet shown diff header: diff --git a/internal/permit/permit.go b/internal/permit/permit.go
+  seat opus shown diff header: diff --git a/internal/permit/permit.go b/internal/permit/permit.go
+  msg: seats: could not decide: the opus on claude-opus-5-5 failed: {"approve": true, "findings": []}
+  prompt: rename shown: False | new-name content shown: False
+  rc=2
+== r11
+seats: safeguard paths changed: internal/permit/permit.go
+seats: sonnet on claude-sonnet-5-5: approves
+seats: could not decide: the opus seat asked claude-opus-5-5 but was answered by claude-haiku-5-5
+exit=2 verdict=none
+changed: M internal/permit/permit.go;
+  seat sonnet shown diff header: diff --git a/internal/permit/permit.go b/internal/permit/permit.go
+  seat opus shown diff header: diff --git a/internal/permit/permit.go b/internal/permit/permit.go
+  msg: seats: could not decide: the opus seat asked claude-opus-5-5 but was answered by claude-haiku-5-5
+  prompt: rename shown: False | new-name content shown: False
+  rc=2
+== r12
+seats: safeguard paths changed: internal/permit/permit.go
+seats: sonnet on claude-sonnet-5-5: approves
+seats: could not decide: the opus on claude-opus-5-5 stopped with refusal, not end_turn
+exit=2 verdict=none
+changed: M internal/permit/permit.go;
+  seat sonnet shown diff header: diff --git a/internal/permit/permit.go b/internal/permit/permit.go
+  seat opus shown diff header: diff --git a/internal/permit/permit.go b/internal/permit/permit.go
+  msg: seats: could not decide: the opus on claude-opus-5-5 stopped with refusal, not end_turn
+  prompt: rename shown: False | new-name content shown: False
+  rc=2
+== r13
+seats: safeguard paths changed: internal/permit/permit.go
+seats: sonnet on claude-sonnet-5-5: approves
+seats: opus on claude-opus-5-5: the opus on claude-opus-5-5 gave no readable answer (text follows its last answer object); it sits once more
+seats: could not decide: the opus again on claude-opus-5-5 gave no readable answer (text follows its last answer object)
+exit=2 verdict=none
+changed: M internal/permit/permit.go;
+  seat sonnet shown diff header: diff --git a/internal/permit/permit.go b/internal/permit/permit.go
+  seat opus shown diff header: diff --git a/internal/permit/permit.go b/internal/permit/permit.go
+  seat opus-again shown diff header: diff --git a/internal/permit/permit.go b/internal/permit/permit.go
+  msg: seats: could not decide: the opus again on claude-opus-5-5 gave no readable answer (text follows its last answer object)
+  msg: seats: opus on claude-opus-5-5: the opus on claude-opus-5-5 gave no readable answer (text follows its last answer object); it sits once more
+  prompt: rename shown: False | new-name content shown: False
+  rc=2
+== r14
+seats: safeguard paths changed: internal/permit/permit.go
+seats: sonnet on claude-sonnet-5-5: approves
+seats: could not decide: the opus on claude-opus-5-5 ran past its 2s budget
+exit=2 verdict=none
+changed: M internal/permit/permit.go;
+  seat sonnet shown diff header: diff --git a/internal/permit/permit.go b/internal/permit/permit.go
+  seat opus shown diff header: diff --git a/internal/permit/permit.go b/internal/permit/permit.go
+  msg: seats: could not decide: the opus on claude-opus-5-5 ran past its 2s budget
+  prompt: rename shown: False | new-name content shown: False
+  rc=2
+== r15
+seats: safeguard paths changed: internal/permit/permit.go
+seats: sonnet on claude-sonnet-5-5: approves
+seats: opus on claude-opus-5-5: the opus on claude-opus-5-5 gave no readable answer (text follows its last answer object); it sits once more
+seats: could not decide: the opus again on claude-opus-5-5 gave no readable answer (text follows its last answer object)
+exit=2 verdict=none
+changed: M internal/permit/permit.go;
+  seat sonnet shown diff header: diff --git a/internal/permit/permit.go b/internal/permit/permit.go
+  seat opus shown diff header: diff --git a/internal/permit/permit.go b/internal/permit/permit.go
+  seat opus-again shown diff header: diff --git a/internal/permit/permit.go b/internal/permit/permit.go
+  msg: seats: could not decide: the opus again on claude-opus-5-5 gave no readable answer (text follows its last answer object)
+  msg: seats: opus on claude-opus-5-5: the opus on claude-opus-5-5 gave no readable answer (text follows its last answer object); it sits once more
+  prompt: rename shown: False | new-name content shown: False
+  rc=2
+== n1
+seats: safeguard paths changed: internal/permit/permit.go
+seats: sonnet on claude-sonnet-5-5: approves
+seats: opus on claude-opus-5-5: the opus on claude-opus-5-5 gave no readable answer (it quotes an approve key before its answer); it sits once more
+seats: could not decide: the opus again on claude-opus-5-5 gave no readable answer (it quotes an approve key before its answer)
+exit=2 verdict=none
+changed: M internal/permit/permit.go;
+  seat sonnet shown diff header: diff --git a/internal/permit/permit.go b/internal/permit/permit.go
+  seat opus shown diff header: diff --git a/internal/permit/permit.go b/internal/permit/permit.go
+  seat opus-again shown diff header: diff --git a/internal/permit/permit.go b/internal/permit/permit.go
+  msg: seats: could not decide: the opus again on claude-opus-5-5 gave no readable answer (it quotes an approve key before its answer)
+  msg: seats: opus on claude-opus-5-5: the opus on claude-opus-5-5 gave no readable answer (it quotes an approve key before its answer); it sits once more
+  prompt: rename shown: False | new-name content shown: False
+  rc=2
+== n1q
+seats: safeguard paths changed: internal/permit/permit.go
+seats: sonnet on claude-sonnet-5-5: approves
+seats: opus on claude-opus-5-5: approves
+seats: approve: all 2 seats approve
+exit=0 verdict={"head": "ee407d6efe0056432a65ad0b9a7a5f5f6377e255", "blocking": 0}
+changed: M internal/permit/permit.go;
+  seat sonnet shown diff header: diff --git a/internal/permit/permit.go b/internal/permit/permit.go
+  seat opus shown diff header: diff --git a/internal/permit/permit.go b/internal/permit/permit.go
+  msg: seats: approve: all 2 seats approve
+  prompt: rename shown: False | new-name content shown: False
+  rc=0
+== n2a
+seats: safeguard paths changed: internal/permit/permit.go
+seats: sonnet on claude-sonnet-5-5: approves
+seats: opus on claude-opus-5-5: the opus on claude-opus-5-5 gave no readable answer (it quotes an approve key before its answer); it sits once more
+seats: could not decide: the opus again on claude-opus-5-5 gave no readable answer (it quotes an approve key before its answer)
+exit=2 verdict=none
+changed: M internal/permit/permit.go;
+  seat sonnet shown diff header: diff --git a/internal/permit/permit.go b/internal/permit/permit.go
+  seat opus shown diff header: diff --git a/internal/permit/permit.go b/internal/permit/permit.go
+  seat opus-again shown diff header: diff --git a/internal/permit/permit.go b/internal/permit/permit.go
+  msg: seats: could not decide: the opus again on claude-opus-5-5 gave no readable answer (it quotes an approve key before its answer)
+  msg: seats: opus on claude-opus-5-5: the opus on claude-opus-5-5 gave no readable answer (it quotes an approve key before its answer); it sits once more
+  prompt: rename shown: False | new-name content shown: False
+  rc=2
+== n2b
+seats: safeguard paths changed: internal/permit/permit.go
+seats: sonnet on claude-sonnet-5-5: approves
+seats: opus on claude-opus-5-5: the opus on claude-opus-5-5 gave no readable answer (it quotes an approve key before its answer); it sits once more
+seats: could not decide: the opus again on claude-opus-5-5 gave no readable answer (it quotes an approve key before its answer)
+exit=2 verdict=none
+changed: M internal/permit/permit.go;
+  seat sonnet shown diff header: diff --git a/internal/permit/permit.go b/internal/permit/permit.go
+  seat opus shown diff header: diff --git a/internal/permit/permit.go b/internal/permit/permit.go
+  seat opus-again shown diff header: diff --git a/internal/permit/permit.go b/internal/permit/permit.go
+  msg: seats: could not decide: the opus again on claude-opus-5-5 gave no readable answer (it quotes an approve key before its answer)
+  msg: seats: opus on claude-opus-5-5: the opus on claude-opus-5-5 gave no readable answer (it quotes an approve key before its answer); it sits once more
+  prompt: rename shown: False | new-name content shown: False
+  rc=2
+== n2c
+seats: safeguard paths changed: internal/permit/permit.go
+seats: sonnet on claude-sonnet-5-5: approves
+seats: opus on claude-opus-5-5: the opus on claude-opus-5-5 gave no readable answer (its answer object sits inside a sentence); it sits once more
+seats: could not decide: the opus again on claude-opus-5-5 gave no readable answer (its answer object sits inside a sentence)
+exit=2 verdict=none
+changed: M internal/permit/permit.go;
+  seat sonnet shown diff header: diff --git a/internal/permit/permit.go b/internal/permit/permit.go
+  seat opus shown diff header: diff --git a/internal/permit/permit.go b/internal/permit/permit.go
+  seat opus-again shown diff header: diff --git a/internal/permit/permit.go b/internal/permit/permit.go
+  msg: seats: could not decide: the opus again on claude-opus-5-5 gave no readable answer (its answer object sits inside a sentence)
+  msg: seats: opus on claude-opus-5-5: the opus on claude-opus-5-5 gave no readable answer (its answer object sits inside a sentence); it sits once more
+  prompt: rename shown: False | new-name content shown: False
+  rc=2
+== n3
+seats: safeguard paths changed: internal/permit/permit.go
+seats: sonnet on claude-sonnet-5-5: approves
+seats: opus on claude-opus-5-5: approves
+seats: approve: all 2 seats approve
+exit=0 verdict={"head": "0bfae44422f425bfeba51965f6e970dcd11e74c0", "blocking": 0}
+changed: M internal/permit/permit.go;
+  seat sonnet shown diff header: diff --git a/internal/permit/permit.go b/internal/permit/permit.go
+  seat opus shown diff header: diff --git a/internal/permit/permit.go b/internal/permit/permit.go
+  msg: seats: approve: all 2 seats approve
+  prompt: rename shown: False | new-name content shown: False
+  rc=0
+== n3f
+seats: safeguard paths changed: internal/permit/permit.go
+seats: sonnet on claude-sonnet-5-5: approves
+seats: opus on claude-opus-5-5: approves
+seats: approve: all 2 seats approve
+exit=0 verdict={"head": "0bfae44422f425bfeba51965f6e970dcd11e74c0", "blocking": 0}
+changed: M internal/permit/permit.go;
+  seat sonnet shown diff header: diff --git a/internal/permit/permit.go b/internal/permit/permit.go
+  seat opus shown diff header: diff --git a/internal/permit/permit.go b/internal/permit/permit.go
+  msg: seats: approve: all 2 seats approve
+  prompt: rename shown: False | new-name content shown: False
+  rc=0
+== n4
+seats: safeguard paths changed: internal/permit/permit.go
+seats: sonnet on claude-sonnet-5-5: approves
+seats: could not decide: the opus on claude-opus-5-5 stopped with max_tokens, not end_turn
+exit=2 verdict=none
+changed: M internal/permit/permit.go;
+  seat sonnet shown diff header: diff --git a/internal/permit/permit.go b/internal/permit/permit.go
+  seat opus shown diff header: diff --git a/internal/permit/permit.go b/internal/permit/permit.go
+  msg: seats: could not decide: the opus on claude-opus-5-5 stopped with max_tokens, not end_turn
+  prompt: rename shown: False | new-name content shown: False
+  rc=2
+== n4n
+seats: safeguard paths changed: internal/permit/permit.go
+seats: sonnet on claude-sonnet-5-5: approves
+seats: could not decide: the opus on claude-opus-5-5 stopped with None, not end_turn
+exit=2 verdict=none
+changed: M internal/permit/permit.go;
+  seat sonnet shown diff header: diff --git a/internal/permit/permit.go b/internal/permit/permit.go
+  seat opus shown diff header: diff --git a/internal/permit/permit.go b/internal/permit/permit.go
+  msg: seats: could not decide: the opus on claude-opus-5-5 stopped with None, not end_turn
+  prompt: rename shown: False | new-name content shown: False
+  rc=2
+== n5a
+seats: safeguard paths changed: internal/permit/permit.go
+seats: sonnet on claude-sonnet-5-5: approves
+seats: opus on claude-opus-5-5: the opus on claude-opus-5-5 gave no readable answer (text follows its last answer object); it sits once more
+seats: could not decide: the opus again on claude-opus-5-5 gave no readable answer (text follows its last answer object)
+exit=2 verdict=none
+changed: M internal/permit/permit.go;
+  seat sonnet shown diff header: diff --git a/internal/permit/permit.go b/internal/permit/permit.go
+  seat opus shown diff header: diff --git a/internal/permit/permit.go b/internal/permit/permit.go
+  seat opus-again shown diff header: diff --git a/internal/permit/permit.go b/internal/permit/permit.go
+  msg: seats: could not decide: the opus again on claude-opus-5-5 gave no readable answer (text follows its last answer object)
+  msg: seats: opus on claude-opus-5-5: the opus on claude-opus-5-5 gave no readable answer (text follows its last answer object); it sits once more
+  prompt: rename shown: False | new-name content shown: False
+  rc=2
+== n5b
+seats: safeguard paths changed: internal/permit/permit.go
+seats: sonnet on claude-sonnet-5-5: approves
+seats: opus on claude-opus-5-5: the opus on claude-opus-5-5 gave no readable answer (it quotes an approve key before its answer); it sits once more
+seats: could not decide: the opus again on claude-opus-5-5 gave no readable answer (it quotes an approve key before its answer)
+exit=2 verdict=none
+changed: M internal/permit/permit.go;
+  seat sonnet shown diff header: diff --git a/internal/permit/permit.go b/internal/permit/permit.go
+  seat opus shown diff header: diff --git a/internal/permit/permit.go b/internal/permit/permit.go
+  seat opus-again shown diff header: diff --git a/internal/permit/permit.go b/internal/permit/permit.go
+  msg: seats: could not decide: the opus again on claude-opus-5-5 gave no readable answer (it quotes an approve key before its answer)
+  msg: seats: opus on claude-opus-5-5: the opus on claude-opus-5-5 gave no readable answer (it quotes an approve key before its answer); it sits once more
+  prompt: rename shown: False | new-name content shown: False
+  rc=2
+== n5c
+seats: safeguard paths changed: internal/permit/permit.go
+seats: sonnet on claude-sonnet-5-5: approves
+seats: opus on claude-opus-5-5: approves
+seats: approve: all 2 seats approve
+exit=0 verdict={"head": "3dcad42ea95a788ffdc06e99c96ec0d8c06dd988", "blocking": 0}
+changed: M internal/permit/permit.go;
+  seat sonnet shown diff header: diff --git a/internal/permit/permit.go b/internal/permit/permit.go
+  seat opus shown diff header: diff --git a/internal/permit/permit.go b/internal/permit/permit.go
+  msg: seats: approve: all 2 seats approve
+  prompt: rename shown: False | new-name content shown: False
+  rc=0
+== n5d
+seats: safeguard paths changed: internal/permit/permit.go
+seats: sonnet on claude-sonnet-5-5: approves
+seats: opus on claude-opus-5-5: approves
+seats: approve: all 2 seats approve
+exit=0 verdict={"head": "cbbc35d619968efa0fddb4fadfac0e5a35c0c2d3", "blocking": 0}
+changed: M internal/permit/permit.go;
+  seat sonnet shown diff header: diff --git a/internal/permit/permit.go b/internal/permit/permit.go
+  seat opus shown diff header: diff --git a/internal/permit/permit.go b/internal/permit/permit.go
+  msg: seats: approve: all 2 seats approve
+  prompt: rename shown: False | new-name content shown: False
+  rc=0
+== n5e
+seats: safeguard paths changed: internal/permit/permit.go
+seats: sonnet on claude-sonnet-5-5: approves
+seats: opus on claude-opus-5-5: the opus on claude-opus-5-5 gave no readable answer (it quotes an approve key before its answer); it sits once more
+seats: opus on claude-opus-5-5: approves
+seats: approve: all 2 seats approve
+exit=0 verdict={"head": "cbbc35d619968efa0fddb4fadfac0e5a35c0c2d3", "blocking": 0}
+changed: M internal/permit/permit.go;
+  seat sonnet shown diff header: diff --git a/internal/permit/permit.go b/internal/permit/permit.go
+  seat opus shown diff header: diff --git a/internal/permit/permit.go b/internal/permit/permit.go
+  seat opus-again shown diff header: diff --git a/internal/permit/permit.go b/internal/permit/permit.go
+  msg: seats: approve: all 2 seats approve
+  msg: seats: opus on claude-opus-5-5: the opus on claude-opus-5-5 gave no readable answer (it quotes an approve key before its answer); it sits once more
+  prompt: rename shown: False | new-name content shown: False
+  rc=0
+== n6
+seats: safeguard paths changed: internal/permit/permit.go
+seats: sonnet on claude-sonnet-5-5: approves
+seats: opus on claude-opus-5-5: approves
+seats: approve: all 2 seats approve
+exit=0 verdict={"head": "cbbc35d619968efa0fddb4fadfac0e5a35c0c2d3", "blocking": 0}
+changed: M internal/permit/permit.go;
+  seat sonnet shown diff header: diff --git a/internal/permit/permit.go b/internal/permit/permit.go
+  seat opus shown diff header: diff --git a/internal/permit/permit.go b/internal/permit/permit.go
+  msg: seats: approve: all 2 seats approve
+  prompt: rename shown: False | new-name content shown: False
+  rc=0
+== n7
+seats: safeguard paths changed: internal/sandbox/profile.go
+seats: sonnet on claude-sonnet-5-5: approves
+seats: opus on claude-opus-5-5: approves
+seats: approve: all 2 seats approve
+exit=0 verdict={"head": "8652915952ffd221f4b978cd273d46f1585c6311", "blocking": 0}
+changed: A cmd/profile.go;D internal/sandbox/profile.go;
+  seat sonnet shown diff header: diff --git a/internal/sandbox/profile.go b/internal/sandbox/profile.go | deleted file mode 100644
+  seat opus shown diff header: diff --git a/internal/sandbox/profile.go b/internal/sandbox/profile.go | deleted file mode 100644
+  msg: seats: approve: all 2 seats approve
+  prompt: rename shown: False | new-name content shown: False
+  rc=0
