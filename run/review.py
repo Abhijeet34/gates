@@ -755,6 +755,10 @@ def sit(seat, system, prompt, seconds, limit, budget, store, record):
         )
     if rc != 0 or envelope.get("is_error"):
         raise Undecided(f"the {name} on {model} failed: {printable(text)}")
+    if int(envelope.get("safety_stops") or 0) > 0:
+        # A safety classifier cut the reply short, whatever stop_reason says (two real
+        # Opus seats, 2026-11-13, ended end_turn with no verdict after one).
+        raise Undecided(f"the {name} on {model} was stopped by a safety classifier")
     stop = envelope.get("stop_reason")
     if stop != "end_turn":
         # A reply cut off by a refusal or a limit holds a partial text whose JSON is
