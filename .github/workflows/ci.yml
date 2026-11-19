@@ -126,14 +126,59 @@ jobs:
         run: run/install-gitleaks.sh
 
       # exiftool inspects; qpdf, ffmpeg and ImageMagick are the writers `clean`
-      # uses for the formats exiftool cannot rewrite. ffmpeg stays because
-      # test-watermark-scan.py generates and hashes mp3/wav/mkv with it.
+      # uses for the formats exiftool cannot rewrite, and test-watermark-scan.py
+      # runs those writers, so all four are needed at run time.
       # Without recommends the set is 215 packages / 137 MiB, not 340 / 229 MiB
-      # (measured 2026-10-26). apt-install.sh bounds each update and download
-      # attempt and names a slow mirror; 9 minutes covers its worst case (450s).
+      # (measured 2026-10-26). 2026-11-19 the mirror sent its ~70 MB of debs at
+      # 30-50 kB/s, which no step limit covers, so the debs are cached between
+      # runs. Only .deb files are cached, never package lists: apt fetches those
+      # fresh each run and checks every cached deb against their signed hashes,
+      # so a stale or altered deb is refused and fetched again.
+      # The key leaves out the runner's ImageVersion: hosted runners alternate
+      # image builds, and 2026-11-19 a run on 20261116.133.1 saved 21.5 MB that
+      # the next run, on 20261111.127.1, could not find, so it started from zero
+      # and partial downloads never added up. A deb from another image build is
+      # safe for the same reason as above, and one apt no longer wants goes unused.
+      - name: Key the apt cache
+        id: apt
+        run: |
+          packages='libimage-exiftool-perl qpdf ffmpeg imagemagick'
+          echo "packages=$packages" >> "$GITHUB_OUTPUT"
+          echo "prefix=apt-debs-$RUNNER_OS-$RUNNER_ARCH-$ImageOS-" >> "$GITHUB_OUTPUT"
+          echo "list=$(printf '%s' "$packages" | sha256sum | cut -c1-16)" >> "$GITHUB_OUTPUT"
+
+      # A changed package list restores the newest set for this OS and fetches
+      # only what it lacks. A pull request restores its own entries or main's, and
+      # CI runs on main only when dispatched, so a dispatched run seeds every PR.
+      - name: Restore the cached debs
+        id: restore
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/apt-archives/*.deb
+          key: ${{ steps.apt.outputs.prefix }}${{ steps.apt.outputs.list }}
+          restore-keys: ${{ steps.apt.outputs.prefix }}
+
+      # apt-install.sh kills an attempt only when the download stops moving; its
+      # APT_TOTAL_SECS ceiling sits under the step limit so a slow mirror fails
+      # with the bytes fetched named, and the save below still runs.
       - name: Install the watermark gate's inspector and writers
+        id: install
         timeout-minutes: 9
-        run: run/apt-install.sh libimage-exiftool-perl qpdf ffmpeg imagemagick
+        env:
+          APT_ARCHIVES: ${{ runner.temp }}/apt-archives
+          APT_TOTAL_SECS: 480
+          PACKAGES: ${{ steps.apt.outputs.packages }}
+        run: run/apt-install.sh $PACKAGES
+
+      # Saved even when the install failed, so a slow run's finished debs carry to
+      # the next; a partial set gets a run-scoped key, so the full key is written
+      # only by an install that succeeded.
+      - name: Save the downloaded debs
+        if: always() && steps.apt.outcome == 'success' && steps.restore.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/apt-archives/*.deb
+          key: ${{ steps.install.outcome == 'success' && format('{0}{1}', steps.apt.outputs.prefix, steps.apt.outputs.list) || format('{0}{1}-partial-{2}-{3}', steps.apt.outputs.prefix, steps.apt.outputs.list, github.run_id, github.run_attempt) }}
 
       - run: .ci/check.sh secrets
 
