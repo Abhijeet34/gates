@@ -1,0 +1,14 @@
+{
+  "status": "no-change",
+  "reason": "run/no-mistakes-required.sh, its shared workflow, test and registry row were already deleted from main by a817e45 (PR #109, merged 2026-11-12, after the 2026-11-10 decision); nothing in gates greps a PR body for the no-mistakes marker any more, so there is no check here to replace. report.md has the evidence.",
+  "followups": [
+    {
+      "text": "If PR bodies should stop carrying the 'Updates from [git push no-mistakes](...)' marker, change the no-mistakes binary that writes it; if proof of the pipeline is still wanted, have it post a check run from a GitHub App on the head sha and require that check by app id in the caller's ruleset.",
+      "acceptance": "A PR raised through no-mistakes carries no machine-matched marker in its body, and, if proof is kept, a required App-posted check run on its head sha passes while a hand-raised PR lacks it."
+    },
+    {
+      "text": "automation's .ci/shared-workflows.md still describes the deleted shared-no-mistakes-required.yml gate (noted in PR #109).",
+      "acceptance": "No document in automation names shared-no-mistakes-required.yml or run/no-mistakes-required.sh as a live gate."
+    }
+  ]
+}
