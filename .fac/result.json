@@ -1,0 +1,23 @@
+{
+  "status": "needs-decision",
+  "questions": [
+    {
+      "key": "factory-file-list-source",
+      "q": "How should the factory git ls-files list reach the worker that repoints run/permissions-diff.py's factory globs and adds .ci/fixtures/surface-paths/factory.txt?",
+      "options": [
+        "re-run on a fleet worker that has both the gates and factory clones",
+        "grant a remote session read access to factory alongside gates",
+        "captain attaches factory's git ls-files output at the lock-bump commit to the task"
+      ],
+      "default": "re-run on a fleet worker that has both the gates and factory clones",
+      "class": 1,
+      "why": "This remote session can read only abhijeet34/gates, so factory's tracked files after the move into internal/domain and internal/platform cannot be read. Guessing the eight globs would risk silently dropping files from the protected surface. The suite half is already done: .ci/test-surface-paths.py fails on a glob that matches nothing once a fixture exists. See report.md."
+    }
+  ],
+  "followups": [
+    {
+      "text": "Repoint the eight factory SURFACE globs (run/permissions-diff.py:457-460, 494, 499, 503, 513), add .ci/fixtures/surface-paths/factory.txt, drop factory from AWAITING, and update README.md's permissions-diff surface table, in one commit.",
+      "acceptance": ".ci/test-surface-paths.py exits 0 and prints no 'factory not checked' note; every factory glob matches a line of factory.txt."
+    }
+  ]
+}
