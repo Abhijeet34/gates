@@ -1,0 +1,13 @@
+{
+  "status": "done",
+  "followups": [
+    {
+      "text": "Apply report.md's recommended change in gates: repoint permissions-diff's seven factory SURFACE globs to internal/domain and internal/platform, move the same paths in .ci/test-permissions-diff.py and README.md, add the filtered factory fixture and empty AWAITING. Needs a class-2 decision: the gate refuses changes to its own SURFACE.",
+      "acceptance": ".ci/check.sh shell python gates-proof passes; test-surface-paths names no AWAITING repository and goes red when a factory glob is set back to its old path; test-permissions-diff passes 113 of 113."
+    },
+    {
+      "text": "Check whether factory's internal/platform/sandbox/helper/fac-probe.m can widen what the worker sandbox grants; permissions-diff's internal/platform/sandbox/*.go glob does not cover it.",
+      "acceptance": "A recorded answer, and if it can, a SURFACE entry for it with a test-permissions-diff case."
+    }
+  ]
+}
