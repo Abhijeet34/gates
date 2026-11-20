@@ -1,0 +1,23 @@
+{
+  "status": "needs-decision",
+  "questions": [
+    {
+      "key": "factory-file-list-source",
+      "q": "How should the factory file list reach the worker that repoints the eight factory globs in run/permissions-diff.py SURFACE?",
+      "options": [
+        "Re-run on a fleet worker holding both the gates and factory clones",
+        "Grant this task's cloud session read access to the factory repository",
+        "Captain commits factory's git ls-files as .ci/fixtures/surface-paths/factory.txt first, then re-run"
+      ],
+      "default": "Re-run on a fleet worker holding both the gates and factory clones",
+      "class": 2,
+      "why": "This session's GitHub access is scoped to gates only, so factory's tracked paths could not be read; repointing without them would be guessing paths for security-surface globs. The suite half (fix-sr2-7, #80) is already on main; only the fixture, the glob moves and dropping factory from AWAITING remain. The change edits run/permissions-diff.py, which the gate protects, so it is class 2."
+    }
+  ],
+  "followups": [
+    {
+      "text": "Enforce freshness of .ci/fixtures/surface-paths/<repo>.txt: a stale fixture keeps a moved glob green.",
+      "acceptance": "test-surface-paths.py (or bin/gates.py bump) fails or regenerates when a fixture's recorded commit differs from the commit the repository's .github/gates.lock is moved at."
+    }
+  ]
+}
