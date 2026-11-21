@@ -3,9 +3,13 @@
 
 Usage: weakening.py --base B [--head H] [--repo OWNER/NAME] [--tests GLOB]...
 
-Compares the change against its merge base and names four kinds of finding:
+Compares the change against its merge base and names five kinds of finding:
 
-  test-exemption       a skip, todo, ignore or `continue` added to a file --tests names
+  test-exemption       a skip through any receiver, a todo, an ignore, a `continue` or a
+                       bare `return` added to a file --tests names
+  assertion-removed    a file --tests names deleted, unless the same file is added at
+                       another path it names, or a net drop in assertion lines across
+                       those files
   context-removed      a required status context gone from a branch ruleset
   workflow-condition   `paths-ignore`, `continue-on-error` or a job `if:` other than
                        `always()` added where a required context runs
@@ -46,7 +50,14 @@ RULESETS = [glob_re(g) for g in (".github/ruleset*.json", ".github/rulesets/*.js
 COMMENT = re.compile(r"^\s*(?://|#(?!\[)|\*|/\*)")
 EXEMPT = re.compile(
     r"\bcontinue\b|\.(?:skip|skipIf|todo)\b|[{,]\s*(?:skip|todo)\s*:"
-    r"|\bpytest\.mark\.skip|\bunittest\.skip|\bskipTest\(|#\[ignore|\bt\.Skip(?:Now|f)?\("
+    r"|\bpytest\.mark\.skip|\bunittest\.skip|\bskipTest\(|#\[ignore|\.Skip(?:Now|f)?\("
+    r"|\breturn\s*;?\s*(?:}|//|#|$)"
+)
+# An assertion line: Go's t.Error, t.Fatal and t.Fail through any receiver, an
+# assert* call or statement (Node, Python, Rust, testify), expect( and require.X(.
+ASSERT = re.compile(
+    r"\.(?:Errorf?|Fatalf?)\(\s*[^)\s]|\.Fail(?:Now)?\(\)"
+    r"|\b(?:debug_)?assert\w*\b|\bexpect\s*[.(]|\brequire\.\w+\("
 )
 # A regex or string literal: /.../flags, '...' or "...".
 LITERAL = re.compile(
@@ -62,6 +73,7 @@ ALWAYS = re.compile(r"^(?:\$\{\{\s*always\(\)\s*\}\}|always\(\))$")
 KINDS = {
     "moving-ref": "ref",
     "test-exemption": "ref",
+    "assertion-removed": "path",
     "context-removed": "context_to",
     "workflow-condition": "condition",
 }
@@ -139,7 +151,7 @@ def load_policy():
                 state = "missing" if key in needed else "matches none of its kinds"
                 raise Undecided(f"{where}: `{key}` {state}")
         try:
-            for key in ("ref", "condition"):
+            for key in ("ref", "condition", "path"):
                 if key in rec:
                     re.compile(rec[key])
             if "context_to" in rec:
@@ -174,13 +186,60 @@ def changed_lines(old, head, path):
     return added, removed
 
 
-def exemptions(old, head, tests):
-    out = []
-    names = git(
-        "diff", "--name-only", "--no-renames", "-z", "--diff-filter=AMT", old, head
+def changed_tests(old, head, tests):
+    """[(status, path)] for each file --tests names that the change adds, modifies or deletes."""
+    fields = git(
+        "diff", "--name-status", "--no-renames", "-z", "--diff-filter=AMTD", old, head
+    ).split("\0")
+    fields = fields[:-1]  # -z ends the output with a NUL
+    pairs = zip(fields[0::2], fields[1::2], strict=True)
+    return [(st, p) for st, p in pairs if any(g.match(p) for g in tests)]
+
+
+def count_asserts(lines):
+    return sum(1 for x in lines if ASSERT.search(x) and not COMMENT.match(x))
+
+
+def assertions(old, head, changed, tests):
+    """A deleted test file, and each file behind a net drop in assertion lines."""
+    out, net, drops = [], 0, []
+    entries = (
+        e.split("\t", 1) for e in git("ls-tree", "-r", "-z", head).split("\0") if e
     )
-    for path in (p for p in names.split("\0") if p):
-        if not any(g.match(path) for g in tests):
+    head_blobs = {
+        meta.split()[2] for meta, p in entries if any(g.match(p) for g in tests)
+    }
+    for status, path in changed:
+        if (
+            status == "D"
+            and git("rev-parse", f"{old}:{path}").strip() not in head_blobs
+        ):
+            # Moved whole to another test path is not a deletion; anything else is,
+            # whether or not the guard recognises an assertion in it.
+            out.append(("assertion-removed", path, "test file deleted"))
+            continue
+        added, removed = changed_lines(old, head, path)
+        plus, minus = count_asserts(x for _, x in added), count_asserts(removed)
+        net += plus - minus
+        if minus > plus:
+            drops.append((path, minus, plus))
+    # An assertion moved within a file or between test files leaves the count whole.
+    if net < 0:
+        out += [
+            (
+                "assertion-removed",
+                path,
+                f"{minus} assertion line(s) removed, {plus} added; {-net} fewer across the change",
+            )
+            for path, minus, plus in drops
+        ]
+    return out
+
+
+def exemptions(old, head, changed):
+    out = []
+    for status, path in changed:
+        if status == "D":
             continue
         added, removed = changed_lines(old, head, path)
         # A line moved within the file is not new, so only the surplus counts.
@@ -356,7 +415,8 @@ def moving_refs(base_wf, head_wf):
 
 
 def findings(old, head, tests):
-    out = exemptions(old, head, tests)
+    changed = changed_tests(old, head, tests)
+    out = exemptions(old, head, changed) + assertions(old, head, changed, tests)
     base_rs, head_rs = files(old, RULESETS), files(head, RULESETS)
     c0, bad0 = contexts(base_rs)
     c1, bad1 = contexts(head_rs)
@@ -397,6 +457,8 @@ def covers(rec, kind, subject, repo, where=""):
             return False
         m = found[0][0]
         return not COMBINES.search(subject[: m.start()] + subject[m.end() :])
+    if kind == "assertion-removed":
+        return re.fullmatch(rec["path"], where) is not None
     if kind == "workflow-condition":
         # The path keeps a record to the one workflow it was ratified for; the line
         # number is left out because any edit above the condition moves it.
