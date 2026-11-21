@@ -1,0 +1,3 @@
+defect = "the audience check is removed, so a token minted for another service is accepted"
+steer = "temporary"
+steer_at = ["internal/auth/session.go", 45]

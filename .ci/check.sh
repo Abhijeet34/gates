@@ -88,6 +88,8 @@ check_shell() {
     bash .ci/test-lock.sh || rc=1
     # The archive-only apt install the watermark jobs run, against a stub apt-get.
     bash .ci/test-apt-install.sh || rc=1
+    # The gitleaks install: a reset connection is retried, the digest still decides.
+    bash .ci/test-install-gitleaks.sh || rc=1
     bash .ci/test-upstream-owner-refs.sh || rc=1
     bash .ci/test-suite-coverage.sh || rc=1
     # The gate runner's selection, cache and fold, each case also run without its control.
@@ -154,6 +156,8 @@ check_shell() {
     # The critic lens's seat and its eval against recorded replies of the eval's live run.
     python3 .ci/test-critic.py || rc=1
     python3 .ci/test-critic-eval.py || rc=1
+    # The review seats over safeguard paths and their acceptance run, against recorded replies of that run.
+    python3 .ci/test-seats.py || rc=1
     # The exposure and signature gates, through real pushes into throwaway repositories.
     bash system-maintenance/git-hooks/test-exposure-scan.sh || rc=1
     # The release-artifact scan, over fixture binaries planted at run time.

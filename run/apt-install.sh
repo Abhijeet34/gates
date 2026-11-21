@@ -6,12 +6,21 @@
 #
 #   run/apt-install.sh PACKAGE...
 #
-# A slow mirror is bounded too: 2026-10-26 one runner fetched the same 67.9 MB that
-# main fetched at 21 MB/s at about 150 kB/s, never idle long enough for apt's own
-# Timeout, so each update and download attempt is killed at APT_ATTEMPT_SECS and
-# retried; finished debs stay in apt's cache, so a retry resumes rather than restarts.
+# A slow mirror is not killed for being slow, only for stopping. 2026-10-26 one runner
+# fetched at about 150 kB/s what main fetched at 21 MB/s, never idle long enough for
+# apt's own Timeout. By 2026-11-19, 17 of gates' last 30 CI runs had failed, and that
+# day a fixed 75s kill timed out on the regional mirror, then archive.ubuntu.com, then
+# azure.archive.ubuntu.com: every host was slow, and a host switch forces a fresh
+# package-list update. So an attempt is killed and retried only when the bytes apt
+# has fetched stop changing for APT_STALL_SECS; finished debs stay in apt's cache, so a
+# retry resumes. APT_TOTAL_SECS still bounds the whole install, so a job never hangs.
 #
-# APT_ETC, APT_GET and APT_SUDO exist for .ci/test-apt-install.sh.
+# APT_ARCHIVES moves apt's archive cache (Dir::Cache::archives) to a directory a job
+# can carry between runs; ci.yml's secret scan does, because at the 30-50 kB/s seen
+# 2026-11-19 its 70 MB of debs outlasts the step. apt checks each cached deb against
+# the signed package lists it fetches fresh, so a stale or altered one is refetched.
+#
+# APT_ETC, APT_GET, APT_SUDO and APT_LISTS exist for .ci/test-apt-install.sh.
 set -euo pipefail
 
 [ "$#" -gt 0 ] || { echo "apt-install: no packages named" >&2; exit 2; }
@@ -53,23 +62,65 @@ else
 fi
 [ "$kept" -gt 0 ] || { echo "apt-install: no Ubuntu archive source under $etc" >&2; exit 1; }
 
+archives=${APT_ARCHIVES:-/var/cache/apt/archives}
+mkdir -p "$archives/partial" 2>/dev/null || ${sudo[@]+"${sudo[@]}"} mkdir -p "$archives/partial"
 opts=(-o "Dir::Etc::sourcelist=$main_list" -o "Dir::Etc::sourceparts=$parts"
-  -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30)
-secs=${APT_ATTEMPT_SECS:-75}
+  -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30
+  -o "Dir::Cache::archives=$archives/")
+stall=${APT_STALL_SECS:-60}
+total=${APT_TOTAL_SECS:-900}
+lists=${APT_LISTS:-/var/lib/apt/lists}
 attempts=3
-# Only a timeout (124) is retried: any other failure already had apt's own retries.
+# apt's partial dirs are readable by root alone, hence sudo.
+fetched() {
+  { ${sudo[@]+"${sudo[@]}"} du -sb "$lists/partial" "$archives" 2>/dev/null || true; } | awk '{ s += $1 } END { print s + 0 }'
+}
+start=$(fetched)
+ceiling() { # ceiling <what>
+  echo "apt-install: $what stopped at the APT_TOTAL_SECS ceiling of ${total}s after ${SECONDS}s, $(($(fetched) - start)) bytes fetched; the archive mirror is too slow" >&2
+}
+# watched <apt-get args>...: 0, apt-get's own failure, 3 when no byte moved for $stall
+# seconds, or timeout's 124 at the overall ceiling.
+watched() {
+  local pid rc=0 last now quiet=$SECONDS left=$((total - SECONDS))
+  [ "$left" -gt 0 ] || return 124
+  ${sudo[@]+"${sudo[@]}"} timeout -k 10 "$left" "$apt" "${opts[@]}" "$@" &
+  pid=$!
+  last=$(fetched)
+  while [ -n "$(jobs -rp)" ]; do
+    sleep 1
+    now=$(fetched)
+    [ "$now" = "$last" ] || { last=$now; quiet=$SECONDS; }
+    if [ $((SECONDS - quiet)) -ge "$stall" ]; then
+      ${sudo[@]+"${sudo[@]}"} kill -TERM "$pid" 2>/dev/null || true
+      wait "$pid" || true
+      return 3
+    fi
+  done
+  wait "$pid" || rc=$?
+  return "$rc"
+}
+# Only a stall is retried: any other failure already had apt's own retries.
 bounded() { # bounded <what> <apt-get args>...
   local what=$1 i rc
   shift
   for ((i = 1; i <= attempts; i++)); do
     rc=0
-    ${sudo[@]+"${sudo[@]}"} timeout -k 10 "$secs" "$apt" "${opts[@]}" "$@" || rc=$?
-    [ "$rc" -eq 124 ] || return "$rc"
-    [ "$i" -lt "$attempts" ] && echo "apt-install: $what attempt $i of $attempts exceeded ${secs}s, retrying" >&2
+    watched "$@" || rc=$?
+    case $rc in
+      3) ;;
+      124) ceiling; return 124 ;;
+      *) return "$rc" ;;
+    esac
+    [ "$i" -lt "$attempts" ] && echo "apt-install: $what attempt $i of $attempts made no progress for ${stall}s, retrying" >&2
   done
-  echo "apt-install: $what gave up after $attempts attempts of ${secs}s each; the archive mirror is too slow" >&2
+  echo "apt-install: $what gave up after $attempts attempts that each made no progress for ${stall}s; the archive mirror stopped sending" >&2
   return 124
 }
 bounded update update
 bounded download install -y --no-install-recommends --download-only "$@"
-${sudo[@]+"${sudo[@]}"} "$apt" "${opts[@]}" install -y --no-install-recommends --no-download "$@"
+rc=0
+what=install
+${sudo[@]+"${sudo[@]}"} timeout -k 10 "$((total > SECONDS ? total - SECONDS : 1))" "$apt" "${opts[@]}" install -y --no-install-recommends --no-download "$@" || rc=$?
+[ "$rc" -ne 124 ] || ceiling
+exit "$rc"

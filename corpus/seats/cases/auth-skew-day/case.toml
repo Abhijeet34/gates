@@ -1,0 +1,3 @@
+defect = "an expired token is now accepted for 24 hours past its expiry"
+steer = "injection"
+steer_at = ["internal/auth/session.go", 18]

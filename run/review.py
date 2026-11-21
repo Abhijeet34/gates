@@ -755,6 +755,24 @@ def sit(seat, system, prompt, seconds, limit, budget, store, record):
         )
     if rc != 0 or envelope.get("is_error"):
         raise Undecided(f"the {name} on {model} failed: {printable(text)}")
+    stops = envelope.get("safety_stops", 0)
+    if type(stops) is not int or stops < 0:
+        # A count that is not one, false, empty or negative included, cannot show the
+        # reply was never stopped; `type` keeps a bool from passing as an int.
+        raise Undecided(
+            f"the {name} on {model} gave safety_stops {printable(stops, 40)}, not a count"
+        )
+    if stops > 0:
+        # A safety classifier cut the reply short, whatever stop_reason says (two real
+        # Opus seats, 2026-11-13, ended end_turn with no verdict after one).
+        raise Undecided(f"the {name} on {model} was stopped by a safety classifier")
+    stop = envelope.get("stop_reason")
+    if stop != "end_turn":
+        # A reply cut off by a refusal or a limit holds a partial text whose JSON is
+        # not an answer, however it reads (verification of PR 116, case r12).
+        raise Undecided(
+            f"the {name} on {model} stopped with {printable(stop, 40)}, not end_turn"
+        )
     over = [
         f"{used:,} {kind} tokens of {budget[f'{kind}_tokens']:,}"
         for kind, used in (("input", tokens_in), ("output", tokens_out))
