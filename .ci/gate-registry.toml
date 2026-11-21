@@ -808,6 +808,27 @@ git commit -qam always
 run = 'GATES_DIR="$ROOT" python3 "$GATE" --base base --repo Abhijeet34/fixture'
 finding = "weakening: workflow-condition at .github/workflows/ci.yml:5: job checks: continue-on-error: true"
 
+# The clean input moves an assertion to another test, which keeps the count whole.
+[[gate]]
+id = "weakening-assertion-removed"
+surface = "Security"
+gates = ["run/weakening.py"]
+test = ".ci/test-weakening.py"
+suite = "shell"
+command = "run/weakening.py"
+red = """
+git init -q -b main && mkdir test && printf "test('a', () => {\\n  assert.ok(f());\\n});\\n" > test/a.test.ts
+git add -A && git commit -qm base && git tag base
+printf "test('a', () => {\\n  f();\\n});\\n" > test/a.test.ts && git commit -qam drop
+"""
+clean = """
+git init -q -b main && mkdir test && printf "test('a', () => {\\n  assert.ok(f());\\n});\\n" > test/a.test.ts
+git add -A && git commit -qm base && git tag base
+printf "test('a', () => {});\\ntest('b', () => {\\n  assert.ok(f());\\n});\\n" > test/a.test.ts && git commit -qam move
+"""
+run = '''GATES_DIR="$ROOT" python3 "$GATE" --base base --repo Abhijeet34/fixture --tests 'test/**' '''
+finding = "weakening: assertion-removed at test/a.test.ts: 1 assertion line(s) removed, 0 added"
+
 # The clean input adds the shape policy/relaxations.toml records, so it also proves the record is read.
 [[gate]]
 id = "weakening-moving-ref"
