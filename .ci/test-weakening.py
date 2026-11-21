@@ -234,6 +234,41 @@ def record(**over):
     return "[[relaxation]]\n" + body
 
 
+# The security review's probes P2a to P2e ran on a Go safeguard test like this one.
+GO_TEST = """package permit
+
+import "testing"
+
+func TestDenies(t *testing.T) {
+	if got := Allow("rm"); got {
+		t.Fatalf("Allow(rm) = %v, want false", got)
+	}
+}
+
+func TestDeniesTable(t *testing.T) {
+	for _, tc := range cases {
+		t.Run(tc.name, func(tt *testing.T) {
+			if Allow(tc.cmd) {
+				tt.Errorf("Allow(%q) = true", tc.cmd)
+			}
+		})
+	}
+}
+"""
+GO_EXTRA = 'package permit\n\nfunc TestExtra(t *testing.T) {\n\tt.Error("no")\n}\n'
+GO_BASE = {
+    **BASE,
+    "test/architecture/permit_test.go": GO_TEST,
+    "test/architecture/extra_test.go": GO_EXTRA,
+}
+FATAL = '\tif got := Allow("rm"); got {\n\t\tt.Fatalf("Allow(rm) = %v, want false", got)\n\t}\n'
+
+
+def go(old, new):
+    assert old in GO_TEST, old
+    return {"test/architecture/permit_test.go": GO_TEST.replace(old, new)}
+
+
 MATCHED = "matches recorded policy first-party-shared-at-main"
 CASES = [
     (
@@ -393,6 +428,121 @@ CASES = [
         },
         0,
         "weakening: no weakening",
+    ),
+    (
+        "P2b: an assertion replaced by a blank assignment",
+        go('\t\tt.Fatalf("Allow(rm) = %v, want false", got)\n', "\t\t_ = got\n"),
+        1,
+        [
+            "weakening: assertion-removed at test/architecture/permit_test.go: 1 assertion line(s) removed, 0 added",
+            "refused: 1 weakening(s)",
+        ],
+        REPO,
+        GO_BASE,
+    ),
+    (
+        "P2c: a skip through a receiver not named t",
+        go(
+            "\t\t\tif Allow(tc.cmd) {\n",
+            '\t\t\ttt.Skip("later")\n\t\t\tif Allow(tc.cmd) {\n',
+        ),
+        1,
+        'weakening: test-exemption at test/architecture/permit_test.go:14: tt.Skip("later")',
+        REPO,
+        GO_BASE,
+    ),
+    (
+        "P2d: an early return",
+        go(FATAL, "\treturn\n" + FATAL),
+        1,
+        "weakening: test-exemption at test/architecture/permit_test.go:6: return",
+        REPO,
+        GO_BASE,
+    ),
+    (
+        "P2e: a test file deleted",
+        {"test/architecture/extra_test.go": None},
+        1,
+        "weakening: assertion-removed at test/architecture/extra_test.go: test file deleted",
+        REPO,
+        GO_BASE,
+    ),
+    (
+        "an assertion moved to another test in the file",
+        {
+            "test/architecture/permit_test.go": GO_TEST.replace(FATAL, "")
+            + "\nfunc TestDeniesMoved(t *testing.T) {\n"
+            + FATAL
+            + "}\n"
+        },
+        0,
+        "weakening: no weakening",
+        REPO,
+        GO_BASE,
+    ),
+    (
+        "an assertion moved to another test file",
+        {
+            "test/architecture/permit_test.go": GO_TEST.replace(FATAL, ""),
+            "test/architecture/extra_test.go": GO_EXTRA + FATAL,
+        },
+        0,
+        "weakening: no weakening",
+        REPO,
+        GO_BASE,
+    ),
+    (
+        "a test file renamed whole",
+        {
+            "test/architecture/extra_test.go": None,
+            "test/architecture/more_test.go": GO_EXTRA,
+        },
+        0,
+        "weakening: no weakening",
+        REPO,
+        GO_BASE,
+    ),
+    (
+        "an assertion dropped while another file gains one is a net drop of none",
+        {
+            "test/architecture/permit_test.go": GO_TEST.replace(FATAL, ""),
+            "test/architecture/extra_test.go": GO_EXTRA.replace(
+                '\tt.Error("no")\n', '\tt.Error("no")\n\tt.Error("still no")\n'
+            ),
+        },
+        0,
+        "weakening: no weakening",
+        REPO,
+        GO_BASE,
+    ),
+    (
+        "a deleted file and an assertion drop in a test the row does not name",
+        {
+            "test/unit/parse.test.ts": None,
+            "test/unit/other.test.ts": "test('x', () => { assert.ok(1) });\n",
+        },
+        0,
+        "weakening: no weakening",
+        REPO,
+        {
+            **BASE,
+            "test/unit/other.test.ts": "test('x', () => { assert.ok(1); assert.ok(2) });\n",
+        },
+    ),
+    (
+        "a deleted test file a recorded path covers",
+        {"test/architecture/extra_test.go": None},
+        0,
+        "weakening: assertion-removed at test/architecture/extra_test.go matches recorded policy r",
+        REPO,
+        GO_BASE,
+        gates_with(
+            record(
+                kinds='["assertion-removed"]',
+                ref=None,
+                path=r"'^test/architecture/extra_test\.go$'",
+            )
+        ),
     ),
     (
         "a required context removed",
@@ -585,6 +735,11 @@ SCHEMA = [
         "`context_to` matches none",
     ),
     ("a missing matcher", record(ref=None), "`ref` missing"),
+    (
+        "an assertion-removed record without a path",
+        record(kinds='["assertion-removed"]', ref=None),
+        "`path` missing",
+    ),
     (
         "a workflow-condition record without a condition",
         record(kinds='["workflow-condition"]', ref=None),
