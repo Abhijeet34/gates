@@ -222,7 +222,8 @@ It reads that file from `$GATES_DIR`, the gates checkout at the locked commit, n
 
 | Kind | Finding | What a record matches |
 | --- | --- | --- |
-| `test-exemption` | a line added to a file `--tests` names that skips, ignores or marks a test todo, or a `continue`; a line moved within the file is not new | `ref`: the line holds exactly one regex or string literal, whose source with `\/` unescaped equals `ref`, and nothing that combines or negates it |
+| `test-exemption` | a line added to a file `--tests` names that skips (a `.Skip(` through any receiver, not only `t`), ignores or marks a test todo, or a `continue` or bare `return`; a line moved within the file is not new | `ref`: the line holds exactly one regex or string literal, whose source with `\/` unescaped equals `ref`, and nothing that combines or negates it |
+| `assertion-removed` | a file `--tests` names deleted, unless the same file is added at another path they name; or fewer assertion lines across those files than at the base, naming each file that lost some, so an assertion moved within or between test files is not a drop | `path`: the file's path fullmatches it |
 | `context-removed` | a required status context gone from `.github/ruleset*.json` or `.github/rulesets/*.json`, or a ruleset that is not JSON | `context_to`: a pattern with `{from}` in it that one of the contexts the change added must fullmatch |
 | `workflow-condition` | `paths-ignore`, `continue-on-error` other than `false`, or a job `if:` other than `always()` added to a job a required context names, or one such a job needs | `condition`: `<path>: <finding>`, such as `.github/workflows/ci.yml: job ledger: if: github.event_name == 'push'`, fullmatches it; the line number is left out |
 | `moving-ref` | a `uses:` added at a ref that is neither a commit nor a `sha256:` digest; a ref already present at the base is not new | `ref`: the whole `uses:` value fullmatches it |
@@ -243,6 +244,10 @@ repos = ["Abhijeet34/*"]
 ref = '^Abhijeet34/gates/\.github/workflows/shared-[a-z-]+\.yml@main$'
 ```
 
+An assertion line is a call to `.Error`, `.Errorf`, `.Fatal`, `.Fatalf`, `.Fail` or `.FailNow` through any receiver, a word that starts `assert` (Node's `assert.equal`, Python's `assert` and `assertEqual`, Rust's `assert_eq!`, testify's `assert.Equal`), testify's `require.X(`, or `expect(`; a comment line is not one.
+The count is net and by lines, so a dropped assertion with another added elsewhere in the named tests passes; the guard catches a test turned green by deletion, not one made weaker by rewording.
+Moving or renaming a test file and editing it in the same change reads as a deletion; split the two or add a record.
+
 The file is checked before anything is judged: an unknown table or key, a duplicate `id`, a `ratified` that is not a date, a kind outside the table above, a `repos` entry that is not `OWNER/NAME`, a matcher missing for a kind or present for none, or a pattern that does not compile exits 2.
 `policy/**` and `run/weakening.py` are on the permissions-diff surface, so adding a record is a class-2 decision.
 
@@ -258,8 +263,9 @@ shadow_since = 2026-10-26
 ```
 
 `.ci/test-weakening.py` runs an inline job moved into a shared workflow at `@main`, with the test that requires a commit pin taught to skip exactly that ref, with and without the record, then a widened literal, a third-party ref, a repository outside the record's scope, a commit pin turned back into `@main`, a caller's own `policy/relaxations.toml`, each finding kind and each schema refusal.
+It runs the security review's probes on a Go safeguard test, an assertion replaced by `_ = got`, `tt.Skip` inside a subtest, an early `return` and a deleted test file, each refused naming its kind, and an assertion moved within a file, moved to another file and a file renamed whole, each passing.
 It runs factory's proved-tree ledger against the two `workflow-condition` records, and the same conditions on another job, in another workflow, widened, or in another repository, each refused.
-`.ci/gate-registry.toml` proves the rows `weakening-test-exemption`, `weakening-context-removed`, `weakening-workflow-condition` and `weakening-moving-ref`.
+`.ci/gate-registry.toml` proves the rows `weakening-test-exemption`, `weakening-context-removed`, `weakening-workflow-condition`, `weakening-assertion-removed` and `weakening-moving-ref`.
 
 ## The record-approval check
 
