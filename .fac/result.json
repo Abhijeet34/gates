@@ -1,0 +1,9 @@
+{
+  "status": "done",
+  "followups": [
+    {
+      "text": "Land sr2-9 as a class-2 decision (sized L): add /var/tmp, /Users/Shared and /Library/Caches to SHARED_ROOTS in run/review.py (a permissions-diff protected path, run/permissions-diff.py:486) and add .ci/test-review.py::reproduction_lists_no_shared_cache, probing each existing, writable root separately with a CASES mutation restoring the old tuple; check once on the Mac runner.",
+      "acceptance": "out=$(python3 .ci/test-review.py) && printf '%s\\n' \"$out\" | grep -qx 'ok   reproduction_lists_no_shared_cache'"
+    }
+  ]
+}
