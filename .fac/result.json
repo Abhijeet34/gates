@@ -1,0 +1,22 @@
+{
+  "status": "needs-decision",
+  "questions": [
+    {
+      "key": "fac-probe-helper-surface",
+      "q": "factory's internal/platform/sandbox/helper/fac-probe.m could not be read from this gates session, so whether it can widen what the worker sandbox grants is unanswered. Should gates protect it fail-closed now, or wait for a session that can read factory to answer?",
+      "options": [
+        "protect-fail-closed: add internal/platform/sandbox/helper/** to SURFACE as 'what the worker sandbox grants' (any change refused), with a test-permissions-diff case, together with the internal/platform globs that follow factory's move",
+        "answer-first: run this task again with read access to factory, read fac-probe.m and how internal/platform/sandbox launches it, then add a SURFACE entry only if it can widen the sandbox"
+      ],
+      "default": "answer-first: run this task again with read access to factory, read fac-probe.m and how internal/platform/sandbox launches it, then add a SURFACE entry only if it can widen the sandbox",
+      "class": 2,
+      "why": "This session's GitHub access covers gates only, and .ci/test-surface-paths.py already lists factory under AWAITING because its file list is not readable from a gates checkout. The answer depends on code I could not read. If the helper runs inside an already-applied sandbox, it cannot loosen that sandbox. If it runs before the sandbox is applied, or its output feeds the profile (for example, paths or entitlements it probes), it can widen the sandbox. Also, gates main still protects internal/sandbox/*.go, not internal/platform/sandbox/*.go, so the move this task names has not landed in gates yet, and a SURFACE change here is a class-2 change under AGENTS.md."
+    }
+  ],
+  "followups": [
+    {
+      "text": "Move permissions-diff's factory globs (internal/sandbox/profile.go, internal/sandbox/*.go and the others in REPOSITORY) to factory's internal/domain and internal/platform layout, and add .ci/fixtures/surface-paths/factory.txt so test-surface-paths checks them.",
+      "acceptance": "Every factory glob on SURFACE matches a path in factory.txt, factory is removed from AWAITING, and test-permissions-diff covers the moved sandbox glob."
+    }
+  ]
+}
