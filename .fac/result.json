@@ -1,0 +1,26 @@
+{
+  "status": "needs-decision",
+  "questions": [
+    {
+      "key": "keep-pipeline-proof",
+      "q": "With the 'Updates from [git push no-mistakes](...)' marker removed from PR bodies, should proof that a PR went through the no-mistakes pipeline be kept as a required check run posted by a GitHub App on the head sha?",
+      "options": [
+        "drop-proof: remove the marker and require nothing in its place",
+        "app-check-run: no-mistakes posts a check run from a dedicated GitHub App on the head sha, and each caller's ruleset requires it by that app's integration_id"
+      ],
+      "default": "drop-proof: remove the marker and require nothing in its place",
+      "class": 2,
+      "why": "Nothing in gates matches the marker any more: the no-mistakes-required gate, its workflow and test were dropped in #109 (a817e45) because no caller used it. The marker is written by the no-mistakes binary in Abhijeet34/no-mistakes, which this session cannot read or push to, so the change has to be made there. Whether to keep proof decides whether an App must be created (manifest flow, checks: write) and its integration_id added to callers' required_status_checks, as .github/ruleset-main.json does for app 15368. That is a new required merge check and a new App credential, which is a captain call."
+    }
+  ],
+  "followups": [
+    {
+      "text": "In Abhijeet34/no-mistakes, stop writing the 'Updates from [git push no-mistakes](https://github.com/Abhijeet34/no-mistakes)' line, and the <!-- no-mistakes-pipeline-attestation:v1 ... --> comment if it serves only as proof, into the PR body the pr step writes.",
+      "acceptance": "A PR raised through no-mistakes has neither the 'Updates from [git push no-mistakes]' line nor a no-mistakes-pipeline-attestation comment in its body; the no-mistakes test that renders the PR body asserts both are absent."
+    },
+    {
+      "text": "If keep-pipeline-proof is app-check-run: create a GitHub App (checks: write only, inactive webhook), have no-mistakes post a check run named e.g. 'no-mistakes' with conclusion success on the PR head sha once its steps pass, and add { \"context\": \"no-mistakes\", \"integration_id\": <app id> } to each caller's required_status_checks.",
+      "acceptance": "On a caller, a PR raised through no-mistakes shows a passing 'no-mistakes' check run from that App on its head sha and is mergeable; a hand-raised PR lacks the check and the ruleset blocks its merge; a 'no-mistakes' check run posted by any other app (e.g. GitHub Actions, 15368) does not satisfy the rule."
+    }
+  ]
+}
