@@ -1,0 +1,36 @@
+# factory's `git ls-files` at 2804929f97fab243fa9404144eb39c0082a4d7a9 (2026-11-23), kept to the paths
+# a factory glob of permissions-diff's SURFACE matches. Refresh it from a full
+# listing when a factory glob is added or factory moves one of these files.
+internal/domain/adapter/claude/claude.go
+internal/domain/permit/permit.go
+internal/domain/repos/depbase.go
+internal/platform/egress/egress.go
+internal/platform/egress/egress_test.go
+internal/platform/outbound/outbound.go
+internal/platform/sandbox/chromium.go
+internal/platform/sandbox/denials.go
+internal/platform/sandbox/denials_test.go
+internal/platform/sandbox/environ.go
+internal/platform/sandbox/environ_darwin.go
+internal/platform/sandbox/environ_darwin_test.go
+internal/platform/sandbox/environ_other.go
+internal/platform/sandbox/environ_test.go
+internal/platform/sandbox/measure_test.go
+internal/platform/sandbox/ports.go
+internal/platform/sandbox/ports_test.go
+internal/platform/sandbox/probe.go
+internal/platform/sandbox/probe_test.go
+internal/platform/sandbox/profile.go
+internal/platform/sandbox/profile_test.go
+internal/platform/sandbox/provision.go
+internal/platform/sandbox/provision_test.go
+internal/platform/sandbox/query_cgo_darwin_test.go
+internal/platform/sandbox/query_darwin.go
+internal/platform/sandbox/query_darwin_test.go
+internal/platform/sandbox/sweep.go
+internal/platform/sandbox/sweep_test.go
+internal/platform/sandbox/toolchain.go
+internal/platform/sandbox/toolchain_test.go
+internal/platform/sandbox/vm.go
+internal/platform/sandbox/vm_test.go
+route.toml

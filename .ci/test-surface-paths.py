@@ -11,7 +11,9 @@ glob matches nothing and the surface silently loses it, so this suite fails.
 This repository's files are read from `git ls-files`. Another repository's are
 read from `.ci/fixtures/surface-paths/<repo>.txt`, its `git ls-files` output
 taken at the commit whose `.github/gates.lock` moves to a new gates commit, so
-the fixture is refreshed with the gates pin. A repository listed in AWAITING
+the fixture is refreshed with the gates pin. A fixture may keep only the paths
+that repository's globs match, so a new glob for it needs a fresh listing,
+filtered again, before it can pass. A repository listed in AWAITING
 has no fixture yet and its globs go unchecked, named on every run; a fixture
 for it, or a repository with neither, fails.
 
@@ -44,14 +46,14 @@ GENERIC = {
 
 # The repository whose layout each remaining glob names.
 REPOSITORY = {
-    "internal/sandbox/profile.go": "factory",
-    "internal/sandbox/*.go": "factory",
-    "internal/permit/permit.go": "factory",
+    "internal/platform/sandbox/profile.go": "factory",
+    "internal/platform/sandbox/*.go": "factory",
+    "internal/domain/permit/permit.go": "factory",
     "route.toml": "factory",
-    "internal/adapter/claude/claude.go": "factory",
-    "repos/depbase.go": "factory",
-    "egress/*.go": "factory",
-    "outbound/outbound.go": "factory",
+    "internal/domain/adapter/claude/claude.go": "factory",
+    "internal/domain/repos/depbase.go": "factory",
+    "internal/platform/egress/*.go": "factory",
+    "internal/platform/outbound/outbound.go": "factory",
     ".ci/gate-registry.toml": SELF,
     "policy/**": SELF,
     "run/tool-gates.py": SELF,
@@ -70,11 +72,7 @@ REPOSITORY = {
 }
 
 # Repositories with no fixture yet, and why: their globs are not checked.
-AWAITING = {
-    "factory": "its file list is not readable from a gates checkout; the fixture"
-    " and the globs that follow its move into internal/domain and"
-    " internal/platform land together",
-}
+AWAITING = {}
 
 
 def surface_globs(source):
