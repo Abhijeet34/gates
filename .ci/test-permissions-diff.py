@@ -183,7 +183,7 @@ BASE = {
     ".claude/settings.json": SETTINGS,
     "system-maintenance/claude-code/config/settings.json": SETTINGS,
     ".vscode/settings.json": '{"editor.tabSize": 4}\n',
-    "internal/permit/permit.go": 'package permit\n\nvar deny = []string{"Write(~/.local/bin/**)"}\n',
+    "internal/domain/permit/permit.go": 'package permit\n\nvar deny = []string{"Write(~/.local/bin/**)"}\n',
     "route.toml": ROUTE,
     ".github/gates.toml": GATES_TOML,
     ".ci/gate-registry.toml": PROOF_REGISTRY,
@@ -193,10 +193,10 @@ BASE = {
     ".github/workflows/flow.yml": FLOW_JOB,
     ".claude/commands/ship.md": COMMAND,
     ".claude/agents/critic.md": AGENT,
-    "internal/sandbox/toolchain_test.go": "package sandbox\n",
-    "internal/adapter/claude/claude.go": CLAUDE_GO,
-    "repos/depbase.go": DEPBASE_GO,
-    "egress/egress_test.go": "package egress\n",
+    "internal/platform/sandbox/toolchain_test.go": "package sandbox\n",
+    "internal/domain/adapter/claude/claude.go": CLAUDE_GO,
+    "internal/domain/repos/depbase.go": DEPBASE_GO,
+    "internal/platform/egress/egress_test.go": "package egress\n",
 }
 RAN_BASE = {
     **BASE,
@@ -296,9 +296,11 @@ CASES = [
     ),
     (
         "a permit rule granting Write on ~/.local/bin",
-        {"internal/permit/permit.go": "package permit\n\nvar deny = []string{}\n"},
+        {
+            "internal/domain/permit/permit.go": "package permit\n\nvar deny = []string{}\n"
+        },
         1,
-        "permissions-diff: internal/permit/permit.go changes the fac permit deny overlay",
+        "permissions-diff: internal/domain/permit/permit.go changes the fac permit deny overlay",
     ),
     (
         "blocks = false on secrets.range",
@@ -669,13 +671,15 @@ CASES = [
     ),
     (
         "the worker sandbox's toolchain reads",
-        {"internal/sandbox/toolchain.go": "package sandbox\n"},
+        {"internal/platform/sandbox/toolchain.go": "package sandbox\n"},
         1,
-        "permissions-diff: internal/sandbox/toolchain.go changes what the worker sandbox grants: the source changed",
+        "permissions-diff: internal/platform/sandbox/toolchain.go changes what the worker sandbox grants: the source changed",
     ),
     (
         "a worker sandbox test",
-        {"internal/sandbox/toolchain_test.go": "package sandbox\n\nfunc init() {}\n"},
+        {
+            "internal/platform/sandbox/toolchain_test.go": "package sandbox\n\nfunc init() {}\n"
+        },
         0,
         "none on the protected surface",
     ),
@@ -853,17 +857,17 @@ CASES = [
     (
         "a host added to a boxed run's egress",
         {
-            "internal/adapter/claude/claude.go": CLAUDE_GO.replace(
+            "internal/domain/adapter/claude/claude.go": CLAUDE_GO.replace(
                 '"api.anthropic.com"}', '"api.anthropic.com", "example.com"}'
             )
         },
         1,
-        "permissions-diff: internal/adapter/claude/claude.go changes the hosts a boxed run's proxy allows: the Egress declaration changed",
+        "permissions-diff: internal/domain/adapter/claude/claude.go changes the hosts a boxed run's proxy allows: the Egress declaration changed",
     ),
     (
         "a boxed run's egress assigned outside its declaration",
         {
-            "internal/adapter/claude/claude.go": CLAUDE_GO
+            "internal/domain/adapter/claude/claude.go": CLAUDE_GO
             + '\nfunc init() { Egress = append(Egress, "example.com") }\n'
         },
         1,
@@ -872,7 +876,7 @@ CASES = [
     (
         "a boxed run's egress moved into a var group",
         {
-            "internal/adapter/claude/claude.go": CLAUDE_GO.replace(
+            "internal/domain/adapter/claude/claude.go": CLAUDE_GO.replace(
                 'var Egress = []string{"api.anthropic.com"}',
                 'var (\n\tEgress = []string{"api.anthropic.com", "example.com"}\n)',
             )
@@ -882,35 +886,37 @@ CASES = [
     ),
     (
         "an edit beside a boxed run's egress",
-        {"internal/adapter/claude/claude.go": CLAUDE_GO.replace("30", "60")},
+        {"internal/domain/adapter/claude/claude.go": CLAUDE_GO.replace("30", "60")},
         0,
         "none on the protected surface",
     ),
     (
         "a host added to a base build's registries",
         {
-            "repos/depbase.go": DEPBASE_GO.replace(
+            "internal/domain/repos/depbase.go": DEPBASE_GO.replace(
                 '"static.crates.io"}', '"static.crates.io", "example.com"}'
             )
         },
         1,
-        "permissions-diff: repos/depbase.go changes the hosts a base build's proxy allows: the Registries declaration changed",
+        "permissions-diff: internal/domain/repos/depbase.go changes the hosts a base build's proxy allows: the Registries declaration changed",
     ),
     (
         "an edit beside a base build's registries",
-        {"repos/depbase.go": DEPBASE_GO + "\nfunc none() {}\n"},
+        {"internal/domain/repos/depbase.go": DEPBASE_GO + "\nfunc none() {}\n"},
         0,
         "none on the protected surface",
     ),
     (
         "the egress proxy",
-        {"egress/egress.go": "package egress\n"},
+        {"internal/platform/egress/egress.go": "package egress\n"},
         1,
-        "permissions-diff: egress/egress.go changes the boxed run's egress proxy: the source changed",
+        "permissions-diff: internal/platform/egress/egress.go changes the boxed run's egress proxy: the source changed",
     ),
     (
         "an egress proxy test",
-        {"egress/egress_test.go": "package egress\n\nfunc init() {}\n"},
+        {
+            "internal/platform/egress/egress_test.go": "package egress\n\nfunc init() {}\n"
+        },
         0,
         "none on the protected surface",
     ),
