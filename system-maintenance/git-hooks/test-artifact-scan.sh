@@ -96,7 +96,30 @@ expect_rc "a path followed by a high byte is still refused" 1 $?
 scan "$TMP/longer.bin"
 expect_rc "a longer name that merely begins with the path is not a hit" 0 $?
 
-# 6. A directory is walked, a symlink's target text is read, and every file is
+# 6. UTF-16, as a Windows resource or a JavaScript snapshot stores text: the
+# home path in LE at an even and an odd offset and in BE is refused, each
+# occurrence counted once although ASCII at an odd offset reads in both orders.
+utf16() { "$PYTHON" -c 'import sys; sys.stdout.buffer.write(sys.argv[2].encode(sys.argv[1]))' "$@"; }
+{ noise; printf '\0\0'; utf16 utf-16-le "$HOME_PATH/.nuget/x"; printf '\0\0'; noise 512; } > "$TMP/le.bin"
+scan "$TMP/le.bin"
+expect_rc "a binary carrying the home path as UTF-16LE is refused" 1 $?
+said "the UTF-16LE home path is counted once" "machine\.home-path +1 "
+never_said "the UTF-16LE refusal" "$HOME_PATH"
+{ printf 'MZ\0'; utf16 utf-16-le "$HOME_PATH"; printf '\0\0'; utf16 utf-16-be "C:$HOME_PATH"; printf '\0\0'; noise 64; } > "$TMP/wide.bin"
+scan "$TMP/wide.bin"
+expect_rc "UTF-16LE at an odd offset and UTF-16BE are refused" 1 $?
+said "both UTF-16 occurrences are counted, once each" "machine\.home-path +2 "
+utf16 utf-16-le "$HOST" > "$TMP/host16.bin"
+scan "$TMP/host16.bin"
+expect_rc "a UTF-16LE hostname alone is refused" 1 $?
+{ noise; printf '\0\0'; utf16 utf-16-le "${HOME_PATH}x"; printf '\0\0'; noise 64; } > "$TMP/longer16.bin"
+scan "$TMP/longer16.bin"
+expect_rc "a longer UTF-16 name that merely begins with the path is not a hit" 0 $?
+{ noise; printf '\0\0'; utf16 utf-16-le "$HOME_PATH"; printf '\377\377\0\0'; noise 64; } > "$TMP/high16.bin"
+scan "$TMP/high16.bin"
+expect_rc "a UTF-16 path followed by a non-ASCII unit is still refused" 1 $?
+
+# 7. A directory is walked, a symlink's target text is read, and every file is
 # counted, not just the first hit.
 mkdir -p "$TMP/app/Contents/MacOS" "$TMP/app/Contents/Resources"
 binary "$TMP/app/Contents/MacOS/main" "$HOME_PATH/a"
@@ -114,7 +137,7 @@ said "the symlink target is reported" "machine\.home-path +1 .*Contents/link"
 said "the directory symlink target is reported" "machine\.home-path +1 .*Contents/dirlink"
 never_said "the bundle refusal" "$HOME_PATH"
 
-# 7. A path that itself holds a needle is redacted in the report.
+# 8. A path that itself holds a needle is redacted in the report.
 # A directory of that name: the hostname needle needs a boundary on both sides.
 mkdir "$TMP/$HOST"
 binary "$TMP/$HOST/named.bin" "$HOME_PATH"
@@ -122,7 +145,7 @@ scan "$TMP/$HOST/named.bin"
 expect_rc "a planted binary under a directory named for the host is refused" 1 $?
 never_said "the report" "$HOST"
 
-# 8. An artifact that was not read never passes.
+# 9. An artifact that was not read never passes.
 scan "$TMP/does-not-exist"
 expect_rc "a missing path is a usage error, not a pass" 2 $?
 scan
@@ -135,7 +158,7 @@ if [ "$(id -u)" -ne 0 ]; then
     chmod 600 "$TMP/locked.bin"
 fi
 
-# 9. One clean artifact beside a bad one does not dilute the verdict.
+# 10. One clean artifact beside a bad one does not dilute the verdict.
 scan "$TMP/clean.bin" "$TMP/home.bin"
 expect_rc "a clean artifact beside a bad one still refuses" 1 $?
 

@@ -352,6 +352,11 @@ Measured 2026-10-20 with `artifact-scan.py` over quoth's last local release buil
 `artifact-scan.py <file-or-directory>...` runs the same derived needles over every byte of each artifact, so there is one needle source and it cannot drift from the push gate.
 A directory is walked, which covers a `.app` bundle, and a symlink's target text is read too.
 Each needle is recompiled as a byte pattern, so a path followed by a stray high byte is still a hit.
+The artifact is also read as UTF-16, little- and big-endian from byte 0 and from byte 1, because a Windows resource, a .NET string table or a JavaScript engine's snapshot stores a path that way and the byte pattern never sees it.
+Each code unit is widened to one character, surrogates included, and the needles run with ASCII boundaries, so a span maps back to bytes and the byte scan's rules hold: a non-ASCII unit after the path is a boundary.
+Spans from every reading are merged per class before counting, so ASCII at an odd offset, which reads as text in both byte orders, counts once.
+Measured 2026-11-23 over real release builds, Chromium, its headless shell, Node 22 and an ffmpeg, 818 MB in 598 files: the scanning account's own needles hit nothing with or without UTF-16, and of thirteen probe needles built the same way for common machine names (`/home/runner`, `/Users/admin`, `build`, `server`, `mini` and the like) UTF-16 added two hits in all, both the four-character hostname `mini` in real UTF-16 text, which the byte scan already hit seventeen times.
+The cost is the time: each artifact is read five ways, 3.4 times the byte scan's, 100s to 338s for Chromium's 388 MB, which a release script pays once per build.
 It prints `class  count  path` per hit and never the value; a path that itself holds a needle is redacted.
 It exits 0 when clean, 1 on any `machine.*` hit, and 2 for a missing, unreadable or absent argument, so an artifact that was not read never passes.
 It is release tooling and not a hook: `install.sh` does not deploy it, and a release script calls it from a checkout of this repository before it signs or notarises.
