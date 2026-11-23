@@ -1,0 +1,9 @@
+{
+  "status": "done",
+  "followups": [
+    {
+      "text": "run/permissions-diff.py SURFACE names factory paths that no longer exist, so none of these files is protected: factory now has internal/platform/sandbox/*.go (SURFACE says internal/sandbox/profile.go and internal/sandbox/*.go), internal/domain/permit/permit.go (internal/permit/permit.go), internal/domain/adapter/claude/claude.go (internal/adapter/claude/claude.go), internal/domain/repos/depbase.go (repos/depbase.go), internal/platform/egress/*.go (egress/*.go) and internal/platform/outbound/outbound.go (outbound/outbound.go); cmd/fac/permit.go is new and unread. Read on factory's main on 2026-11-23. The contract's premise that the glob is internal/platform/sandbox/*.go does not hold on gates main. Changing SURFACE is itself a protected change, so this needs a class-2 decision.",
+      "acceptance": "Each SURFACE entry and the README.md 'The permissions-diff gate' table name the path that exists in factory today (or both the old and new paths), .ci/test-permissions-diff.py has a refusing case for each moved path, and a check run over factory's main lists every 7.2 file as matched."
+    }
+  ]
+}
