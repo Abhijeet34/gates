@@ -48,6 +48,7 @@ This file is the project's committed home for project-intrinsic agent knowledge:
   `.ci/test-workflow-policy.sh` does not read its workflow, which holds the App key's environment; `.ci/test-verifier.py` holds it to stricter rules, and README.md, "The verifier branch", owns the ten invariants.
 - **`run/seats.py` writes the judge's `--review` for a `verified` path: both seats must approve, a hold needs no proof, and an undecided review writes nothing, so the path falls to the owner.**
   The `review` job alone reads `CLAUDE_CODE_OAUTH_TOKEN`, and `verifier/review.sh` pins the CLI by sha512; a CLI or seat-model change re-runs `run/seats-eval.py --record` live and re-records before it lands. README.md, "The review seats", owns the rule and the measurement.
+- **A question's `q` in `.fac/result.json` is read on a phone, so its first line is one short plain sentence asking the decision, and the context, options and evidence go on the lines after it; a long first line fails the run.** (verified 2026-11-19; source: log seq 56732, 56822) (ladder: run-fail:question:the%20run's%20question%20sr-<n>-class-<n>-landing's%20first%20line%20is%20<n>%20characters,%20over%20the%20<n>%20a%20phone%20shows;%20put%20one%20plain%20sentence%20first%20and%20the%20detail%20on%20the%20lines)
 
 ## Maintaining this file
 
