@@ -1,0 +1,18 @@
+{
+  "status": "needs-decision",
+  "questions": [
+    {
+      "key": "factory-layout-source",
+      "q": "Where should this run get the factory paths: report.md's old-to-new mapping for the seven SURFACE globs, and factory's `git ls-files` output at the commit its .github/gates.lock moves on, for .ci/fixtures/surface-paths/factory.txt?",
+      "options": [
+        "attach report.md and the filtered factory ls-files output to the contract and re-run",
+        "grant this run read access to the factory repository so it can take both from there",
+        "defer until factory's move into internal/domain and internal/platform has landed on its main"
+      ],
+      "default": "attach report.md and the filtered factory ls-files output to the contract and re-run",
+      "class": 2,
+      "why": "report.md is not in the contract or in gates, and this session can read only gates, so it has neither the new globs nor factory's file list. A guessed glob that matches nothing drops a protected file from permissions-diff's SURFACE without any error, and a made-up fixture would make test-surface-paths pass anyway. The contract also says seven factory globs, but REPOSITORY maps eight (internal/sandbox/profile.go, internal/sandbox/*.go, internal/permit/permit.go, route.toml, internal/adapter/claude/claude.go, repos/depbase.go, egress/*.go, outbound/outbound.go). Only the report says which one stays."
+    }
+  ],
+  "followups": []
+}
