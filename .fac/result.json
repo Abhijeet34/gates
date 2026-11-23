@@ -1,0 +1,30 @@
+{
+  "status": "needs-decision",
+  "questions": [
+    {
+      "key": "keep-pipeline-proof",
+      "q": "Once no-mistakes stops writing the 'Updates from [git push no-mistakes](...)' line into PR bodies, should a PR still carry machine-checkable proof that it came through the pipeline, as a required check run posted by a GitHub App on the head sha?",
+      "options": [
+        "drop-proof: remove the marker and require nothing in its place",
+        "app-check-run: remove the marker, have no-mistakes post a check run from a dedicated GitHub App on the head sha, and require it by app id in each caller's ruleset"
+      ],
+      "default": "app-check-run: remove the marker, have no-mistakes post a check run from a dedicated GitHub App on the head sha, and require it by app id in each caller's ruleset",
+      "class": 2,
+      "why": "Nothing in gates writes or matches the marker (searched run/, .ci/, .github/, bin/, system-maintenance/); the writer is the no-mistakes binary, a separate repository this session cannot change. The only gates-side change is the 'app-check-run' branch: a new required_status_checks entry in .github/ruleset-main.json with the new App's integration_id, which does not exist until the App is created, and that file is protected surface under run/permissions-diff.py, so it needs this decision and the App's id first."
+    }
+  ],
+  "followups": [
+    {
+      "text": "In the no-mistakes repository, stop appending the 'Updates from [git push no-mistakes](...)' line to the PR body it writes when it opens or updates a pull request, and drop any code that reads that line back.",
+      "acceptance": "A PR raised through no-mistakes has a body with no 'git push no-mistakes' marker line, on both creation and a later push that updates the body."
+    },
+    {
+      "text": "If proof is kept: create a GitHub App with checks: write only (manifest flow, inactive webhook, as the verifier App in README.md 'The verifier branch'), and have no-mistakes mint an installation token after a green pipeline run and post a check run (fixed name, e.g. 'no-mistakes') with conclusion success on the pushed head sha, then revoke the token.",
+      "acceptance": "After a no-mistakes delivery push, the head sha carries a check run of that name whose app.id is the new App's id and whose conclusion is success; a PR pushed by hand carries no such check run."
+    },
+    {
+      "text": "If proof is kept: add { \"context\": \"<check name>\", \"integration_id\": <new App id> } to required_status_checks in each caller's ruleset, gates' .github/ruleset-main.json included, as a class-2 change under run/permissions-diff.py.",
+      "acceptance": "A PR raised through no-mistakes is mergeable once the App's check passes, and a hand-raised PR is blocked on the missing required check; a check run of the same name posted by GITHUB_TOKEN (app 15368) does not satisfy it."
+    }
+  ]
+}
