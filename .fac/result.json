@@ -1,0 +1,10 @@
+{
+  "status": "no-change",
+  "reason": "The stale document is .ci/shared-workflows.md in the automation repository, which this run (scoped to gates) cannot read or write. gates names neither shared-no-mistakes-required.yml nor run/no-mistakes-required.sh anywhere (grep over the tree at b1067fc finds no match; the remaining 'no-mistakes' hits are the pipeline's staging-bare path, not the gate), so there is nothing to change here.",
+  "followups": [
+    {
+      "text": "In automation, remove or mark as deleted the shared-no-mistakes-required.yml / run/no-mistakes-required.sh entry in .ci/shared-workflows.md (deletion noted in PR #109); run this task against the automation repository.",
+      "acceptance": "No document in automation names shared-no-mistakes-required.yml or run/no-mistakes-required.sh as a live gate."
+    }
+  ]
+}
