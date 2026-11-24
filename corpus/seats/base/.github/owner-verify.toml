@@ -1,0 +1,4 @@
+owner = { login = "Abhijeet34", id = 27002551 }
+maintainer = [".github/CODEOWNERS", ".github/owner-verify.toml"]
+workflow = [".github/workflows/"]
+verified = ["internal/permit/", "internal/sandbox/", "internal/auth/", "internal/outbound/", "internal/ratelimit/", "test/security/"]
