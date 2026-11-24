@@ -1,0 +1,10 @@
+{
+  "status": "no-change",
+  "reason": "The memory check is `fac memory check`, which is built from the private factory repository; gates holds no fac source (README.md says fac is built from a private repository), and this session's access is limited to gates, so the change cannot be made here. Nothing in gates needs to change: AGENTS.md lines 11, 17, 19 and 36 already mark their caller-side paths with '(absent here)', 'a caller's' or 'synced as', and gates' own checker, run/instruction-truth/path-truth.py, already accepts the '(absent here)' marker after a span.",
+  "followups": [
+    {
+      "text": "In the factory repository, teach `fac memory check` to skip a backticked path whose line marks it caller-side or absent here: the span is followed by '(absent here)', the line says 'a caller's' before the span, or the span sits inside '(synced as `...`)'. Add a test covering each of the three markers and a control line without a marker that is still reported.",
+      "acceptance": "Re-running `fac memory check` on gates AGENTS.md at b1067fcf4b3dcbf5d13d989729893f4b8c4603a7 reports none of lines 11, 17, 19 or 36, and the control-line test still fails on a missing path."
+    }
+  ]
+}
