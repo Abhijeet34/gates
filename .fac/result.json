@@ -1,0 +1,14 @@
+{
+  "status": "no-change",
+  "reason": "Nothing in gates writes or matches the 'Updates from [git push no-mistakes](...)' marker: the PR body is written by the no-mistakes binary, which lives in its own repository, outside this task's repo. run/pr-text.py has no rule for it, and the App check run and the caller's ruleset are GitHub settings plus code in no-mistakes, so the change belongs there.",
+  "followups": [
+    {
+      "text": "In the no-mistakes repository, stop the binary writing the 'Updates from [git push no-mistakes](...)' line into the pull request body it raises.",
+      "acceptance": "A PR raised through git push no-mistakes has a body with no 'Updates from' or 'git push no-mistakes' line, shown by a test in the no-mistakes repository over the body it builds."
+    },
+    {
+      "text": "If proof of the pipeline is still wanted: have no-mistakes post a check run from a GitHub App on the PR head sha, and add that check, pinned by the App's integration_id, to each caller's branch ruleset (a ruleset change, so a class-2 decision under run/permissions-diff.py).",
+      "acceptance": "On a caller, a PR raised through no-mistakes has a passing App-posted check run on its head sha and merges; a hand-raised PR lacks that check and the ruleset blocks it."
+    }
+  ]
+}
